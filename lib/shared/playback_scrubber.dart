@@ -43,11 +43,13 @@ class PlaybackScrubber extends StatefulWidget {
     required this.onSeekEnd,
     required this.onSeekCancel,
     this.committing = false,
+    this.showTime = true,
   });
 
   final Duration position, duration, buffered;
   final bool enabled;
   final bool committing;
+  final bool showTime;
   final ValueChanged<Duration> onSeekStart, onSeekUpdate, onSeekEnd;
   final VoidCallback onSeekCancel;
 
@@ -126,11 +128,12 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            '${formatPlaybackTime(displayPosition)} / ${formatPlaybackTime(widget.duration)}',
-            key: const ValueKey('playback-time'),
-            style: const TextStyle(fontSize: 12),
-          ),
+          if (widget.showTime)
+            Text(
+              '${formatPlaybackTime(displayPosition)} / ${formatPlaybackTime(widget.duration)}',
+              key: const ValueKey('playback-time'),
+              style: const TextStyle(fontSize: 12),
+            ),
           LayoutBuilder(
             builder: (_, constraints) {
               final width = constraints.maxWidth;

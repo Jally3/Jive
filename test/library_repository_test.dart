@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/data/library_repository.dart';
 import 'package:jive/domain/library.dart';
@@ -22,7 +21,7 @@ void main() {
     'favorites persist snapshots without playback urls and deduplicate',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final repository = LibraryRepository(preferences: prefs, now: () => now);
+      final repository = LibraryRepository(preferences: prefs);
       await repository.saveFavorite(
         FavoriteRecord(video: video, createdAt: now, updatedAt: now),
       );
@@ -47,48 +46,10 @@ void main() {
   test('corrupt json and incomplete items are ignored', () async {
     SharedPreferences.setMockInitialValues({
       LibraryRepository.favoritesKey: '[broken',
-      LibraryRepository.playlistsKey: jsonEncode([
-        {'id': 'bad'},
-        {
-          'id': 'ok',
-          'name': '列表',
-          'videos': [],
-          'createdAt': now.toIso8601String(),
-          'updatedAt': now.toIso8601String(),
-        },
-      ]),
     });
     final repository = LibraryRepository(
       preferences: await SharedPreferences.getInstance(),
     );
     expect(await repository.loadFavorites(), isEmpty);
-    expect(await repository.loadPlaylists(), hasLength(1));
-  });
-
-  test('playlists validate names, preserve order and deduplicate', () async {
-    final repository = LibraryRepository(
-      preferences: await SharedPreferences.getInstance(),
-      now: () => now,
-    );
-    await expectLater(repository.createPlaylist(' '), throwsArgumentError);
-    await expectLater(
-      repository.createPlaylist(List.filled(41, 'x').join()),
-      throwsArgumentError,
-    );
-    final playlist = await repository.createPlaylist(' 周末 ');
-    await repository.addToPlaylist(playlist.id, video);
-    await repository.addToPlaylist(playlist.id, video);
-    await repository.addToPlaylist(
-      playlist.id,
-      const Video(id: '2', title: '第二部'),
-    );
-    expect((await repository.loadPlaylists()).single.videos.map((v) => v.id), [
-      '1',
-      '2',
-    ]);
-    await repository.removeFromPlaylist(playlist.id, '1');
-    expect((await repository.loadPlaylists()).single.videos.single.id, '2');
-    await repository.deletePlaylist(playlist.id);
-    expect(await repository.loadPlaylists(), isEmpty);
   });
 }

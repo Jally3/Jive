@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 import 'package:video_player/video_player.dart';
 import '../app/theme.dart';
 import '../data/history_repository.dart';
@@ -44,6 +45,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   double screenSeekStartX = 0;
   bool screenLongPressOnRight = false;
   double playbackSpeed = 1;
+  double volumeBeforeMute = 1;
+  bool volumeSliderVisible = false;
+  double screenBrightness = 0.5;
+  double verticalDragStartY = 0;
+  double verticalDragStartValue = 0;
+  int verticalDragGeneration = 0;
+  final ValueNotifier<({bool isVolume, double value})?> verticalDrag =
+      ValueNotifier(null);
   Future<void> longPressSpeedChange = Future.value();
   bool wasPlayingBeforeSeek = false;
   Future<void> seekPause = Future.value();
@@ -204,7 +213,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   void _toggleControls() {
     controlsTimer?.cancel();
-    setState(() => controlsVisible = !controlsVisible);
+    setState(() {
+      controlsVisible = !controlsVisible;
+      if (!controlsVisible) volumeSliderVisible = false;
+    });
     if (controlsVisible) _scheduleControlsHide();
   }
 
@@ -212,7 +224,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     controlsTimer?.cancel();
     if (controller?.value.isPlaying != true || isSeeking) return;
     controlsTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted) setState(() => controlsVisible = false);
+      if (mounted) {
+        setState(() {
+          controlsVisible = false;
+          volumeSliderVisible = false;
+        });
+      }
     });
   }
 
@@ -228,6 +245,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       _scheduleControlsHide();
     }
     if (mounted) setState(() => controlsVisible = true);
+  }
+
+  Future<void> _toggleMute() async {
+    final current = controller;
+    if (current == null || !current.value.isInitialized) return;
+    if (current.value.volume > 0) {
+      volumeBeforeMute = current.value.volume;
+      await current.setVolume(0);
+    } else {
+      await current.setVolume(volumeBeforeMute);
+    }
+    _showControls();
   }
 
   Future<void> _setPlaybackSpeed(double speed) async {
@@ -252,8 +281,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     seekCommitting.dispose();
     screenSeeking.dispose();
     speedBoosting.dispose();
+    verticalDrag.dispose();
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+    unawaited(_resetScreenBrightness());
     super.dispose();
   }
 
@@ -341,6 +372,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                     _screenLongPressUpdate(details, constraints.maxWidth),
                 onLongPressEnd: (_) => _screenLongPressEnd(),
                 onLongPressCancel: _screenLongPressCancel,
+                onVerticalDragStart: (details) =>
+                    _screenVerticalDragStart(details, constraints.maxWidth),
+                onVerticalDragUpdate: (details) =>
+                    _screenVerticalDragUpdate(details, constraints.maxHeight),
+                onVerticalDragEnd: (_) => _screenVerticalDragEnd(),
+                onVerticalDragCancel: _screenVerticalDragEnd,
                 child: const ColoredBox(color: Colors.transparent),
               ),
             ),
@@ -351,8 +388,51 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               seekCommitting,
               screenSeeking,
               speedBoosting,
+              verticalDrag,
             ]),
             builder: (_, _) {
+              final drag = verticalDrag.value;
+              if (drag != null) {
+                return IgnorePointer(
+                  child: DecoratedBox(
+                    key: const ValueKey('vertical-drag-indicator'),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            drag.isVolume
+                                ? (drag.value <= 0
+                                      ? Icons.volume_off
+                                      : drag.value < 0.5
+                                      ? Icons.volume_down
+                                      : Icons.volume_up)
+                                : Icons.brightness_6,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${(drag.value * 100).round()}%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }
               if (speedBoosting.value && !screenSeeking.value) {
                 return IgnorePointer(
                   child: DecoratedBox(
@@ -515,27 +595,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                 ignoring: !controlsVisible,
                 child: Listener(
                   onPointerDown: (_) => _showControls(),
-                  child: Container(
-                    color: AppColors.scrim,
-                    padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge([
-                        current,
-                        previewPosition,
-                        seekCommitting,
-                      ]),
-                      builder: (_, _) => Row(
-                        children: [
-                          IconButton(
-                            onPressed: _togglePlayback,
-                            icon: Icon(
-                              current.value.isPlaying
-                                  ? Icons.pause
-                                  : Icons.play_arrow,
-                            ),
-                          ),
-                          Expanded(
-                            child: PlaybackScrubber(
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Color(0xCC000000)],
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 24),
+                      child: AnimatedBuilder(
+                        animation: Listenable.merge([
+                          current,
+                          previewPosition,
+                          seekCommitting,
+                        ]),
+                        builder: (_, _) => Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            PlaybackScrubber(
                               position:
                                   previewPosition.value ??
                                   current.value.position,
@@ -549,59 +628,121 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                                   current.value.duration > Duration.zero &&
                                   !seekCommitting.value,
                               committing: seekCommitting.value,
+                              showTime: false,
                               onSeekStart: _seekStart,
                               onSeekUpdate: _seekUpdate,
                               onSeekEnd: _seekEnd,
                               onSeekCancel: _seekCancel,
                             ),
-                          ),
-                          PopupMenuButton<double>(
-                            key: const ValueKey('playback-speed-menu'),
-                            tooltip: '播放速度',
-                            initialValue: playbackSpeed,
-                            onSelected: (speed) =>
-                                unawaited(_setPlaybackSpeed(speed)),
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(value: 0.5, child: Text('0.5×')),
-                              PopupMenuItem(value: 0.75, child: Text('0.75×')),
-                              PopupMenuItem(value: 1.0, child: Text('正常')),
-                              PopupMenuItem(value: 1.25, child: Text('1.25×')),
-                              PopupMenuItem(value: 1.5, child: Text('1.5×')),
-                              PopupMenuItem(value: 2.0, child: Text('2×')),
-                            ],
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 10,
-                              ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
                               child: Row(
-                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.speed, size: 21),
-                                  const SizedBox(width: 3),
+                                  IconButton(
+                                    onPressed: _togglePlayback,
+                                    iconSize: 30,
+                                    icon: Icon(
+                                      current.value.isPlaying
+                                          ? Icons.pause
+                                          : Icons.play_arrow,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: () {
+                                      _showControls();
+                                      setState(
+                                        () => volumeSliderVisible =
+                                            !volumeSliderVisible,
+                                      );
+                                    },
+                                    onLongPress: () =>
+                                        unawaited(_toggleMute()),
+                                    tooltip: '音量（长按静音）',
+                                    icon: Icon(
+                                      current.value.volume > 0.5
+                                          ? Icons.volume_up
+                                          : current.value.volume > 0
+                                          ? Icons.volume_down
+                                          : Icons.volume_off,
+                                    ),
+                                  ),
                                   Text(
-                                    '${playbackSpeed.toStringAsFixed(playbackSpeed % 1 == 0 ? 0 : 2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}×',
+                                    '${formatPlaybackTime(previewPosition.value ?? current.value.position)} / ${formatPlaybackTime(current.value.duration)}',
                                     style: const TextStyle(
                                       fontSize: 12,
-                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  PopupMenuButton<double>(
+                                    key: const ValueKey('playback-speed-menu'),
+                                    tooltip: '播放速度',
+                                    initialValue: playbackSpeed,
+                                    onSelected: (speed) =>
+                                        unawaited(_setPlaybackSpeed(speed)),
+                                    itemBuilder: (_) => const [
+                                      PopupMenuItem(
+                                        value: 0.5,
+                                        child: Text('0.5×'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 0.75,
+                                        child: Text('0.75×'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 1.0,
+                                        child: Text('正常'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 1.25,
+                                        child: Text('1.25×'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 1.5,
+                                        child: Text('1.5×'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 2.0,
+                                        child: Text('2×'),
+                                      ),
+                                    ],
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 10,
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.speed, size: 21),
+                                          const SizedBox(width: 3),
+                                          Text(
+                                            '${playbackSpeed.toStringAsFixed(playbackSpeed % 1 == 0 ? 0 : 2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}×',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: () {
+                                      _showControls();
+                                      _toggleFullScreen();
+                                    },
+                                    icon: Icon(
+                                      fullScreen
+                                          ? Icons.fullscreen_exit
+                                          : Icons.fullscreen,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                          ),
-                          IconButton(
-                            onPressed: () {
-                              _showControls();
-                              _toggleFullScreen();
-                            },
-                            icon: Icon(
-                              fullScreen
-                                  ? Icons.fullscreen_exit
-                                  : Icons.fullscreen,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -609,6 +750,47 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               ),
             ),
           ),
+          if (volumeSliderVisible && controlsVisible)
+            Align(
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 46, bottom: 60),
+                child: Listener(
+                  onPointerDown: (_) => _showControls(),
+                  child: AnimatedBuilder(
+                    animation: current,
+                    builder: (_, _) => DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.78),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 8,
+                        ),
+                        child: SizedBox(
+                          height: 140,
+                          width: 48,
+                          child: RotatedBox(
+                            quarterTurns: 3,
+                            child: Slider(
+                              value: current.value.volume.clamp(0.0, 1.0),
+                              onChangeStart: (_) => _showControls(),
+                              onChanged: (value) {
+                                unawaited(current.setVolume(value));
+                                if (value > 0) volumeBeforeMute = value;
+                                _showControls();
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -689,6 +871,74 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       screenSeeking.value = false;
       unawaited(_seekCancel());
     }
+  }
+
+  void _screenVerticalDragStart(DragStartDetails details, double width) {
+    final current = controller;
+    if (current == null ||
+        !current.value.isInitialized ||
+        isSeeking ||
+        seekCommitting.value) {
+      return;
+    }
+    final isVolume = details.localPosition.dx >= width / 2;
+    verticalDragStartY = details.localPosition.dy;
+    verticalDragStartValue = isVolume
+        ? current.value.volume.clamp(0.0, 1.0)
+        : screenBrightness;
+    controlsTimer?.cancel();
+    verticalDragGeneration++;
+    verticalDrag.value = (isVolume: isVolume, value: verticalDragStartValue);
+    if (!isVolume) {
+      unawaited(_syncScreenBrightness(verticalDragGeneration));
+    }
+  }
+
+  Future<void> _syncScreenBrightness(int generation) async {
+    try {
+      final value = await ScreenBrightness().application;
+      if (!mounted || generation != verticalDragGeneration) return;
+      screenBrightness = value;
+      verticalDragStartValue = value;
+      verticalDrag.value = (isVolume: false, value: value);
+    } catch (_) {}
+  }
+
+  void _screenVerticalDragUpdate(DragUpdateDetails details, double height) {
+    final drag = verticalDrag.value;
+    if (drag == null || height <= 0) return;
+    final delta = (verticalDragStartY - details.localPosition.dy) / height;
+    final value = (verticalDragStartValue + delta).clamp(0.0, 1.0);
+    verticalDrag.value = (isVolume: drag.isVolume, value: value);
+    if (drag.isVolume) {
+      final current = controller;
+      if (current != null && current.value.isInitialized) {
+        unawaited(current.setVolume(value));
+        if (value > 0) volumeBeforeMute = value;
+      }
+    } else {
+      screenBrightness = value;
+      unawaited(_setScreenBrightness(value));
+    }
+  }
+
+  Future<void> _setScreenBrightness(double value) async {
+    try {
+      await ScreenBrightness().setApplicationScreenBrightness(value);
+    } catch (_) {}
+  }
+
+  Future<void> _resetScreenBrightness() async {
+    try {
+      await ScreenBrightness().resetApplicationScreenBrightness();
+    } catch (_) {}
+  }
+
+  void _screenVerticalDragEnd() {
+    if (verticalDrag.value == null) return;
+    verticalDrag.value = null;
+    verticalDragGeneration++;
+    _scheduleControlsHide();
   }
 
   void _stopSpeedBoost(VideoPlayerController? current) {
@@ -796,6 +1046,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     seekCommitting.value = false;
     screenSeeking.value = false;
     speedBoosting.value = false;
+    verticalDrag.value = null;
+    verticalDragGeneration++;
     seekPause = Future.value();
   }
 }

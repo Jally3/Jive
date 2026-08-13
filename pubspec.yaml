@@ -39,6 +39,12 @@ dependencies:
   video_player: ^2.10.1
   shared_preferences: ^2.5.5
   cached_network_image: ^3.4.1
+  screen_brightness: ^2.1.11
+
+# screen_brightness_ios 2.1.4+ uses Flutter 3.38 scene APIs
+# (registrar.addSceneDelegate) and fails to compile on Flutter 3.35.
+dependency_overrides:
+  screen_brightness_ios: 2.1.2
 
 dev_dependencies:
   flutter_test:

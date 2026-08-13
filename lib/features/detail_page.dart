@@ -7,7 +7,6 @@ import '../data/video_repository.dart';
 import '../data/library_repository.dart';
 import '../domain/video.dart';
 import 'player_page.dart';
-import 'library_page.dart';
 
 class VideoDetailPage extends ConsumerStatefulWidget {
   const VideoDetailPage({super.key, required this.video});
@@ -177,57 +176,45 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         ),
       ),
       const SizedBox(height: 8),
-      Row(
-        children: [
-          Expanded(
-            child: Consumer(
-              builder: (context, ref, _) {
-                final favorites = ref.watch(favoriteControllerProvider);
-                final favorite =
-                    favorites.value?.any((item) => item.video.id == video.id) ??
-                    false;
-                return OutlinedButton.icon(
-                  onPressed: favorites.isLoading
-                      ? null
-                      : () async {
-                          try {
-                            await ref
-                                .read(favoriteControllerProvider.notifier)
-                                .toggle(video);
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(favorite ? '已取消收藏' : '已收藏'),
-                                ),
-                              );
-                            }
-                          } catch (_) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('收藏保存失败，请重试')),
-                              );
-                            }
-                          }
-                        },
-                  icon: Icon(
-                    favorite ? Icons.favorite : Icons.favorite_outline,
-                  ),
-                  label: Text(favorite ? '取消收藏' : '收藏'),
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Consumer(
-              builder: (context, ref, _) => OutlinedButton.icon(
-                onPressed: () => showPlaylistPicker(context, ref, video),
-                icon: const Icon(Icons.playlist_add),
-                label: const Text('加入播放列表'),
+      Consumer(
+        builder: (context, ref, _) {
+          final favorites = ref.watch(favoriteControllerProvider);
+          final favorite =
+              favorites.value?.any((item) => item.video.id == video.id) ??
+              false;
+          return SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: OutlinedButton.icon(
+              onPressed: favorites.isLoading
+                  ? null
+                  : () async {
+                      try {
+                        await ref
+                            .read(favoriteControllerProvider.notifier)
+                            .toggle(video);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(favorite ? '已取消收藏' : '已收藏'),
+                            ),
+                          );
+                        }
+                      } catch (_) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('收藏保存失败，请重试')),
+                          );
+                        }
+                      }
+                    },
+              icon: Icon(
+                favorite ? Icons.favorite : Icons.favorite_outline,
               ),
+              label: Text(favorite ? '取消收藏' : '收藏'),
             ),
-          ),
-        ],
+          );
+        },
       ),
       const SizedBox(height: 24),
       const Text(

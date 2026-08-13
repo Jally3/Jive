@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import '../features/category_page.dart';
-import '../features/history_page.dart';
 import '../features/home_page.dart';
-import '../features/library_page.dart';
+import '../features/profile_page.dart';
 import '../features/search_page.dart';
 import 'theme.dart';
 
@@ -25,39 +23,20 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   var index = 0;
-  var historyRevision = 0;
-  int? categoryId;
-  var categoryRevision = 0;
+  var profileRevision = 0;
   late final List<Widget?> pages;
 
   @override
   void initState() {
     super.initState();
-    pages = List<Widget?>.filled(5, null);
-    pages[0] = HomePage(onCategorySelected: _openCategory);
-  }
-
-  void _openCategory(int value) {
-    setState(() {
-      categoryId = value;
-      categoryRevision++;
-      pages[1] = CategoryPage(
-        key: ValueKey(categoryRevision),
-        initialCategoryId: categoryId,
-      );
-      index = 1;
-    });
+    pages = List<Widget?>.filled(3, null);
+    pages[0] = const HomePage();
   }
 
   Widget _createPage(int value) => switch (value) {
-    0 => HomePage(onCategorySelected: _openCategory),
-    1 => CategoryPage(
-      key: ValueKey(categoryRevision),
-      initialCategoryId: categoryId,
-    ),
-    2 => const SearchPage(),
-    3 => const LibraryPage(),
-    4 => HistoryPage(key: ValueKey(historyRevision)),
+    0 => const HomePage(),
+    1 => const SearchPage(),
+    2 => ProfilePage(key: ValueKey(profileRevision)),
     _ => const SizedBox.shrink(),
   };
 
@@ -66,7 +45,7 @@ class _AppShellState extends State<AppShell> {
     body: IndexedStack(
       index: index,
       children: List.generate(
-        5,
+        3,
         (value) => pages[value] ?? const SizedBox.shrink(),
       ),
     ),
@@ -74,9 +53,9 @@ class _AppShellState extends State<AppShell> {
       selectedIndex: index,
       onDestinationSelected: (value) => setState(() {
         index = value;
-        if (value == 4) {
-          historyRevision++;
-          pages[value] = HistoryPage(key: ValueKey(historyRevision));
+        if (value == 2) {
+          profileRevision++;
+          pages[value] = ProfilePage(key: ValueKey(profileRevision));
         } else {
           pages[value] ??= _createPage(value);
         }
@@ -87,18 +66,12 @@ class _AppShellState extends State<AppShell> {
           selectedIcon: Icon(Icons.home),
           label: '首页',
         ),
-        NavigationDestination(
-          icon: Icon(Icons.grid_view_outlined),
-          selectedIcon: Icon(Icons.grid_view),
-          label: '分类',
-        ),
         NavigationDestination(icon: Icon(Icons.search), label: '搜索'),
         NavigationDestination(
-          icon: Icon(Icons.favorite_outline),
-          selectedIcon: Icon(Icons.favorite),
-          label: '收藏',
+          icon: Icon(Icons.person_outline),
+          selectedIcon: Icon(Icons.person),
+          label: '我的',
         ),
-        NavigationDestination(icon: Icon(Icons.history), label: '最近观看'),
       ],
     ),
   );

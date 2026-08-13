@@ -25,7 +25,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Jive'), findsOneWidget);
-    expect(find.text('收藏'), findsOneWidget);
+    expect(find.text('我的'), findsOneWidget);
     expect(find.text('测试影片'), findsOneWidget);
     await tester.tap(find.text('测试影片'));
     await tester.pump();
@@ -36,9 +36,7 @@ void main() {
     expect(find.text('第2集'), findsOneWidget);
   });
 
-  testWidgets('home category entry switches to filtered category tab', (
-    tester,
-  ) async {
+  testWidgets('home category chip filters the grid in place', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -49,11 +47,16 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    await tester.tap(find.widgetWithText(ActionChip, '电影'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '电影片'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('分类'), findsWidgets);
-    expect(find.widgetWithText(ChoiceChip, '电影片'), findsOneWidget);
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '电影片'))
+          .selected,
+      isTrue,
+    );
+    expect(find.text('测试影片'), findsOneWidget);
   });
 
   testWidgets('search debounces, displays results and clears input', (
@@ -124,9 +127,10 @@ void main() {
         ),
       );
       await tester.pump();
-      await tester.tap(find.text('最近观看'));
+      await tester.tap(find.text('我的'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('最近观看'));
+      await tester.pumpAndSettle();
       expect(find.text('历史影片'), findsOneWidget);
       expect(find.text('继续 第1集 · 1:05'), findsOneWidget);
       await tester.tap(find.text('清空'));
