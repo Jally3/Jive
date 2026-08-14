@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文档基于 `APP_REQUIREMENTS_V1.md`，定义第一版视频点播 App 的 Flutter 项目架构、目录结构、状态管理方案和关键技术约束。
+本文档基于 `APP_REQUIREMENTS_V1.md` 与 `VOD_SOURCE_SWITCH_PRD_AND_PLAN.md`，定义第一版视频点播 App 的 Flutter 项目架构、目录结构、状态管理方案和关键技术约束。
 
 目标是支持 Android 和 iOS MVP，并为后续接入自建后端、用户体系、会员能力和多设备同步保留扩展空间。
 
@@ -19,19 +19,32 @@
     ↓
 Riverpod Provider / Notifier
     ↓
-Repository
+VideoRepository
     ↓
-Remote Data Source / Local Data Source
+VodSourceRegistry → VodSourceAdapter（按 sourceId 选择）
     ↓
 VOD API / 本地存储
 ```
 
+多源切换数据流：
+
+```text
+VodSourceRegistry（内置源列表，来自 config/vod_sources.json）
+    ↓ 提供 VodSource + 对应 Adapter
+selectedVodSourceProvider（全局浏览源，持久化到 SharedPreferences）
+    ↓
+HomePage / SearchPage / DetailPage
+    ↓
+VideoRepository.fetchPage(source, ...) / fetchDetail(source, ref) ...
+```
+
 基本原则：
 
-- 页面不直接调用 Dio 或本地存储。
+- 页面不直接调用 HTTP 或本地存储。
 - Provider 负责状态管理和业务流程编排。
-- Repository 屏蔽具体数据来源。
-- API DTO 与 App 内部业务 Model 分离。
+- Repository 屏蔽具体数据来源，方法必须接收 `VodSource` 或 `VideoRef`，不依赖一个可变的全局 `baseUrl`。
+- 同一协议源复用 Adapter，仅传入不同配置（`VodSource.baseUri` 等）。
+- 详情缓存键使用 `globalId = sourceId:sourceVideoId`，不同源缓存相互隔离。
 - 播放器作为独立 Feature 管理资源生命周期。
 - 第三方 VOD API 与自建后端通过 Repository/Data Source 解耦。
 
@@ -146,6 +159,38 @@ lib/
     └── app_en.arb
 ```
 
+### 3.1 多 VOD 源模块（当前实现）
+
+```text
+lib/domain/
+├── vod_source.dart          # VodSource 模型（id/name/baseUri/adapterType/search/enabled/priority/featuredCategoryIds）
+├── video.dart               # Video 含 sourceId/sourceVideoId/globalId；VideoRef；PlaybackLine；VideoPage.total
+
+lib/data/
+├── vod_source_config.dart   # 从 assets 读取 config/vod_sources.json
+├── vod_source_registry.dart # 内置源列表 + adapter 映射；vodSourceRegistryProvider
+├── vod_source_adapter.dart  # VodSourceAdapter 接口
+├── adapters/
+│   └── mac_cms_v10_adapter.dart  # Mac CMS V10 解析实现
+├── vod_source_preferences.dart   # selectedVodSourceProvider（持久化全局源）
+└── video_repository.dart    # VideoRepositoryImpl 统一入口，按 source/ref 请求
+
+lib/features/
+├── paged_video_controller.dart          # 首页/单源分页（绑定 VodSource）
+├── multi_source_search_controller.dart  # 搜索页 1+3 多源探测协调器
+├── detail_source_controller.dart        # 详情页局部切源协调器
+└── detail_more_sources_sheet.dart       # 详情"更多来源"底部弹窗
+```
+
+### 3.2 Provider 结构
+
+```text
+vodSourceConfigProvider        FutureProvider<List<VodSource>>      从 assets JSON 加载
+vodSourceRegistryProvider      FutureProvider<VodSourceRegistry>    内置源 + adapter 映射
+selectedVodSourceProvider      NotifierProvider<AsyncValue<VodSource>>  全局浏览源（持久化）
+videoRepositoryProvider        Provider<VideoRepository>            统一访问入口
+```
+
 ## 4. 分层职责
 
 ### 4.1 presentation
@@ -214,10 +259,20 @@ abstract interface class VideoRepository {
 - 本地观看记录读写
 - DTO 到 Domain Model 的转换
 
+Adapter 职责：
+
+- 第三方字段到统一 `Video`/`VideoPage` 的映射。
+- 分类层级和源分类 ID 解析。
+- 多播放线路（`$$$` 分隔）和剧集分隔符解析。
+- 源错误转换为统一 `VideoDataException`。
+- 设置解析结果的 `sourceId`/`sourceVideoId`。
+- 只过滤 HTTPS 播放地址。
+
 建议至少区分：
 
 ```text
-VodVideoDto       API 返回结构
+VodSource          VOD 源配置（id/name/baseUri/adapterType/...）
+VodSourceAdapter   源协议解析实现（Mac CMS V10 等）
 Video             App 业务模型
 WatchRecord       本地观看记录模型
 ```
@@ -260,11 +315,19 @@ watchHistoryControllerProvider
 
 搜索需要同时具备：
 
-- 约 300～500ms 防抖
+- 约 300～500ms 防抖（当前实现 600ms）
 - 取消上一次未完成请求
 - 空关键词不发请求
-- 新关键词结果覆盖旧关键词
+- 新关键词结果覆盖旧关键词（generation 隔离）
 - 支持清空、刷新、分页和重试
+
+### 5.4 多源状态管理
+
+全局浏览源与详情页/搜索页局部源是两个独立状态：
+
+- `selectedVodSourceProvider`：全局浏览源，持久化到 SharedPreferences，决定首页、分类和新搜索会话。
+- 搜索页：`MultiSourceSearchController` 维护 `SearchSessionState`（keyword + activeSourceId + 每源状态 + generation）。默认 1 个当前源 + 最多 3 个备用源自动探测；每个来源独立保存分页、加载、错误和总数；点击备用来源只切换当前搜索页来源，不修改全局源；相同"关键词+来源+页码"缓存约 7 分钟。
+- 详情页：`DetailSourceController` 维护 `activeVideo`、各源检测状态和 switching 标志。正常打开只请求当前源；用户点击"检测其他来源"才并发探测最多 3 个备用源；跨源候选确认后原子切换，失败回滚保留旧详情。
 
 ## 6. 数据层设计
 
@@ -272,13 +335,18 @@ watchHistoryControllerProvider
 
 ```text
 VideoRepository
-├── fetchLatest()
-├── fetchByCategory()
-├── search()
-└── fetchDetail()
+├── fetchPage(source, {page, categoryId, keyword})
+├── fetchCategories(source)
+├── fetchDetail(source, ref)
+└── resolvePlayback(source, ref)
 
-PlayerRepository
-└── resolvePlayUrl()
+VodSourceRegistry
+├── allSources / enabledSources / searchableSources
+├── findById(id)
+└── adapterFor(source)
+
+VodSourceAdapter
+├── fetchPage / fetchCategories / fetchDetail / resolvePlayback
 
 WatchHistoryRepository
 ├── getRecent()
@@ -287,9 +355,30 @@ WatchHistoryRepository
 └── remove()
 ```
 
-不要把所有能力集中到一个巨大的 `VodRepository` 中。
+Repository 方法接收 `VodSource` 或 `VideoRef`，不依赖一个可变的全局 `baseUrl`；详情缓存键使用 `globalId`。
+
+### 6.1.1 资源身份与跨源隔离
+
+```text
+VideoRef
+├── sourceId
+├── sourceVideoId
+└── globalId = sourceId:sourceVideoId
+```
+
+- 所有资源键（缓存、收藏、历史、Widget Key）使用 `globalId`，不同源的相同 `vod_id` 互不覆盖。
+- 旧本地数据缺少 `sourceId` 时，`Video.fromJson` 迁移为默认值 `storm`。
+- 收藏仍保存具体来源资源；详情页切源不会自动改变收藏。
+- 观看历史记录实际播放的来源和资源 ID，继续播放时从该来源刷新地址。
+
+### 6.1.2 内容源与播放线路分离
+
+- `VodSource`：内容源（"暴风资源 / 来源 A / 来源 B"）。
+- `PlaybackLine`：同一资源 `vod_play_url` 中以 `$$$` 分隔的线路。解析模型保留全部有效线路，第一期界面只实现内容源切换。
 
 ### 6.2 播放地址接口
+
+不要把所有能力集中到一个巨大的 `VodRepository` 中。
 
 ```dart
 abstract interface class PlayerRepository {

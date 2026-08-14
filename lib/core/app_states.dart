@@ -31,15 +31,25 @@ class AppEmptyView extends StatelessWidget {
 }
 
 class AppErrorView extends StatelessWidget {
-  const AppErrorView({super.key, required this.message, required this.onRetry});
+  const AppErrorView({
+    super.key,
+    required this.message,
+    required this.onRetry,
+    this.secondaryLabel,
+    this.secondaryAction,
+  });
   final String message;
   final VoidCallback onRetry;
+  final String? secondaryLabel;
+  final VoidCallback? secondaryAction;
   @override
   Widget build(BuildContext context) => _StateContent(
     icon: Icons.wifi_off_rounded,
     message: message,
     action: '重试',
     onTap: onRetry,
+    secondaryAction: secondaryLabel,
+    onSecondaryTap: secondaryAction,
   );
 }
 
@@ -49,11 +59,15 @@ class _StateContent extends StatelessWidget {
     required this.message,
     this.action,
     this.onTap,
+    this.secondaryAction,
+    this.onSecondaryTap,
   });
   final IconData icon;
   final String message;
   final String? action;
   final VoidCallback? onTap;
+  final String? secondaryAction;
+  final VoidCallback? onSecondaryTap;
   @override
   Widget build(BuildContext context) => Center(
     child: Padding(
@@ -72,6 +86,14 @@ class _StateContent extends StatelessWidget {
             const SizedBox(height: 8),
             TextButton(onPressed: onTap, child: Text(action!)),
           ],
+          if (secondaryAction != null)
+            TextButton(
+              onPressed: onSecondaryTap,
+              child: Text(
+                secondaryAction!,
+                style: const TextStyle(color: AppColors.secondary),
+              ),
+            ),
         ],
       ),
     ),

@@ -26,7 +26,9 @@ class HistoryRepository {
   Future<void> save(WatchRecord record) async {
     _writeQueue = _writeQueue.then((_) async {
       final records = await load();
-      records.removeWhere((item) => item.video.id == record.video.id);
+      records.removeWhere(
+        (item) => item.video.globalId == record.video.globalId,
+      );
       records.insert(0, record);
       if (records.length > 50) records.removeRange(50, records.length);
       await (await SharedPreferences.getInstance()).setString(

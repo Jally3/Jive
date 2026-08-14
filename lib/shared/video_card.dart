@@ -19,7 +19,7 @@ class VideoCard extends StatelessWidget {
     button: true,
     label: '查看 ${video.title}',
     child: InkWell(
-      key: ValueKey('video-${video.id}'),
+      key: ValueKey('video-${video.globalId}'),
       borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       child: Column(

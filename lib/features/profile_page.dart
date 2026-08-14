@@ -5,17 +5,20 @@ import '../core/app_states.dart';
 import '../data/history_repository.dart';
 import '../data/library_repository.dart';
 import '../data/video_repository.dart';
+import '../data/vod_source_registry.dart';
+import '../data/vod_source_preferences.dart';
 import '../domain/playback_progress.dart';
 import '../domain/watch_record.dart';
 import '../shared/video_card.dart';
 import '../shared/video_grid.dart';
 import 'detail_page.dart';
 import 'player_page.dart';
+import 'source_management_page.dart';
 
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends ConsumerWidget {
   const ProfilePage({super.key});
   @override
-  Widget build(BuildContext context) => DefaultTabController(
+  Widget build(BuildContext context, WidgetRef ref) => DefaultTabController(
     length: 2,
     child: SafeArea(
       child: Column(
@@ -26,6 +29,35 @@ class ProfilePage extends StatelessWidget {
             child: Text(
               '我的',
               style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Card(
+              color: AppColors.elevated,
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.source_outlined),
+                    title: const Text('来源管理'),
+                    subtitle: Text(
+                      ref
+                          .watch(selectedVodSourceProvider)
+                          .maybeWhen(data: (s) => s.name, orElse: () => '加载中'),
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                      color: AppColors.tertiary,
+                    ),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SourceManagementPage(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const TabBar(
@@ -134,9 +166,16 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
     try {
+      final source = ref
+          .read(vodSourceRegistryProvider)
+          .maybeWhen(
+            data: (r) => r.findById(record.video.sourceId),
+            orElse: () => null,
+          );
+      if (source == null) throw const VideoDataException('未知来源');
       final detail = await ref
           .read(videoRepositoryProvider)
-          .resolvePlayback(record.video.id);
+          .resolvePlayback(source, record.video.ref);
       if (!mounted) return;
       Navigator.pop(context);
       dialogOpen = false;
@@ -201,8 +240,10 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
               mainAxisSpacing: 20,
               childAspectRatio: .49,
             ),
-            itemBuilder: (_, i) =>
-                _HistoryCard(record: records![i], onTap: () => _resume(records![i])),
+            itemBuilder: (_, i) => _HistoryCard(
+              record: records![i],
+              onTap: () => _resume(records![i]),
+            ),
           ),
         ),
       ],

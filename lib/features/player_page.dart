@@ -7,6 +7,7 @@ import 'package:video_player/video_player.dart';
 import '../app/theme.dart';
 import '../data/history_repository.dart';
 import '../data/video_repository.dart';
+import '../data/vod_source_registry.dart';
 import '../domain/video.dart';
 import '../domain/watch_record.dart';
 import '../domain/playback_progress.dart';
@@ -123,9 +124,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       initializing = true;
     });
     try {
+      final source = ref
+          .read(vodSourceRegistryProvider)
+          .maybeWhen(
+            data: (r) => r.findById(widget.video.sourceId),
+            orElse: () => null,
+          );
+      if (source == null) throw const VideoDataException('未知来源');
       final fresh = await ref
           .read(videoRepositoryProvider)
-          .resolvePlayback(widget.video.id);
+          .resolvePlayback(source, widget.video.ref);
       final match = fresh.episodes.where(
         (item) => item.name == episode.name || item.id == episode.id,
       );
@@ -203,6 +211,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           : [DeviceOrientation.portraitUp],
     );
     if (mounted) setState(() {});
+  }
+
+  Future<void> _switchEpisode(Episode next) async {
+    if (next.id == episode.id) return;
+    controlsTimer?.cancel();
+    await _save();
+    controller?.removeListener(_handlePlayerValueChanged);
+    await controller?.dispose();
+    controller = null;
+    setState(() => episode = next);
+    await _setup(Duration.zero);
   }
 
   void _showControls() {
@@ -289,48 +308,85 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: !fullScreen,
-    onPopInvokedWithResult: (didPop, _) {
-      if (!didPop && fullScreen) {
-        unawaited(_toggleFullScreen());
-      } else {
-        unawaited(_save());
-      }
-    },
-    child: Scaffold(
-      backgroundColor: Colors.black,
-      appBar: fullScreen
-          ? null
-          : AppBar(
-              title: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) {
+    // 退出全屏时屏幕旋转动画有几帧延迟，期间 MediaQuery 仍是横屏尺寸；
+    // 布局按实际方向选择，避免竖屏 Column 布局在横屏尺寸下溢出。
+    final landscape =
+        fullScreen ||
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    return PopScope(
+      canPop: !fullScreen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && fullScreen) {
+          unawaited(_toggleFullScreen());
+        } else {
+          unawaited(_save());
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        appBar: landscape
+            ? null
+            : AppBar(
+                title: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.video.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      episode.name,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.secondary,
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.black,
+              ),
+        body: landscape
+            ? Center(
+                child: failed
+                    ? _error()
+                    : initializing
+                    ? const CircularProgressIndicator()
+                    : _player(),
+              )
+            : Column(
                 children: [
-                  Text(
-                    widget.video.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    episode.name,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.secondary,
+                  _portraitPlayer(),
+                  Expanded(
+                    child: PlayerInfoPanel(
+                      video: widget.video,
+                      current: episode,
+                      onEpisodeTap: (e) => unawaited(_switchEpisode(e)),
                     ),
                   ),
                 ],
               ),
-              backgroundColor: Colors.black,
-            ),
-      body: Center(
-        child: failed
-            ? _error()
-            : initializing
-            ? const CircularProgressIndicator()
-            : _player(),
       ),
-    ),
-  );
+    );
+  }
+
+  /// 竖屏时的播放器区域：加载/出错只在 16:9 区域内展示，下方信息面板保持不变。
+  Widget _portraitPlayer() {
+    if (failed) {
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Center(child: SingleChildScrollView(child: _error())),
+      );
+    }
+    if (initializing) {
+      return const AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return _player();
+  }
 
   Widget _error() => Padding(
     padding: const EdgeInsets.all(24),
@@ -655,8 +711,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                                             !volumeSliderVisible,
                                       );
                                     },
-                                    onLongPress: () =>
-                                        unawaited(_toggleMute()),
+                                    onLongPress: () => unawaited(_toggleMute()),
                                     tooltip: '音量（长按静音）',
                                     icon: Icon(
                                       current.value.volume > 0.5
@@ -1049,5 +1104,85 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     verticalDrag.value = null;
     verticalDragGeneration++;
     seekPause = Future.value();
+  }
+}
+
+/// 竖屏（非全屏）状态下播放器下方的信息面板：整部简介 + 选集列表。
+class PlayerInfoPanel extends StatefulWidget {
+  const PlayerInfoPanel({
+    super.key,
+    required this.video,
+    required this.current,
+    required this.onEpisodeTap,
+  });
+
+  final Video video;
+  final Episode current;
+  final ValueChanged<Episode> onEpisodeTap;
+
+  @override
+  State<PlayerInfoPanel> createState() => _PlayerInfoPanelState();
+}
+
+class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
+  bool expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final video = widget.video;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      children: [
+        const Text(
+          '简介',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          video.description.isEmpty ? '暂无简介' : video.description,
+          maxLines: expanded ? null : 4,
+          overflow: expanded ? null : TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+            height: 1.55,
+          ),
+        ),
+        if (video.description.length > 100)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => setState(() => expanded = !expanded),
+              child: Text(expanded ? '收起' : '展开'),
+            ),
+          ),
+        const SizedBox(height: 16),
+        Text(
+          '选集（${video.episodes.length}）',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final e in video.episodes)
+              ChoiceChip(
+                label: Text(e.name),
+                selected: e.id == widget.current.id,
+                onSelected: (_) => widget.onEpisodeTap(e),
+              ),
+          ],
+        ),
+      ],
+    );
   }
 }

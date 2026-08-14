@@ -1,6 +1,7 @@
 import 'video.dart';
 
-class FavoriteRecord {  const FavoriteRecord({
+class FavoriteRecord {
+  const FavoriteRecord({
     required this.video,
     required this.createdAt,
     required this.updatedAt,

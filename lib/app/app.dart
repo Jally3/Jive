@@ -1,18 +1,38 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/app_states.dart';
+import '../data/vod_source_preferences.dart';
+import '../data/vod_source_registry.dart';
 import '../features/home_page.dart';
 import '../features/profile_page.dart';
 import '../features/search_page.dart';
 import 'theme.dart';
 
-class JiveApp extends StatelessWidget {
+class JiveApp extends ConsumerWidget {
   const JiveApp({super.key});
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'Jive',
-    debugShowCheckedModeBanner: false,
-    theme: buildTheme(),
-    home: const AppShell(),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sourceState = ref.watch(selectedVodSourceProvider);
+    return MaterialApp(
+      title: 'Jive',
+      debugShowCheckedModeBanner: false,
+      theme: buildTheme(),
+      home: sourceState.when(
+        loading: () => const Scaffold(
+          backgroundColor: AppColors.background,
+          body: Center(child: CircularProgressIndicator()),
+        ),
+        error: (error, _) => Scaffold(
+          backgroundColor: AppColors.background,
+          body: AppErrorView(
+            message: '$error',
+            onRetry: () => ref.invalidate(vodSourceRegistryProvider),
+          ),
+        ),
+        data: (_) => const AppShell(),
+      ),
+    );
+  }
 }
 
 class AppShell extends StatefulWidget {

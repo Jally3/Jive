@@ -49,7 +49,7 @@ class LibraryRepository {
   Future<void> saveFavorite(FavoriteRecord record) => _serialized(() async {
     final records = await loadFavorites();
     final index = records.indexWhere(
-      (item) => item.video.id == record.video.id,
+      (item) => item.video.globalId == record.video.globalId,
     );
     final snapshot = FavoriteRecord(
       video: record.video.copyWith(episodes: const []),
@@ -63,9 +63,9 @@ class LibraryRepository {
     }
     await _save(favoritesKey, records.map((item) => item.toJson()).toList());
   });
-  Future<void> removeFavorite(String videoId) => _serialized(() async {
+  Future<void> removeFavorite(String globalId) => _serialized(() async {
     final records = await loadFavorites()
-      ..removeWhere((item) => item.video.id == videoId);
+      ..removeWhere((item) => item.video.globalId == globalId);
     await _save(favoritesKey, records.map((item) => item.toJson()).toList());
   });
 }
@@ -80,7 +80,9 @@ class FavoriteController extends AsyncNotifier<List<FavoriteRecord>> {
       ref.watch(libraryRepositoryProvider).loadFavorites();
   Future<void> toggle(Video video) async {
     final before = state.value ?? const <FavoriteRecord>[];
-    final index = before.indexWhere((item) => item.video.id == video.id);
+    final index = before.indexWhere(
+      (item) => item.video.globalId == video.globalId,
+    );
     final next = [...before];
     final now = DateTime.now();
     if (index < 0) {
@@ -100,7 +102,9 @@ class FavoriteController extends AsyncNotifier<List<FavoriteRecord>> {
       if (index < 0) {
         await ref.read(libraryRepositoryProvider).saveFavorite(next.first);
       } else {
-        await ref.read(libraryRepositoryProvider).removeFavorite(video.id);
+        await ref
+            .read(libraryRepositoryProvider)
+            .removeFavorite(video.globalId);
       }
     } catch (error, stack) {
       state = AsyncData(before);
@@ -110,7 +114,9 @@ class FavoriteController extends AsyncNotifier<List<FavoriteRecord>> {
 
   Future<void> refreshSnapshot(Video video) async {
     final records = state.value ?? const <FavoriteRecord>[];
-    final index = records.indexWhere((item) => item.video.id == video.id);
+    final index = records.indexWhere(
+      (item) => item.video.globalId == video.globalId,
+    );
     if (index < 0) return;
     final updated = FavoriteRecord(
       video: video.copyWith(episodes: const []),
