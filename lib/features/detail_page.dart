@@ -3,13 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/theme.dart';
 import '../core/app_states.dart';
+import '../data/cache/download_providers.dart';
+import '../data/cache/download_task_manager.dart';
 import '../data/video_repository.dart';
 import '../data/library_repository.dart';
 import '../data/vod_source_registry.dart';
 import '../domain/video.dart';
+import '../domain/playback_selection.dart';
 import '../domain/vod_source.dart';
 import 'detail_source_controller.dart';
 import 'detail_more_sources_sheet.dart';
+import 'download_management_page.dart';
 import 'player_page.dart';
 
 class VideoDetailPage extends ConsumerStatefulWidget {
@@ -26,6 +30,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   bool reversed = false;
   int selected = 0;
   DetailSourceController? sc;
+  bool downloadResolving = false;
 
   @override
   void dispose() {
@@ -87,6 +92,20 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     });
     final m = ScaffoldMessenger.of(context);
     try {
+      final cachedSelection = await _cachedSelectionForCurrentEpisode();
+      if (cachedSelection != null) {
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PlayerPage(
+              video: sc!.activeVideo,
+              episode: cachedSelection.episode,
+              selection: cachedSelection,
+            ),
+          ),
+        );
+        return;
+      }
       final source = _src(sc!.activeVideo.sourceId);
       if (source == null) throw const VideoDataException('未知来源');
       final fresh = await ref
@@ -122,11 +141,271 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     }
   }
 
+  Future<PlaybackSelection?> _cachedSelectionForCurrentEpisode() async {
+    final active = sc?.activeVideo;
+    if (active == null || active.episodes.isEmpty) return null;
+    final current =
+        active.episodes[selected.clamp(0, active.episodes.length - 1)];
+    final lineIdentity = active.playbackLines.firstOrNull?.identity;
+    try {
+      final manager = await ref.read(downloadManagerProvider.future);
+      final task = manager.tasks
+          .where(
+            (item) =>
+                item.status == DownloadTaskStatus.completed &&
+                item.sourceId == active.sourceId &&
+                item.sourceVideoId == active.sourceVideoId &&
+                item.playbackLineIdentity == lineIdentity &&
+                (item.episodeIdentity == current.identity ||
+                    (current.identity.isEmpty &&
+                        (item.episodeId == current.id ||
+                            item.episodeName == current.name))),
+          )
+          .firstOrNull;
+      if (task == null) return null;
+      return manager.selectionForTask(task);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _chooseDownloads() async {
+    if (sc == null || downloadResolving || sc!.activeVideo.episodes.isEmpty) {
+      return;
+    }
+    final current = selected.clamp(0, sc!.activeVideo.episodes.length - 1);
+    final selectedIndexes = await showModalBottomSheet<List<int>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        final checked = <int>{current};
+        return StatefulBuilder(
+          builder: (context, setSheetState) => Consumer(
+            builder: (context, ref, _) {
+              final tasks = ref.watch(downloadTasksProvider).value ?? const [];
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: SizedBox(
+                    height: MediaQuery.sizeOf(context).height * 0.7,
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                '选择下载剧集',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  if (checked.length ==
+                                      sc!.activeVideo.episodes.length) {
+                                    checked.clear();
+                                  } else {
+                                    checked.addAll(
+                                      List.generate(
+                                        sc!.activeVideo.episodes.length,
+                                        (index) => index,
+                                      ),
+                                    );
+                                  }
+                                });
+                              },
+                              child: Text(
+                                checked.length ==
+                                        sc!.activeVideo.episodes.length
+                                    ? '取消全选'
+                                    : '全选',
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Text(
+                          '下载完成后会自动过滤广告片段',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.secondary,
+                          ),
+                        ),
+                        const Divider(),
+                        Expanded(
+                          child: ListView.builder(
+                            itemCount: sc!.activeVideo.episodes.length,
+                            itemBuilder: (_, index) {
+                              final episode = sc!.activeVideo.episodes[index];
+                              final task = _taskForEpisode(tasks, episode);
+                              return CheckboxListTile(
+                                value: checked.contains(index),
+                                title: Text(episode.name),
+                                subtitle: task == null
+                                    ? null
+                                    : Text(
+                                        _downloadTaskSummary(task),
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.secondary,
+                                        ),
+                                      ),
+                                onChanged: (value) {
+                                  setSheetState(() {
+                                    if (value == true) {
+                                      checked.add(index);
+                                    } else {
+                                      checked.remove(index);
+                                    }
+                                  });
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: checked.isEmpty
+                                ? null
+                                : () =>
+                                      Navigator.pop(context, checked.toList()),
+                            icon: const Icon(Icons.download),
+                            label: Text('确认下载（${checked.length} 集）'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+    if (selectedIndexes == null || selectedIndexes.isEmpty || !mounted) return;
+    await _downloadEpisodes(selectedIndexes);
+  }
+
+  DownloadTask? _taskForEpisode(List<DownloadTask> tasks, Episode episode) {
+    final lineIdentity = sc?.activeVideo.playbackLines.firstOrNull?.identity;
+    return tasks
+        .where(
+          (task) =>
+              task.sourceId == sc?.activeVideo.sourceId &&
+              task.sourceVideoId == sc?.activeVideo.sourceVideoId &&
+              task.playbackLineIdentity == lineIdentity &&
+              (task.episodeIdentity == episode.identity ||
+                  (episode.identity.isEmpty &&
+                      (task.episodeId == episode.id ||
+                          task.episodeName == episode.name))),
+        )
+        .firstOrNull;
+  }
+
+  String _downloadTaskSummary(DownloadTask task) {
+    final status = switch (task.status) {
+      DownloadTaskStatus.queued => '排队中',
+      DownloadTaskStatus.downloading => '下载中',
+      DownloadTaskStatus.paused => '已暂停',
+      DownloadTaskStatus.completed => '已完成',
+      DownloadTaskStatus.failed => '失败，可重试',
+      DownloadTaskStatus.cancelled => '已取消',
+    };
+    final progress = task.expectedResourceCount > 0
+        ? ' · ${(task.progress * 100).round()}%'
+        : '';
+    final size = task.totalBytes > 0
+        ? ' · ${_formatBytes(task.downloadedBytes)}/${_formatBytes(task.totalBytes)}'
+        : '';
+    final speed = task.status == DownloadTaskStatus.downloading
+        ? ' · ${_formatSpeed(task.speedBytesPerSecond)}'
+        : '';
+    return '$status$progress$size$speed';
+  }
+
+  static String _formatSpeed(int bytes) => '${_formatBytes(bytes)}/s';
+
+  static String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return '${value.toStringAsFixed(value >= 100 || unit == 0 ? 0 : 1)} ${units[unit]}';
+  }
+
+  Future<void> _downloadEpisodes(List<int> indexes) async {
+    if (sc == null || downloadResolving) return;
+    setState(() => downloadResolving = true);
+    try {
+      final source = _src(sc!.activeVideo.sourceId);
+      if (source == null) throw const VideoDataException('未知来源');
+      final fresh = await ref
+          .read(videoRepositoryProvider)
+          .resolvePlayback(source, sc!.activeVideo.ref);
+      if (fresh.episodes.isEmpty) {
+        throw const VideoDataException('该视频暂时没有可下载剧集');
+      }
+      final manager = await ref.read(downloadManagerProvider.future);
+      var created = 0;
+      for (final episodeIndex in indexes) {
+        if (episodeIndex >= sc!.activeVideo.episodes.length) continue;
+        final prior = sc!.activeVideo.episodes[episodeIndex];
+        final idx = fresh.episodes.indexWhere(
+          (item) =>
+              item.identity == prior.identity ||
+              item.name == prior.name ||
+              item.id == prior.id,
+        );
+        if (idx < 0) continue;
+        final episode = fresh.episodes[idx];
+        final selection = selectionFor(fresh, episode);
+        if (selection == null) continue;
+        await manager.enqueue(selection);
+        created++;
+      }
+      if (created == 0) {
+        throw const VideoDataException('选中的剧集缺少稳定身份，无法下载');
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已开始下载 $created 集（完成后自动过滤广告）')));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('下载任务创建失败，请稍后重试')));
+      }
+    } finally {
+      if (mounted) setState(() => downloadResolving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final rs = ref.watch(vodSourceRegistryProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('视频详情')),
+      appBar: AppBar(
+        title: const Text('视频详情'),
+        actions: [
+          IconButton(
+            tooltip: '下载管理',
+            icon: const Icon(Icons.download_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const DownloadManagementPage()),
+            ),
+          ),
+        ],
+      ),
       body: rs.when(
         loading: () => const AppLoadingView(label: '正在加载…'),
         error: (e, _) => AppErrorView(
@@ -161,7 +440,13 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     children: [
       _header(v),
       const SizedBox(height: 20),
-      _playBtn(v),
+      Row(
+        children: [
+          Expanded(child: _playBtn(v)),
+          const SizedBox(width: 8),
+          Expanded(child: _downloadBtn(v)),
+        ],
+      ),
       const SizedBox(height: 8),
       _favBtn(v),
       const SizedBox(height: 16),
@@ -255,6 +540,22 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       label: Text(
         v.episodes.isEmpty ? '暂无可播放剧集' : '播放 ${v.episodes[selected].name}',
       ),
+    ),
+  );
+
+  Widget _downloadBtn(Video v) => SizedBox(
+    height: 48,
+    child: OutlinedButton.icon(
+      onPressed: v.episodes.isEmpty || resolving || downloadResolving
+          ? null
+          : _chooseDownloads,
+      icon: downloadResolving
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.download_outlined),
+      label: const Text('下载'),
     ),
   );
 
@@ -638,53 +939,56 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     ],
   );
 
-  Widget _eps(Video v) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(
-        children: [
-          const Expanded(
-            child: Text(
-              '剧集',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+  Widget _eps(Video v) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                '剧集',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+              ),
             ),
-          ),
-          Text(
-            '${v.episodes.length} 集',
-            style: const TextStyle(color: AppColors.secondary),
-          ),
-          if (v.episodes.length > 1)
-            TextButton.icon(
-              onPressed: () => setState(() => reversed = !reversed),
-              icon: const Icon(Icons.swap_vert, size: 18),
-              label: Text(reversed ? '正序' : '倒序'),
+            Text(
+              '${v.episodes.length} 集',
+              style: const TextStyle(color: AppColors.secondary),
             ),
-        ],
-      ),
-      const SizedBox(height: 12),
-      if (v.episodes.isEmpty)
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 32),
-          child: AppEmptyView(message: '暂时没有可用剧集'),
-        )
-      else
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: List.generate(v.episodes.length, (i) {
-            final idx = reversed ? v.episodes.length - 1 - i : i;
-            return ChoiceChip(
-              label: Text(v.episodes[idx].name),
-              selected: selected == idx,
-              onSelected: (_) {
-                setState(() => selected = idx);
-                _play(episodeIndex: idx);
-              },
-            );
-          }),
+            if (v.episodes.length > 1)
+              TextButton.icon(
+                onPressed: () => setState(() => reversed = !reversed),
+                icon: const Icon(Icons.swap_vert, size: 18),
+                label: Text(reversed ? '正序' : '倒序'),
+              ),
+          ],
         ),
-    ],
-  );
+        const SizedBox(height: 12),
+        if (v.episodes.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: AppEmptyView(message: '暂时没有可用剧集'),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: List.generate(v.episodes.length, (i) {
+              final idx = reversed ? v.episodes.length - 1 - i : i;
+              final episode = v.episodes[idx];
+              return ChoiceChip(
+                label: Text(episode.name),
+                selected: selected == idx,
+                onSelected: (_) {
+                  setState(() => selected = idx);
+                  _play(episodeIndex: idx);
+                },
+              );
+            }),
+          ),
+      ],
+    );
+  }
 }
 
 class _Meta extends StatelessWidget {

@@ -12,10 +12,15 @@ class HistoryRepository {
     if (raw == null || raw.isEmpty) return <WatchRecord>[];
     try {
       final decoded = jsonDecode(raw) as List<dynamic>;
-      final records = decoded
-          .whereType<Map<String, dynamic>>()
-          .map(WatchRecord.fromJson)
-          .toList();
+      final records = <WatchRecord>[];
+      for (final item in decoded) {
+        if (item is! Map) continue;
+        try {
+          records.add(WatchRecord.fromJson(Map<String, dynamic>.from(item)));
+        } catch (_) {
+          // 单条损坏或未知版本的记录跳过，不拖垮整份历史。
+        }
+      }
       records.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return records;
     } catch (_) {

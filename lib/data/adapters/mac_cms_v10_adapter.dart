@@ -137,6 +137,8 @@ class MacCmsV10Adapter implements VodSourceAdapter {
   }) {
     final playUrl = '${json['vod_play_url'] ?? ''}';
     final playFrom = '${json['vod_play_from'] ?? ''}';
+    final lines = _buildPlaybackLines(playUrl, playFrom);
+    final defaultLine = lines.isEmpty ? null : lines.first;
     return Video(
       id: '${json['vod_id'] ?? ''}',
       title: '${json['vod_name'] ?? '未命名视频'}',
@@ -153,28 +155,30 @@ class MacCmsV10Adapter implements VodSourceAdapter {
       actors: '${json['vod_actor'] ?? ''}',
       director: '${json['vod_director'] ?? ''}',
       episodes: includeEpisodes
-          ? _episodes(playUrl)
+          ? (defaultLine?.episodes ?? const [])
           : _episodeMetadata(playUrl),
-      playbackLines: includeEpisodes
-          ? _playbackLines(playUrl, playFrom)
-          : const [],
+      playbackLines: includeEpisodes ? lines : const [],
     );
   }
 
-  List<PlaybackLine> _playbackLines(String rawUrl, String rawFrom) {
+  List<PlaybackLine> _buildPlaybackLines(String rawUrl, String rawFrom) {
     final urlParts = rawUrl.split(r'$$$');
     final fromParts = rawFrom.split(r'$$$');
     final lines = <PlaybackLine>[];
     for (var i = 0; i < urlParts.length; i++) {
       final urlPart = urlParts[i].trim();
       if (urlPart.isEmpty) continue;
-      final episodes = _episodes(urlPart);
+      final episodes = _parseEpisodes(urlPart, requireUrl: true);
       if (episodes.isEmpty) continue;
-      final name = i < fromParts.length && fromParts[i].trim().isNotEmpty
-          ? fromParts[i].trim()
-          : '线路${i + 1}';
+      final rawFromName = i < fromParts.length ? fromParts[i].trim() : '';
+      final name = rawFromName.isNotEmpty ? rawFromName : '线路${i + 1}';
       lines.add(
-        PlaybackLine(id: '${lines.length}', name: name, episodes: episodes),
+        PlaybackLine(
+          id: '${lines.length}',
+          name: name,
+          episodes: episodes,
+          identity: 'macv10:line:$i:${_normalize(rawFromName)}',
+        ),
       );
     }
     return lines;
@@ -188,18 +192,12 @@ class MacCmsV10Adapter implements VodSourceAdapter {
     return const [];
   }
 
-  List<Episode> _episodes(String raw) {
-    for (final source in raw.split(r'$$$')) {
-      final result = _parseEpisodes(source, requireUrl: true);
-      if (result.isNotEmpty) return result;
-    }
-    return const [];
-  }
-
   List<Episode> _parseEpisodes(String raw, {required bool requireUrl}) {
     final result = <Episode>[];
     final seen = <String>{};
-    for (final item in raw.split('#')) {
+    final items = raw.split('#');
+    for (var rawIndex = 0; rawIndex < items.length; rawIndex++) {
+      final item = items[rawIndex];
       final cut = item.indexOf(r'$');
       if (cut <= 0) continue;
       final name = item.substring(0, cut).trim();
@@ -217,11 +215,15 @@ class MacCmsV10Adapter implements VodSourceAdapter {
           id: '${result.length + 1}',
           name: name,
           url: requireUrl ? url : '',
+          identity: 'macv10:episode:$rawIndex:${_normalize(name)}',
         ),
       );
     }
     return result;
   }
+
+  String _normalize(String value) =>
+      value.replaceAll(RegExp(r'\s+'), '').toLowerCase();
 
   String _plain(String value) => value
       .replaceAll(RegExp(r'<[^>]*>'), '')

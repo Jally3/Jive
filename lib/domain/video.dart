@@ -11,11 +11,17 @@ class VideoCategory {
 }
 
 class Episode {
-  const Episode({required this.id, required this.name, required this.url});
+  const Episode({
+    required this.id,
+    required this.name,
+    required this.url,
+    this.identity = '',
+  });
 
   final String id;
   final String name;
   final String url;
+  final String identity;
 
   int? get parsedEpisodeNumber {
     final match = RegExp(r'(\d+)').firstMatch(name);
@@ -56,11 +62,13 @@ class PlaybackLine {
     required this.id,
     required this.name,
     this.episodes = const [],
+    this.identity = '',
   });
 
   final String id;
   final String name;
   final List<Episode> episodes;
+  final String identity;
 }
 
 class Video {

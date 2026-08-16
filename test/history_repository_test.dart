@@ -93,4 +93,54 @@ void main() {
     expect(records.first.video.id, '54');
     expect(records.last.video.id, '5');
   });
+
+  test('v2 records preserve stable identities and timeline metadata', () async {
+    final repository = HistoryRepository();
+    await repository.save(
+      WatchRecord(
+        video: Video(id: '1', title: '影片'),
+        episodeId: '3',
+        episodeName: '第3集',
+        positionMs: 5000,
+        durationMs: 10000,
+        updatedAt: DateTime(2026, 3),
+        playbackLineIdentity: 'macv10:line:0:linea',
+        episodeIdentity: 'macv10:episode:2:第3集',
+        filterVersion: 0,
+        timelineVersion: 0,
+      ),
+    );
+    final record = (await repository.load()).single;
+    expect(record.playbackLineIdentity, 'macv10:line:0:linea');
+    expect(record.episodeIdentity, 'macv10:episode:2:第3集');
+    expect(record.timelineType, 'source');
+    expect(record.filterVersion, 0);
+  });
+
+  test('v1 records without schemaVersion load as implicit v1', () async {
+    SharedPreferences.setMockInitialValues({
+      'watch_history_v1':
+          '[{"video":{"id":"1","title":"影片"},"episodeId":"1",'
+          '"episodeName":"正片","positionMs":1000,"durationMs":10000,'
+          '"completed":false,"updatedAt":"2026-08-12T00:00:00.000"}]',
+    });
+    final record = (await HistoryRepository().load()).single;
+    expect(record.playbackLineIdentity, '');
+    expect(record.episodeIdentity, '');
+    expect(record.filterVersion, 0);
+    expect(record.timelineVersion, 0);
+  });
+
+  test('one corrupt or unknown-version record does not wipe history', () async {
+    SharedPreferences.setMockInitialValues({
+      'watch_history_v1':
+          '[{"schemaVersion":9,"video":{"id":"bad"}},'
+          '{"schemaVersion":2,"video":{"id":"2","title":"好影片"},'
+          '"episodeId":"1","episodeName":"正片","positionMs":100,'
+          '"durationMs":1000,"updatedAt":"2026-08-12T00:00:00.000"}]',
+    });
+    final records = await HistoryRepository().load();
+    expect(records, hasLength(1));
+    expect(records.single.video.id, '2');
+  });
 }
