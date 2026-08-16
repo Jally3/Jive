@@ -2,18 +2,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/theme.dart';
 import '../core/app_states.dart';
+import '../data/cache/cache_controller.dart';
+import '../data/cache/download_providers.dart';
+import '../data/cache/download_task_manager.dart';
 import '../data/history_repository.dart';
 import '../data/library_repository.dart';
 import '../data/video_repository.dart';
 import '../data/vod_source_registry.dart';
 import '../data/vod_source_preferences.dart';
 import '../domain/playback_progress.dart';
+import '../domain/video.dart';
 import '../domain/watch_record.dart';
 import '../shared/video_card.dart';
 import '../shared/video_grid.dart';
+import 'cache_management_page.dart';
 import 'detail_page.dart';
+import 'download_management_page.dart';
 import 'player_page.dart';
 import 'source_management_page.dart';
+
+String _cacheBytes(int bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  var value = bytes.toDouble();
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  final precision = value >= 100 || unit == 0 ? 0 : 1;
+  return '${value.toStringAsFixed(precision)} ${units[unit]}';
+}
 
 class ProfilePage extends ConsumerWidget {
   const ProfilePage({super.key});
@@ -53,6 +72,50 @@ class ProfilePage extends ConsumerWidget {
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const SourceManagementPage(),
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 1, color: AppColors.divider),
+                  Consumer(
+                    builder: (context, ref, _) {
+                      final stats = ref.watch(cacheControllerProvider);
+                      final subtitle = stats.value == null
+                          ? '正在统计…'
+                          : '已用 ${_cacheBytes(stats.value!.usedBytes)} / 配额 ${_cacheBytes(stats.value!.quotaBytes)} · ${stats.value!.entryCount} 个缓存剧集';
+                      return ListTile(
+                        leading: const Icon(Icons.cleaning_services_outlined),
+                        title: const Text('缓存管理'),
+                        subtitle: Text(
+                          subtitle,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right,
+                          color: AppColors.tertiary,
+                        ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const CacheManagementPage(),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const Divider(height: 1, color: AppColors.divider),
+                  ListTile(
+                    leading: const Icon(Icons.download_outlined),
+                    title: const Text('下载管理'),
+                    subtitle: const Text(
+                      '查看下载进度、速度和已完成剧集',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                      color: AppColors.tertiary,
+                    ),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const DownloadManagementPage(),
                       ),
                     ),
                   ),
@@ -166,6 +229,44 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
     try {
+      final downloadManager = await ref.read(downloadManagerProvider.future);
+      final downloadedTask = downloadManager.tasks
+          .where(
+            (task) =>
+                task.status == DownloadTaskStatus.completed &&
+                task.sourceId == record.video.sourceId &&
+                task.sourceVideoId == record.video.sourceVideoId &&
+                (record.episodeIdentity.isNotEmpty
+                    ? task.episodeIdentity == record.episodeIdentity
+                    : task.episodeId == record.episodeId ||
+                          task.episodeName == record.episodeName),
+          )
+          .firstOrNull;
+      if (downloadedTask != null) {
+        final selection = await downloadManager.selectionForTask(
+          downloadedTask,
+        );
+        if (selection != null && mounted) {
+          Navigator.pop(context);
+          dialogOpen = false;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => PlayerPage(
+                video: record.video,
+                episode: selection.episode,
+                selection: selection,
+                resumePosition: PlaybackProgress(
+                  positionMs: record.positionMs,
+                  durationMs: record.durationMs,
+                  completed: record.completed,
+                ).resumePosition(),
+              ),
+            ),
+          );
+          await _load();
+          return;
+        }
+      }
       final source = ref
           .read(vodSourceRegistryProvider)
           .maybeWhen(
@@ -182,11 +283,27 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
       if (detail.episodes.isEmpty) {
         throw const VideoDataException('播放地址已失效且无法重新获取');
       }
-      final matched = detail.episodes.where(
-        (item) =>
-            item.name == record.episodeName || item.id == record.episodeId,
-      );
-      final episode = matched.isEmpty ? detail.episodes.first : matched.first;
+      // 优先按稳定线路/剧集 identity 定位，再退回默认线路内 name/id，不跨线路。
+      Episode episode;
+      final line = record.playbackLineIdentity.isEmpty
+          ? null
+          : detail.playbackLines
+                .where((l) => l.identity == record.playbackLineIdentity)
+                .toList()
+                .firstOrNull;
+      final candidates = line?.episodes ?? detail.episodes;
+      if (record.episodeIdentity.isNotEmpty) {
+        final byIdentity = candidates.where(
+          (item) => item.identity == record.episodeIdentity,
+        );
+        if (byIdentity.isNotEmpty) {
+          episode = byIdentity.first;
+        } else {
+          episode = _fallbackEpisode(candidates, record);
+        }
+      } else {
+        episode = _fallbackEpisode(candidates, record);
+      }
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => PlayerPage(
@@ -209,6 +326,13 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         messenger.showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
+  }
+
+  Episode _fallbackEpisode(List<Episode> candidates, WatchRecord record) {
+    final matched = candidates.where(
+      (item) => item.name == record.episodeName || item.id == record.episodeId,
+    );
+    return matched.isEmpty ? candidates.first : matched.first;
   }
 
   @override

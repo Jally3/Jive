@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_states.dart';
+import '../data/cache/download_providers.dart';
 import '../data/vod_source_preferences.dart';
 import '../data/vod_source_registry.dart';
 import '../features/home_page.dart';
@@ -13,26 +15,69 @@ class JiveApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sourceState = ref.watch(selectedVodSourceProvider);
-    return MaterialApp(
-      title: 'Jive',
-      debugShowCheckedModeBanner: false,
-      theme: buildTheme(),
-      home: sourceState.when(
-        loading: () => const Scaffold(
-          backgroundColor: AppColors.background,
-          body: Center(child: CircularProgressIndicator()),
-        ),
-        error: (error, _) => Scaffold(
-          backgroundColor: AppColors.background,
-          body: AppErrorView(
-            message: '$error',
-            onRetry: () => ref.invalidate(vodSourceRegistryProvider),
+    return _DownloadLifecycle(
+      child: MaterialApp(
+        title: 'Jive',
+        debugShowCheckedModeBanner: false,
+        theme: buildTheme(),
+        home: sourceState.when(
+          loading: () => const Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(child: CircularProgressIndicator()),
           ),
+          error: (error, _) => Scaffold(
+            backgroundColor: AppColors.background,
+            body: AppErrorView(
+              message: '$error',
+              onRetry: () => ref.invalidate(vodSourceRegistryProvider),
+            ),
+          ),
+          data: (_) => const AppShell(),
         ),
-        data: (_) => const AppShell(),
       ),
     );
   }
+}
+
+class _DownloadLifecycle extends ConsumerStatefulWidget {
+  const _DownloadLifecycle({required this.child});
+  final Widget child;
+
+  @override
+  ConsumerState<_DownloadLifecycle> createState() => _DownloadLifecycleState();
+}
+
+class _DownloadLifecycleState extends ConsumerState<_DownloadLifecycle>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final manager = ref
+        .read(downloadManagerProvider)
+        .maybeWhen(data: (value) => value, orElse: () => null);
+    if (manager == null) return;
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(manager.pauseForBackground());
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(manager.resumeFromForeground());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class AppShell extends StatefulWidget {
