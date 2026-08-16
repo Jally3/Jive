@@ -1065,6 +1065,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               );
             },
           ),
+          Align(
+            alignment: Alignment.topRight,
+            child: AnimatedOpacity(
+              opacity: controlsVisible ? 1 : 0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: !controlsVisible,
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                    child: PlaybackStatusIndicator(
+                      key: const ValueKey('playback-status-indicator'),
+                      status: playbackStatus,
+                      onLongPress: _showPlaybackStatusDetails,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           if (fullScreen)
             AnimatedOpacity(
               opacity: controlsVisible ? 1 : 0,
@@ -1189,13 +1209,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                                     ),
                                   ),
                                   const SizedBox(width: 6),
-                                  PlaybackStatusIndicator(
-                                    key: const ValueKey(
-                                      'playback-status-indicator',
-                                    ),
-                                    status: playbackStatus,
-                                    onLongPress: _showPlaybackStatusDetails,
-                                  ),
                                   if (!fullScreen)
                                     IconButton(
                                       key: const ValueKey(
