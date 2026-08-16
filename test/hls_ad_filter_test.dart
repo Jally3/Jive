@@ -90,6 +90,28 @@ void main() {
     );
   });
 
+  test('AES-128 without an explicit IV keeps the original timeline', () async {
+    final parser = HlsParser(
+      client: MockClient(
+        (_) async => http.Response(
+          _mediaWithAds.replaceFirst(
+            '#EXT-X-TARGETDURATION:10',
+            '#EXT-X-TARGETDURATION:10\n'
+                '#EXT-X-KEY:METHOD=AES-128,URI="enc.key"',
+          ),
+          200,
+        ),
+      ),
+      adFilter: const AdFilter(enabled: true),
+    );
+    final decision = await parser.resolve(source());
+
+    expect(decision.isCacheable, isTrue);
+    expect(decision.mediaPlaylist!.hasImplicitEncryptionIv, isTrue);
+    expect(decision.mediaPlaylist!.segments, hasLength(6));
+    expect(decision.mediaPlaylist!.timelineMapping, isNull);
+  });
+
   test('structural failure keeps original manifest (rollback)', () async {
     final parser = HlsParser(
       client: MockClient((request) async => http.Response(_mediaWithAds, 200)),

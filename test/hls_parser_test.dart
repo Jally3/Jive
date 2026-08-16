@@ -61,12 +61,12 @@ void main() {
     expect(decision.reason, contains('直播'));
   });
 
-  test('encrypted playlist falls back to direct', () async {
+  test('standard AES-128 playlist is cacheable and rewrites its key', () async {
     final parser = HlsParser(
       client: MockClient(
         (request) async => http.Response(
           '#EXTM3U\n'
-          '#EXT-X-KEY:METHOD=AES-128,URI="https://cdn.example.com/key.bin"\n'
+          '#EXT-X-KEY:METHOD=AES-128,URI="key.bin",IV=0x00000000000000000000000000000001\n'
           '#EXTINF:4.0,\na.ts\n'
           '#EXT-X-ENDLIST\n',
           200,
@@ -76,7 +76,35 @@ void main() {
     final decision = await parser.resolve(
       source('https://cdn.example.com/a.m3u8'),
     );
+    expect(decision.isCacheable, isTrue);
+    expect(decision.mediaPlaylist!.hasEncryption, isTrue);
+    expect(
+      decision.mediaPlaylist!.keyUris.single,
+      Uri.parse('https://cdn.example.com/key.bin'),
+    );
+    final plan = parser.buildProxyPlan(decision.mediaPlaylist!, 'aes');
+    expect(plan.expectedResourceCount, 2);
+    expect(plan.proxyManifest, contains('/play/aes/res/sha256:'));
+    expect(plan.proxyManifest, isNot(contains('URI="key.bin"')));
+    expect(plan.extByResourceId.values, contains('key'));
+  });
+
+  test('SAMPLE-AES playlist still falls back to direct', () async {
+    final parser = HlsParser(
+      client: MockClient(
+        (_) async => http.Response(
+          '#EXTM3U\n'
+          '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="key.bin"\n'
+          '#EXTINF:4.0,\na.ts\n#EXT-X-ENDLIST\n',
+          200,
+        ),
+      ),
+    );
+    final decision = await parser.resolve(
+      source('https://cdn.example.com/a.m3u8'),
+    );
     expect(decision.isCacheable, isFalse);
+    expect(decision.reason, contains('加密'));
   });
 
   test('unsupported tag falls back to direct', () async {

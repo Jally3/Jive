@@ -42,6 +42,8 @@ Jive 的缓存能力分为两个相互独立的部分：
 - 失败后允许点击重试。
 - 切集或播放器销毁不能取消已经创建的下载任务。
 - 没有稳定 identity、非 HLS 或不支持缓存时，应显示固定中文原因。
+- 接口返回 HTML 播放页而非媒体直链时，应先从受信任的 HTTPS 页面解析并验证真实媒体 URL；在线播放和下载必须复用同一解析结果。
+- 多条播放线路同时存在时，默认优先直接 HLS/MP4 线路，其次才是可解析的 HTML 包装线路。
 
 ## 3. 显式下载任务
 
@@ -104,7 +106,7 @@ Jive 的缓存能力分为两个相互独立的部分：
 ### 4.2 原始资源要求
 
 - 下载阶段允许请求广告片段。
-- 原始视频片段、广告片段和初始化资源都必须按照原始 Manifest 枚举。
+- 原始视频片段、广告片段、初始化资源和标准 AES-128 密钥都必须按照原始 Manifest 枚举。
 - 相同 URL 的资源必须复用同一个 `resourceId`。
 - 已完整缓存的资源可以跳过重复下载。
 - 下载总资源数、完成条件和已下载字节数以实际原始资源计划为准。
@@ -206,7 +208,7 @@ completedResourceCount / expectedResourceCount
 
 - 非 HLS 格式；
 - 直播流；
-- DRM 或 AES 加密流；
+- DRM、`SAMPLE-AES`、非 identity `KEYFORMAT` 或需要在线许可证的加密流；
 - 未知或不支持的 HLS 标签；
 - Manifest 不完整；
 - 没有稳定 PlaybackSelection identity。
@@ -283,10 +285,12 @@ completedResourceCount / expectedResourceCount
 
 - [ ] 断网时已完成下载可以直接打开播放。
 - [ ] 断网时不会因为重新解析远端线路而失败。
-- [ ] 本地 Manifest、初始化资源和普通资源请求均返回成功。
+- [ ] 本地 Manifest、初始化资源、AES-128 密钥和普通资源请求均返回成功。
 - [ ] Range 请求能够读取本地缓存资源。
 - [ ] 缓存不存在时显示固定回退原因，不暴露底层异常。
-- [ ] DRM、直播、非 HLS 和未知标签按策略拒绝下载。
+- [ ] DRM、SAMPLE-AES、直播、非 HLS 和未知标签按策略拒绝下载。
+- [ ] 标准 AES-128 流会缓存 16 字节密钥并把最终 Manifest 的密钥 URI 重写到本地代理。
+- [ ] AES-128 密钥缺失、长度异常或获取失败时不得标记 `offlinePlayable`。
 
 ### 10.6 缓存一致性
 
@@ -320,7 +324,7 @@ completedResourceCount / expectedResourceCount
 - 系统通知栏下载通知；
 - 断点续传 `.part` 的 206 合并；
 - 在下载前通过 HEAD 请求保证获取总大小；
-- DRM/AES 内容解密；
+- DRM/SAMPLE-AES 内容解密；标准 AES-128 仅原样缓存密钥和加密分片，由系统播放器解密；
 - 直播流离线下载；
 - 通过删除已下载文件来反向移除广告。
 
@@ -343,4 +347,3 @@ git diff --check
 - `test/cache_manager_test.dart`
 - `test/cache_io_test.dart`
 - `test/local_proxy_test.dart`
-

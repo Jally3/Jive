@@ -58,6 +58,9 @@ class HlsMediaPlaylist {
     this.mapUri,
     this.mapByteRange,
     this.hasEncryption = false,
+    this.hasUnsupportedEncryption = false,
+    this.hasImplicitEncryptionIv = false,
+    this.keyUris = const [],
     this.isLive = false,
     this.mediaSequence = 0,
     required this.raw,
@@ -69,6 +72,9 @@ class HlsMediaPlaylist {
   final Uri? mapUri;
   final String? mapByteRange;
   final bool hasEncryption;
+  final bool hasUnsupportedEncryption;
+  final bool hasImplicitEncryptionIv;
+  final List<Uri> keyUris;
   final bool isLive;
   final int mediaSequence;
   final String raw;
@@ -105,6 +111,7 @@ const Set<String> _allowedMediaTags = {
   'START',
   'PROGRAM-DATE-TIME',
   'BYTERANGE',
+  'KEY',
 };
 
 class HlsParser {
@@ -155,13 +162,13 @@ class HlsParser {
       return HlsDecision.directFallback('不支持标签 $unsupported');
     }
     final playlist = _parseMedia(body, baseUri);
-    if (playlist.hasEncryption) {
-      return const HlsDecision.directFallback('加密流回退直连');
+    if (playlist.hasUnsupportedEncryption) {
+      return const HlsDecision.directFallback('不支持的加密流回退直连');
     }
     if (playlist.isLive) {
       return const HlsDecision.directFallback('直播流回退直连');
     }
-    if (adFilter.enabled) {
+    if (adFilter.enabled && !playlist.hasImplicitEncryptionIv) {
       final outcome = adFilter.filter(playlist);
       if (outcome.removedAny && outcome.filtered.isNotEmpty) {
         return HlsDecision.filtered(
@@ -185,6 +192,9 @@ class HlsParser {
       mapUri: original.mapUri,
       mapByteRange: original.mapByteRange,
       hasEncryption: original.hasEncryption,
+      hasUnsupportedEncryption: original.hasUnsupportedEncryption,
+      hasImplicitEncryptionIv: original.hasImplicitEncryptionIv,
+      keyUris: original.keyUris,
       isLive: original.isLive,
       mediaSequence: original.mediaSequence,
       raw: raw,
@@ -236,6 +246,9 @@ class HlsParser {
     Uri? mapUri;
     String? mapByteRange;
     var hasEncryption = false;
+    var hasUnsupportedEncryption = false;
+    var hasImplicitEncryptionIv = false;
+    final keyUris = <Uri>[];
     var hasEndlist = false;
     var mediaSequence = 0;
     var discontinuityBefore = false;
@@ -253,7 +266,27 @@ class HlsParser {
           mapByteRange = byterange;
         }
       } else if (line.startsWith('#EXT-X-KEY:')) {
-        hasEncryption = true;
+        final method = (_attrValue(line, 'METHOD') ?? '').toUpperCase();
+        if (method != 'NONE') hasEncryption = true;
+        if (method == 'AES-128') {
+          final keyFormat = _attrValue(line, 'KEYFORMAT');
+          final uri = _attrValue(line, 'URI');
+          final iv = _attrValue(line, 'IV');
+          if (iv == null) {
+            hasImplicitEncryptionIv = true;
+          } else if (!RegExp(r'^0x[0-9a-fA-F]{32}$').hasMatch(iv)) {
+            hasUnsupportedEncryption = true;
+          }
+          if ((keyFormat == null || keyFormat.toLowerCase() == 'identity') &&
+              uri != null) {
+            final resolved = baseUri.resolve(uri);
+            if (!keyUris.contains(resolved)) keyUris.add(resolved);
+          } else {
+            hasUnsupportedEncryption = true;
+          }
+        } else if (method != 'NONE') {
+          hasUnsupportedEncryption = true;
+        }
       } else if (line.startsWith('#EXTINF:')) {
         pendingDuration = double.tryParse(
           line.substring(8).trim().split(',').first,
@@ -287,6 +320,9 @@ class HlsParser {
       mapUri: mapUri,
       mapByteRange: mapByteRange,
       hasEncryption: hasEncryption,
+      hasUnsupportedEncryption: hasUnsupportedEncryption,
+      hasImplicitEncryptionIv: hasImplicitEncryptionIv,
+      keyUris: keyUris,
       isLive: !hasEndlist,
       mediaSequence: mediaSequence,
       raw: body,
@@ -299,10 +335,10 @@ class HlsParser {
     final rewritten = StringBuffer();
     String? mapResourceId;
 
-    String register(Uri uri) {
+    String register(Uri uri, {String? forceExt}) {
       final id = resourceId(uri);
       resources[id] = uri;
-      extByResourceId[id] = extFor(uri);
+      extByResourceId[id] = forceExt ?? extFor(uri);
       return '/play/$sessionToken/res/$id';
     }
 
@@ -325,6 +361,20 @@ class HlsParser {
           final path = register(mapUri);
           final replaced = line.replaceFirst('URI="$uriValue"', 'URI="$path"');
           rewritten.writeln(replaced);
+        } else {
+          rewritten.writeln(line);
+        }
+        continue;
+      }
+      if (line.startsWith('#EXT-X-KEY:')) {
+        final method = (_attrValue(line, 'METHOD') ?? '').toUpperCase();
+        final uriValue = _attrValue(line, 'URI');
+        if (method == 'AES-128' && uriValue != null) {
+          final keyUri = playlist.baseUri.resolve(uriValue);
+          final path = register(keyUri, forceExt: 'key');
+          rewritten.writeln(
+            line.replaceFirst(RegExp(r'URI="[^"]*"'), 'URI="$path"'),
+          );
         } else {
           rewritten.writeln(line);
         }
@@ -364,6 +414,12 @@ class HlsParser {
     final pattern = RegExp('$key="([^"]*)"');
     final match = pattern.firstMatch(line);
     return match?.group(1);
+  }
+
+  static String? _attrValue(String line, String key) {
+    final quoted = RegExp('$key="([^"]*)"').firstMatch(line)?.group(1);
+    if (quoted != null) return quoted;
+    return RegExp('$key=([^,]*)').firstMatch(line)?.group(1)?.trim();
   }
 
   static bool _isMaster(String body) =>

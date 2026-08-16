@@ -5,14 +5,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:video_player/video_player.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../app/theme.dart';
 import '../data/cache/cache_manager.dart';
 import '../data/cache/cache_providers.dart';
+import '../data/cache/content_type_sniffer.dart';
 import '../data/cache/download_providers.dart';
 import '../data/cache/download_task_manager.dart';
 import '../data/cache/hls_parser.dart';
 import '../data/cache/local_proxy.dart';
 import '../data/cache/playback_session.dart';
+import '../data/cache/playback_url_resolver.dart';
 import '../data/history_repository.dart';
 import '../data/video_repository.dart';
 import '../data/vod_source_registry.dart';
@@ -50,8 +53,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   PlaybackSession? _activeSession;
   LocalProxyServer? _proxy;
   http.Client? _sessionClient;
+  PlaybackUrlResolver? _urlResolver;
   Timer? saveTimer;
   Timer? controlsTimer;
+  Timer? wakelockTimer;
   bool failed = false, fullScreen = false, initializing = true;
   bool controlsVisible = true;
   PlaybackStatus playbackStatus = const PlaybackStatus.preparing();
@@ -102,9 +107,50 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         playbackStatus = const PlaybackStatus.preparing();
       });
     }
-    final target = _selection;
-    final directUrl = episode.url;
+    var target = _selection;
     PlaybackSession? session;
+    PlaybackStatus? preparedStatus;
+    if (target != null) {
+      try {
+        // Try the cache before resolving an unknown URL through the network.
+        // Downloaded HLS endpoints are often extensionless and cannot be
+        // reconstructed from the persisted URL alone.
+        if (target.playbackSource.format == PlaybackFormat.unknown &&
+            target.hasStableIdentity) {
+          final offlinePreparation = await _prepareSession(target, generation);
+          if (offlinePreparation.status.mode == PlaybackMode.cachePlayback &&
+              offlinePreparation.session != null) {
+            session = offlinePreparation.session;
+            target = target.copyWith(
+              playbackSource: target.playbackSource.copyWith(
+                format: PlaybackFormat.hls,
+              ),
+            );
+            preparedStatus = offlinePreparation.status;
+          }
+        }
+        if (session == null) {
+          final client = _sessionClient ??= http.Client();
+          target = await (_urlResolver ??= PlaybackUrlResolver(
+            client: client,
+          )).resolveSelection(target);
+          if (!mounted || generation != setupGeneration) return;
+          _selection = target;
+          episode = target.episode;
+        }
+      } on PlaybackUrlResolutionException catch (error) {
+        if (mounted && generation == setupGeneration) {
+          setState(() {
+            failed = true;
+            initializing = false;
+            errorMessage = error.message;
+          });
+          unawaited(WakelockPlus.disable());
+        }
+        return;
+      }
+    }
+    final directUrl = target?.episode.url ?? episode.url;
     var status = const PlaybackStatus(
       mode: PlaybackMode.direct,
       reason: PlaybackFallbackReason.stableIdentityMissing,
@@ -114,11 +160,42 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         mode: PlaybackMode.direct,
         reason: PlaybackFallbackReason.stableIdentityMissing,
       );
+    } else if (preparedStatus != null) {
+      status = preparedStatus;
     } else if (target.playbackSource.format != PlaybackFormat.hls) {
-      status = const PlaybackStatus(
-        mode: PlaybackMode.direct,
-        reason: PlaybackFallbackReason.unsupportedFormat,
-      );
+      if (target.playbackSource.format == PlaybackFormat.unknown) {
+        final sniffed = await ContentTypeSniffer().sniff(
+          target.playbackSource.url.toString(),
+        );
+        if (sniffed == PlaybackFormat.hls) {
+          _selection = target = PlaybackSelection(
+            sourceId: target.sourceId,
+            sourceVideoId: target.sourceVideoId,
+            title: target.title,
+            playbackLineIdentity: target.playbackLineIdentity,
+            episodeIdentity: target.episodeIdentity,
+            episode: target.episode,
+            playbackSource: target.playbackSource.copyWith(format: sniffed),
+          );
+          final preparation = await _prepareSession(target, generation);
+          session = preparation.session;
+          status = preparation.status;
+          if (!mounted || generation != setupGeneration) {
+            if (session != null) await _closeSession(session);
+            return;
+          }
+        } else {
+          status = const PlaybackStatus(
+            mode: PlaybackMode.direct,
+            reason: PlaybackFallbackReason.unsupportedFormat,
+          );
+        }
+      } else {
+        status = const PlaybackStatus(
+          mode: PlaybackMode.direct,
+          reason: PlaybackFallbackReason.unsupportedFormat,
+        );
+      }
     } else {
       final preparation = await _prepareSession(target, generation);
       session = preparation.session;
@@ -130,10 +207,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
     setState(() => playbackStatus = status);
     final proxyUrl = session?.proxyManifestUrl;
+    final isHls = target?.playbackSource.format == PlaybackFormat.hls;
     var next = VideoPlayerController.networkUrl(
       Uri.parse(proxyUrl ?? directUrl),
       formatHint:
-          (proxyUrl != null || directUrl.toLowerCase().contains('.m3u8'))
+          (proxyUrl != null ||
+              isHls ||
+              directUrl.toLowerCase().contains('.m3u8'))
           ? VideoFormat.hls
           : null,
     );
@@ -159,7 +239,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         );
         next = VideoPlayerController.networkUrl(
           Uri.parse(directUrl),
-          formatHint: directUrl.toLowerCase().contains('.m3u8')
+          formatHint: (isHls || directUrl.toLowerCase().contains('.m3u8'))
               ? VideoFormat.hls
               : null,
         );
@@ -178,6 +258,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               initializing = false;
               errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
             });
+            unawaited(WakelockPlus.disable());
           }
         }
       } else if (mounted) {
@@ -186,6 +267,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           initializing = false;
           errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
         });
+        unawaited(WakelockPlus.disable());
       }
     }
   }
@@ -230,6 +312,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     setState(() => initializing = false);
     _scheduleControlsHide();
     unawaited(_save());
+    await _syncWakelock();
+    _startWakelockHeartbeat();
     if (session != null) {
       try {
         final prefetcher = session.buildPrefetcher();
@@ -399,6 +483,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           );
           errorMessage = e.toString();
         });
+        unawaited(WakelockPlus.disable());
       }
     }
   }
@@ -441,11 +526,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
     saveTimer?.cancel();
     controlsTimer?.cancel();
+    wakelockTimer?.cancel();
     setState(() {
       failed = true;
       initializing = false;
       errorMessage = '播放已中断，请重新获取播放地址后重试';
     });
+    unawaited(WakelockPlus.disable());
   }
 
   @override
@@ -453,9 +540,43 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      controller?.pause();
+      final current = controller;
+      if (current?.value.isPlaying == true) {
+        unawaited(current!.pause().then((_) => _syncWakelock()));
+      } else {
+        unawaited(_syncWakelock());
+      }
+      wakelockTimer?.cancel();
       unawaited(_save());
+    } else if (state == AppLifecycleState.resumed) {
+      // The OS can release a wakelock while the app is inactive.
+      unawaited(_syncWakelock());
     }
+  }
+
+  /// Keeps the screen awake only while this page is actively playing.
+  /// Wakelocks may be released by the OS, so this is called at playback and
+  /// lifecycle transitions instead of only during setup.
+  Future<void> _syncWakelock() async {
+    final shouldKeepAwake =
+        mounted && !failed && controller?.value.isPlaying == true;
+    try {
+      await WakelockPlus.toggle(enable: shouldKeepAwake);
+    } catch (_) {
+      // A wakelock failure must not interrupt video playback.
+    }
+  }
+
+  void _startWakelockHeartbeat() {
+    wakelockTimer?.cancel();
+    wakelockTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted || failed || controller?.value.isPlaying != true) {
+        wakelockTimer?.cancel();
+        wakelockTimer = null;
+        return;
+      }
+      unawaited(_syncWakelock());
+    });
   }
 
   Future<void> _showPlaybackStatusDetails() async {
@@ -584,6 +705,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     playbackToggleInFlight = true;
     try {
       await current.pause();
+      await _syncWakelock();
+      wakelockTimer?.cancel();
       controlsTimer?.cancel();
       unawaited(_save());
       if (mounted) setState(() => controlsVisible = true);
@@ -598,6 +721,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     playbackToggleInFlight = true;
     try {
       await current.play();
+      await _syncWakelock();
+      _startWakelockHeartbeat();
       _scheduleControlsHide();
       if (mounted) setState(() => controlsVisible = true);
     } finally {
@@ -633,6 +758,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     WidgetsBinding.instance.removeObserver(this);
     saveTimer?.cancel();
     controlsTimer?.cancel();
+    wakelockTimer?.cancel();
     unawaited(_save());
     final proxy = _proxy;
     // 先关闭会话（等待活跃读取结束并释放缓存引用），之后才关闭代理。
@@ -648,6 +774,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     unawaited(_resetScreenBrightness());
+    unawaited(WakelockPlus.disable());
     super.dispose();
   }
 
@@ -777,10 +904,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                 behavior: HitTestBehavior.opaque,
                 onTap: _toggleControls,
                 onDoubleTap: _togglePlayback,
+                onHorizontalDragStart: _screenHorizontalDragStart,
+                onHorizontalDragUpdate: (details) =>
+                    _screenHorizontalDragUpdate(details, constraints.maxWidth),
+                onHorizontalDragEnd: (_) => _screenHorizontalDragEnd(),
+                onHorizontalDragCancel: _screenHorizontalDragCancel,
                 onLongPressStart: (details) =>
                     _screenLongPressStart(details, constraints.maxWidth),
-                onLongPressMoveUpdate: (details) =>
-                    _screenLongPressUpdate(details, constraints.maxWidth),
                 onLongPressEnd: (_) => _screenLongPressEnd(),
                 onLongPressCancel: _screenLongPressCancel,
                 onVerticalDragStart: (details) =>
@@ -972,33 +1102,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                 ),
               ),
             ),
-          AnimatedBuilder(
-            animation: Listenable.merge([current, screenSeeking]),
-            builder: (_, _) {
-              final paused = !current.value.isPlaying && !screenSeeking.value;
-              return AnimatedOpacity(
-                opacity: controlsVisible || paused ? 1 : 0,
-                duration: const Duration(milliseconds: 200),
-                child: IgnorePointer(
-                  ignoring: !controlsVisible && !paused,
-                  child: Center(
-                    child: paused
-                        ? IconButton.filled(
-                            onPressed: _resumePlayback,
-                            iconSize: 38,
-                            style: IconButton.styleFrom(
-                              minimumSize: const Size.square(60),
-                              backgroundColor: AppColors.accent,
-                              foregroundColor: AppColors.onAccent,
-                            ),
-                            icon: const Icon(Icons.play_arrow),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                ),
-              );
-            },
-          ),
           Align(
             alignment: Alignment.bottomCenter,
             child: AnimatedOpacity(
@@ -1202,6 +1305,35 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               ),
             ),
           ),
+          // Paint the paused-state button after the bottom controls so it
+          // remains visible in the non-fullscreen player.
+          AnimatedBuilder(
+            animation: Listenable.merge([current, screenSeeking]),
+            builder: (_, _) {
+              final paused = !current.value.isPlaying && !screenSeeking.value;
+              return AnimatedOpacity(
+                opacity: controlsVisible || paused ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: IgnorePointer(
+                  ignoring: !controlsVisible && !paused,
+                  child: Center(
+                    child: paused
+                        ? IconButton.filled(
+                            onPressed: _resumePlayback,
+                            iconSize: 38,
+                            style: IconButton.styleFrom(
+                              minimumSize: const Size.square(60),
+                              backgroundColor: AppColors.accent,
+                              foregroundColor: AppColors.onAccent,
+                            ),
+                            icon: const Icon(Icons.play_arrow),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ),
+              );
+            },
+          ),
           if (volumeSliderVisible && controlsVisible)
             Align(
               alignment: Alignment.bottomLeft,
@@ -1279,19 +1411,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
   }
 
-  void _screenLongPressUpdate(
-    LongPressMoveUpdateDetails details,
-    double width,
-  ) {
+  void _screenHorizontalDragStart(DragStartDetails details) {
     final current = controller;
-    if (current == null) return;
-    final delta = details.localPosition.dx - screenSeekStartX;
-    if (!screenSeeking.value && delta.abs() >= 12) {
-      _stopSpeedBoost(current);
-      _seekStart(screenSeekStartPosition);
-      if (isSeeking) screenSeeking.value = true;
+    if (current == null ||
+        !current.value.isInitialized ||
+        current.value.duration <= Duration.zero ||
+        isSeeking ||
+        seekCommitting.value) {
+      return;
     }
-    if (!screenSeeking.value) return;
+    screenSeekStartX = details.localPosition.dx;
+    screenSeekStartPosition = current.value.position;
+    controlsTimer?.cancel();
+    _seekStart(screenSeekStartPosition);
+    if (isSeeking) screenSeeking.value = true;
+  }
+
+  void _screenHorizontalDragUpdate(DragUpdateDetails details, double width) {
+    final current = controller;
+    if (current == null || !screenSeeking.value) return;
+    final delta = details.localPosition.dx - screenSeekStartX;
     _seekUpdate(
       positionFromDragDelta(
         start: screenSeekStartPosition,
@@ -1300,6 +1439,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         duration: current.value.duration,
       ),
     );
+  }
+
+  void _screenHorizontalDragEnd() {
+    if (!screenSeeking.value) {
+      _scheduleControlsHide();
+      return;
+    }
+    unawaited(_commitScreenSeek());
+  }
+
+  void _screenHorizontalDragCancel() {
+    if (!screenSeeking.value) return;
+    screenSeeking.value = false;
+    unawaited(_seekCancel());
   }
 
   void _screenLongPressEnd() {
@@ -1645,6 +1798,7 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
                 label: Text(e.name),
                 selected: e.id == widget.current.id,
                 onSelected: (_) => widget.onEpisodeTap(e),
+                showCheckmark: false,
               ),
           ],
         ),

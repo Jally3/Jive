@@ -146,7 +146,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     if (active == null || active.episodes.isEmpty) return null;
     final current =
         active.episodes[selected.clamp(0, active.episodes.length - 1)];
-    final lineIdentity = active.playbackLines.firstOrNull?.identity;
+    final lineIdentity = preferredPlaybackLine(active)?.identity;
     try {
       final manager = await ref.read(downloadManagerProvider.future);
       final task = manager.tasks
@@ -291,7 +291,10 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   }
 
   DownloadTask? _taskForEpisode(List<DownloadTask> tasks, Episode episode) {
-    final lineIdentity = sc?.activeVideo.playbackLines.firstOrNull?.identity;
+    final active = sc?.activeVideo;
+    final lineIdentity = active == null
+        ? null
+        : preferredPlaybackLine(active)?.identity;
     return tasks
         .where(
           (task) =>
@@ -379,11 +382,12 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           context,
         ).showSnackBar(SnackBar(content: Text('已开始下载 $created 集（完成后自动过滤广告）')));
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
+        final reason = (e is Exception) ? e.toString() : '未知错误';
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('下载任务创建失败，请稍后重试')));
+        ).showSnackBar(SnackBar(content: Text('下载任务创建失败：$reason')));
       }
     } finally {
       if (mounted) setState(() => downloadResolving = false);
@@ -979,6 +983,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
               return ChoiceChip(
                 label: Text(episode.name),
                 selected: selected == idx,
+                showCheckmark: false,
                 onSelected: (_) {
                   setState(() => selected = idx);
                   _play(episodeIndex: idx);

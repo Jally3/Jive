@@ -42,6 +42,7 @@ dependencies:
   screen_brightness: ^2.1.11
   crypto: ^3.0.6
   path_provider: ^2.1.5
+  wakelock_plus: ^1.2.0
 
 # screen_brightness_ios 2.1.4+ uses Flutter 3.38 scene APIs
 # (registrar.addSceneDelegate) and fails to compile on Flutter 3.35.

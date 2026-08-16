@@ -34,6 +34,16 @@ https://cdn.example.com/movie/0003.ts
 #EXT-X-ENDLIST
 ''';
 
+const _aesManifest = '''
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-KEY:METHOD=AES-128,URI="enc.key",IV=0x00000000000000000000000000000000
+#EXTINF:4.0,
+segment.ts
+#EXT-X-ENDLIST
+''';
+
 class _FakeDiskSpace implements DiskSpaceProvider {
   @override
   Future<int> availableBytes() async => 20 * (1 << 30);
@@ -83,6 +93,88 @@ PlaybackSelection _selectionFor(int index) {
 }
 
 void main() {
+  test('AES-128 key and encrypted segments remain playable offline', () async {
+    final directory = Directory.systemTemp.createTempSync(
+      'jive_download_aes_test',
+    );
+    final store = CacheIndexStore(directory);
+    final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+    await cache.initialize();
+    final requested = <String>[];
+    final client = MockClient((request) async {
+      requested.add(request.url.toString());
+      if (request.url.path.endsWith('.m3u8')) {
+        return http.Response(_aesManifest, 200);
+      }
+      if (request.url.path.endsWith('enc.key')) {
+        return http.Response.bytes(List<int>.generate(16, (i) => i), 200);
+      }
+      return http.Response('encrypted-segment', 200);
+    });
+    final manager = DownloadTaskManager(
+      store: store,
+      cacheManager: cache,
+      client: client,
+      resolveSelection: (_) async => _selection(),
+    );
+    await manager.initialize();
+    await manager.enqueue(_selection());
+    for (var i = 0; i < 100; i++) {
+      if (manager.tasks.single.status == DownloadTaskStatus.completed) break;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    final completed = manager.tasks.single;
+    expect(completed.status, DownloadTaskStatus.completed);
+    expect(completed.expectedResourceCount, 2);
+    expect(requested.any((url) => url.endsWith('/enc.key')), isTrue);
+    final entry = await cache.getEntry(
+      '${completed.contentKeyHash}|${completed.revisionKeyHash}',
+    );
+    final catalog = await cache.resourceCatalog(entry!.key);
+    final keyRecord = catalog.values.singleWhere(
+      (record) => record.ext == 'key',
+    );
+    expect(keyRecord.size, 16);
+    final playable = await store.loadProxyManifest(
+      entry.contentKeyHash,
+      entry.revisionKeyHash,
+    );
+    expect(playable, contains('#EXT-X-KEY:METHOD=AES-128'));
+    expect(playable, contains('/res/sha256:'));
+    expect(playable, isNot(contains('URI="enc.key"')));
+
+    final proxy = LocalProxyServer();
+    await proxy.start();
+    final offline = await PlaybackSession.prepare(
+      selection: _selection(),
+      proxy: proxy,
+      parser: HlsParser(
+        client: MockClient((_) async => throw StateError('offline')),
+      ),
+      client: MockClient((_) async => throw StateError('offline')),
+      cacheManager: cache,
+      store: store,
+    );
+    expect(offline.status.mode.name, 'cachePlayback');
+    expect(offline.session, isNotNull);
+    final keyPath = RegExp(
+      r'URI="(/play/[^\s"]+/res/sha256:[0-9a-f]{64})"',
+    ).firstMatch(offline.session!.route.proxyManifest)?.group(1);
+    expect(keyPath, isNotNull);
+    final localClient = http.Client();
+    final keyResponse = await localClient.get(
+      Uri.parse('http://127.0.0.1:${proxy.port}$keyPath'),
+    );
+    expect(keyResponse.statusCode, 200);
+    expect(keyResponse.bodyBytes, hasLength(16));
+    localClient.close();
+    await offline.session!.close(proxy);
+    await proxy.close();
+    await manager.dispose();
+    await cache.flush();
+    directory.deleteSync(recursive: true);
+  });
+
   test('paused task finalizes from saved manifest without network', () async {
     final directory = Directory.systemTemp.createTempSync(
       'jive_download_offline_resume_test',

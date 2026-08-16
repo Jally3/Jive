@@ -2,6 +2,13 @@ import 'dart:collection';
 
 enum PlaybackFormat { unknown, hls, mp4, dash }
 
+String playbackFormatLabel(PlaybackFormat format) => switch (format) {
+  PlaybackFormat.hls => 'HLS (m3u8)',
+  PlaybackFormat.mp4 => 'MP4',
+  PlaybackFormat.dash => 'DASH (mpd)',
+  PlaybackFormat.unknown => '未知格式',
+};
+
 class PlaybackSource {
   PlaybackSource({
     required this.url,

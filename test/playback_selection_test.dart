@@ -111,6 +111,45 @@ void main() {
     expect(selectionFor(video, video.episodes.first), isNull);
   });
 
+  test('selection prefers a direct m3u8 line over an HTML wrapper', () {
+    const wrapper = Episode(
+      id: '1',
+      name: '第1集',
+      url: 'https://v.example.com/play/abc',
+      identity: 'ep:1',
+    );
+    const direct = Episode(
+      id: '1',
+      name: '第1集',
+      url: 'https://cdn.example.com/abc/index.m3u8',
+      identity: 'ep:1',
+    );
+    final video = Video(
+      id: '7',
+      title: '测试片',
+      episodes: const [wrapper],
+      playbackLines: const [
+        PlaybackLine(
+          id: '0',
+          name: 'gsyun',
+          identity: 'line:wrapper',
+          episodes: [wrapper],
+        ),
+        PlaybackLine(
+          id: '1',
+          name: 'gsm3u8',
+          identity: 'line:m3u8',
+          episodes: [direct],
+        ),
+      ],
+    );
+
+    final selection = selectionFor(video, wrapper)!;
+    expect(selection.playbackLineIdentity, 'line:m3u8');
+    expect(selection.playbackSource.url, Uri.parse(direct.url));
+    expect(selection.playbackSource.format, PlaybackFormat.hls);
+  });
+
   test('selectionFor matches the same episode identity across refresh', () {
     final line = PlaybackLine(
       id: '0',

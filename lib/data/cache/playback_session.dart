@@ -265,7 +265,9 @@ class PlaybackSession {
     final token = _token();
     final proxyManifest = _replaceToken(raw, token);
     final catalog = await cacheManager.resourceCatalog(entry.key);
-    if (catalog.isEmpty) return null;
+    if (catalog.isEmpty) {
+      return null;
+    }
     final resources = <String, Uri>{};
     final extByResourceId = <String, String>{};
     catalog.forEach((id, record) {

@@ -13,6 +13,7 @@ import 'cache_io.dart';
 import 'cache_manager.dart';
 import 'content_key.dart';
 import 'hls_parser.dart';
+import 'playback_url_resolver.dart';
 import 'url_normalizer.dart';
 
 const String downloadTaskFileName = 'download_tasks.json';
@@ -210,7 +211,8 @@ class DownloadTaskManager {
     required this.resolveSelection,
     this.concurrency = 5,
   }) : assert(concurrency > 0),
-       _permits = _DownloadPermitPool(concurrency);
+       _permits = _DownloadPermitPool(concurrency),
+       _urlResolver = PlaybackUrlResolver(client: client);
 
   final CacheIndexStore store;
   final CacheManager cacheManager;
@@ -218,6 +220,7 @@ class DownloadTaskManager {
   final DownloadSelectionResolver resolveSelection;
   final int concurrency;
   final _DownloadPermitPool _permits;
+  final PlaybackUrlResolver _urlResolver;
   final Map<String, DownloadTask> _tasks = {};
   final Map<String, Future<void>> _running = {};
   final Map<String, PlaybackSelection?> _pendingSelections = {};
@@ -315,8 +318,11 @@ class DownloadTaskManager {
     if (!selection.hasStableIdentity) {
       throw const FormatException('缺少稳定的线路或剧集标识');
     }
+    selection = await _urlResolver.resolveSelection(selection);
     if (selection.playbackSource.format != PlaybackFormat.hls) {
-      throw const FormatException('仅支持 HLS VOD 下载');
+      throw FormatException(
+        '仅支持 HLS VOD 下载，当前格式：${playbackFormatLabel(selection.playbackSource.format)}',
+      );
     }
     final contentKey = _contentKey(selection);
     for (final task in _tasks.values) {
@@ -389,6 +395,47 @@ class DownloadTaskManager {
     }
   }
 
+  /// Removes the task record while keeping its cache entry by default.
+  /// Set [deleteCache] when the user explicitly wants to remove both.
+  Future<void> removeTask(String taskId, {bool deleteCache = false}) async {
+    final task = _tasks[taskId];
+    if (task == null) return;
+    if (task.status == DownloadTaskStatus.queued ||
+        task.status == DownloadTaskStatus.downloading) {
+      await cancel(taskId);
+      final running = _running[taskId];
+      if (running != null) await running;
+    }
+    final latest = _tasks[taskId] ?? task;
+    if (deleteCache &&
+        latest.contentKeyHash != null &&
+        latest.revisionKeyHash != null) {
+      await cacheManager.deleteEntry(
+        '${latest.contentKeyHash}|${latest.revisionKeyHash}',
+      );
+    }
+    _tasks.remove(taskId);
+    _pendingSelections.remove(taskId);
+    _pauseRequested.remove(taskId);
+    _cancelRequested.remove(taskId);
+    await _persist();
+    _emit();
+  }
+
+  Future<void> clearFinishedTasks() async {
+    final ids = tasks
+        .where(
+          (task) =>
+              task.status == DownloadTaskStatus.completed ||
+              task.status == DownloadTaskStatus.cancelled,
+        )
+        .map((task) => task.taskId)
+        .toList();
+    for (final id in ids) {
+      await removeTask(id);
+    }
+  }
+
   /// Restores a task's selection without a network request when the manifest
   /// URL was persisted. Older tasks fall back to the repository resolver.
   Future<PlaybackSelection?> selectionForTask(DownloadTask task) async {
@@ -424,7 +471,10 @@ class DownloadTaskManager {
       playbackLineIdentity: task.playbackLineIdentity,
       episodeIdentity: task.episodeIdentity,
       episode: episode,
-      playbackSource: PlaybackSource(url: url, format: PlaybackFormat.hls),
+      playbackSource: PlaybackSource(
+        url: url,
+        format: inferPlaybackFormat(url.toString()),
+      ),
     );
   }
 
@@ -491,9 +541,12 @@ class DownloadTaskManager {
       if (_cancelRequested.contains(taskId)) return;
       task = await _set(task.copyWith(status: DownloadTaskStatus.downloading));
       _resourceLengths[taskId] = {};
-      final selection = initial ?? await selectionForTask(task);
+      var selection = initial ?? await selectionForTask(task);
       if (selection == null || !selection.hasStableIdentity) {
         throw const _DownloadException(DownloadFailureReason.invalidSelection);
+      }
+      if (selection.playbackSource.format == PlaybackFormat.unknown) {
+        selection = await _urlResolver.resolveSelection(selection);
       }
       // Hybrid download strategy: resolve and download the original media
       // playlist first. Ad filtering is deliberately deferred until every
@@ -652,21 +705,23 @@ class DownloadTaskManager {
       var finalFilterVersion = 0;
       var finalTimelineVersion = 0;
       try {
-        final outcome = const AdFilter(enabled: true).filter(rawPlaylist);
-        if (outcome.removedAny && outcome.filtered.isNotEmpty) {
-          playablePlaylist = HlsParser(
-            client: client,
-          ).buildFilteredPlaylist(rawPlaylist, outcome);
-          filterConfidence = outcome.confidence;
-          finalFilterVersion = downloadFilterVersion;
-          finalTimelineVersion = adTimelineVersion;
-          await _saveTimeline(
-            contentKey.hash,
-            revisionKeyHash,
-            fingerprint,
-            outcome.mapping,
-            outcome.confidence,
-          );
+        if (!rawPlaylist.hasImplicitEncryptionIv) {
+          final outcome = const AdFilter(enabled: true).filter(rawPlaylist);
+          if (outcome.removedAny && outcome.filtered.isNotEmpty) {
+            playablePlaylist = HlsParser(
+              client: client,
+            ).buildFilteredPlaylist(rawPlaylist, outcome);
+            filterConfidence = outcome.confidence;
+            finalFilterVersion = downloadFilterVersion;
+            finalTimelineVersion = adTimelineVersion;
+            await _saveTimeline(
+              contentKey.hash,
+              revisionKeyHash,
+              fingerprint,
+              outcome.mapping,
+              outcome.confidence,
+            );
+          }
         }
       } catch (_) {
         // The raw manifest is the safe fallback. It is already fully
@@ -717,6 +772,16 @@ class DownloadTaskManager {
           current.copyWith(
             status: DownloadTaskStatus.failed,
             error: DownloadFailureReason.quotaExceeded,
+          ),
+        );
+      }
+    } on CacheResourceValidationException {
+      final current = _tasks[taskId];
+      if (current != null && !_cancelRequested.contains(taskId)) {
+        await _set(
+          current.copyWith(
+            status: DownloadTaskStatus.failed,
+            error: DownloadFailureReason.encryptedStream,
           ),
         );
       }

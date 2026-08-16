@@ -38,6 +38,10 @@ class CacheQuotaException implements Exception {
   const CacheQuotaException();
 }
 
+class CacheResourceValidationException implements Exception {
+  const CacheResourceValidationException();
+}
+
 class ResourceFetcher {
   ResourceFetcher({
     required this.client,
@@ -228,6 +232,9 @@ class ResourceFetcher {
       onDone: () async {
         try {
           await sink.close();
+          if (ext == 'key' && written != 16) {
+            throw const CacheResourceValidationException();
+          }
           if (!await lease.ensureCapacity(written)) {
             throw const CacheQuotaException();
           }

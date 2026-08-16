@@ -177,7 +177,12 @@ class CacheManager {
       }
       final length = await file.length();
       if (record.complete) {
-        if (length == record.size) {
+        if (record.ext == 'key' && length != 16) {
+          records.remove(id);
+          try {
+            await file.delete();
+          } catch (_) {}
+        } else if (length == record.size) {
           completeBytes += length;
           committed++;
         } else {
