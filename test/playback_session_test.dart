@@ -1,0 +1,178 @@
+import 'dart:io';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:jive/data/cache/cache_index.dart';
+import 'package:jive/data/cache/cache_manager.dart';
+import 'package:jive/data/cache/content_key.dart';
+import 'package:jive/data/cache/hls_parser.dart';
+import 'package:jive/data/cache/local_proxy.dart';
+import 'package:jive/data/cache/playback_session.dart';
+import 'package:jive/domain/playback_selection.dart';
+import 'package:jive/domain/playback_source.dart';
+import 'package:jive/domain/playback_status.dart';
+import 'package:jive/domain/video.dart';
+
+const _gb = 1 << 30;
+
+class _FakeDiskSpace implements DiskSpaceProvider {
+  @override
+  Future<int> availableBytes() async => 20 * _gb;
+  @override
+  Future<int?> platformCacheLimitBytes() async => null;
+  @override
+  Future<int?> totalCapacityBytes() async => 64 * _gb;
+}
+
+final _segmentId = 'sha256:${'a' * 64}';
+
+PlaybackSelection _selection() => PlaybackSelection(
+  sourceId: 's',
+  sourceVideoId: 'v',
+  title: '影片',
+  playbackLineIdentity: 'line',
+  episodeIdentity: 'ep',
+  episode: const Episode(
+    id: '1',
+    name: '第1集',
+    url: 'https://cdn.example.com/a.m3u8',
+    identity: 'ep',
+  ),
+  playbackSource: PlaybackSource(
+    url: Uri.parse('https://cdn.example.com/a.m3u8'),
+    format: PlaybackFormat.hls,
+  ),
+);
+
+void main() {
+  late Directory tempDir;
+  late CacheIndexStore store;
+  late CacheManager manager;
+  late LocalProxyServer proxy;
+
+  setUp(() async {
+    tempDir = Directory.systemTemp.createTempSync('jive_session_test');
+    store = CacheIndexStore(tempDir);
+    manager = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+    await manager.initialize();
+    proxy = LocalProxyServer();
+    await proxy.start();
+  });
+
+  tearDown(() async {
+    await manager.flush();
+    await proxy.close();
+    if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+  });
+
+  test('full cache offline hit does not contact the network', () async {
+    final selection = _selection();
+    final contentKey = ContentKeyBuilder().build(
+      ContentKeyParts(
+        sourceId: selection.sourceId,
+        sourceVideoId: selection.sourceVideoId,
+        playbackLineIdentity: selection.playbackLineIdentity,
+        episodeIdentity: selection.episodeIdentity,
+      ),
+    );
+    final entry = await manager.upsertEntry(
+      CacheEntry(
+        contentKeyVersion: contentKey.version,
+        contentKeyHash: contentKey.hash,
+        revisionKeyHash: 'rk',
+        manifestFingerprint: 'fp',
+        manifestBaseUrl: 'https://cdn.example.com/a.m3u8',
+        sourceId: selection.sourceId,
+        sourceVideoId: selection.sourceVideoId,
+        title: selection.title,
+        playbackLineIdentity: selection.playbackLineIdentity,
+        playbackLineName: '',
+        episodeIdentity: selection.episodeIdentity,
+        episodeId: selection.episode.id,
+        episodeName: selection.episode.name,
+      ),
+    );
+    await manager.setExpectations(entry.key, 1);
+    final lease = await manager.reserve(entry.key, 100);
+    await lease?.commitResource(resourceId: _segmentId, size: 100, ext: 'ts');
+    final resFile = store.resourceFile(contentKey.hash, 'rk', _segmentId, 'ts');
+    await resFile.parent.create(recursive: true);
+    await resFile.writeAsBytes(List.filled(100, 0));
+    await store.saveProxyManifest(
+      contentKey.hash,
+      'rk',
+      '#EXTM3U\n#EXTINF:4.0,\n/play/oldtoken/res/$_segmentId\n#EXT-X-ENDLIST\n',
+    );
+
+    // 任何网络请求都抛错：离线命中不应访问远端。
+    final throwing = MockClient(
+      (request) async => throw StateError('no network'),
+    );
+    final preparation = await PlaybackSession.prepare(
+      selection: selection,
+      proxy: proxy,
+      parser: HlsParser(client: throwing),
+      client: throwing,
+      cacheManager: manager,
+      store: store,
+    );
+
+    final session = preparation.session;
+    expect(preparation.status.mode, PlaybackMode.cachePlayback);
+    expect(session, isNotNull);
+    expect(session!.route.fetcher, isNotNull);
+    expect(session.proxyManifestUrl, contains(session.token));
+    expect(
+      session.route.proxyManifest,
+      contains('/play/${session.token}/res/$_segmentId'),
+    );
+
+    // 离线会话关闭后释放缓存引用。
+    await session.close(proxy);
+  });
+
+  test(
+    'online prepare persists the proxy manifest for later offline use',
+    () async {
+      final selection = _selection();
+      final client = MockClient((request) async {
+        return http.Response(
+          '#EXTM3U\n#EXTINF:4.0,\nhttps://cdn.example.com/seg0.ts\n#EXT-X-ENDLIST\n',
+          200,
+        );
+      });
+      final preparation = await PlaybackSession.prepare(
+        selection: selection,
+        proxy: proxy,
+        parser: HlsParser(client: client),
+        client: client,
+        cacheManager: manager,
+        store: store,
+      );
+      final session = preparation.session;
+      expect(preparation.status.mode, PlaybackMode.streamingAndCaching);
+      expect(session, isNotNull);
+      await session!.close(proxy);
+      await manager.flush();
+
+      // 再次初始化后应能找到离线条目且代理 manifest 已落盘。
+      final restored = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+      await restored.initialize();
+      final contentKey = ContentKeyBuilder().build(
+        ContentKeyParts(
+          sourceId: selection.sourceId,
+          sourceVideoId: selection.sourceVideoId,
+          playbackLineIdentity: selection.playbackLineIdentity,
+          episodeIdentity: selection.episodeIdentity,
+        ),
+      );
+      final hit = await restored.findOffline(
+        contentKey.hash,
+        'https://cdn.example.com/a.m3u8',
+      );
+      // 未下载任何资源，不应离线可播（但条目存在）。
+      expect(hit, isNull);
+      expect(await restored.stats(), isNotNull);
+    },
+  );
+}

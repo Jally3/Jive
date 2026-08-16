@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/domain/video.dart';
+import 'package:jive/domain/playback_status.dart';
 import 'package:jive/features/player_page.dart';
 
 Video _video() => Video(
@@ -18,6 +19,28 @@ Video _video() => Video(
 );
 
 void main() {
+  testWidgets('PlaybackStatusIndicator shows mode and handles long press', (
+    tester,
+  ) async {
+    var longPressed = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PlaybackStatusIndicator(
+            status: const PlaybackStatus(
+              mode: PlaybackMode.streamingAndCaching,
+            ),
+            onLongPress: () => longPressed = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('边下边播'), findsOneWidget);
+    await tester.longPress(find.byType(PlaybackStatusIndicator));
+    expect(longPressed, isTrue);
+  });
+
   testWidgets(
     'PlayerInfoPanel shows description and selectable episode chips',
     (tester) async {
