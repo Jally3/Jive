@@ -399,7 +399,6 @@ class HlsParser {
 
   static String resourceId(Uri uri) =>
       'sha256:${sha256.convert(utf8.encode(uri.toString())).toString()}';
-
   static String extFor(Uri uri) {
     final path = uri.path.toLowerCase();
     final dot = path.lastIndexOf('.');
@@ -455,3 +454,10 @@ class HlsParser {
     return null;
   }
 }
+
+/// 统一的缓存 revision 键：流式缓存与显式下载共用同一目录。
+/// 指纹基于实际使用的（可能已过滤广告的）清单——清单内容本身已蕴含
+/// 过滤规则版本的影响，因此无需额外的过滤版本后缀。两条路径必须使用
+/// 同一个函数，否则同一剧集会在磁盘上裂成两份。
+String hlsRevisionKeyHash(Uri baseUri, String manifestFingerprint) =>
+    'sha256:${sha256.convert(utf8.encode('$baseUri|$manifestFingerprint'))}';

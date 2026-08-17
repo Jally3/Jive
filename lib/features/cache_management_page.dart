@@ -5,6 +5,7 @@ import '../core/app_states.dart';
 import '../data/cache/cache_controller.dart';
 import '../data/cache/cache_index.dart';
 import '../data/cache/cache_manager.dart';
+import '../shared/app_snack_bar.dart';
 
 class CacheManagementPage extends ConsumerStatefulWidget {
   const CacheManagementPage({super.key});
@@ -42,23 +43,18 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
           .read(cacheControllerProvider.notifier)
           .clearAll();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              result.failed > 0
-                  ? '已清空 ${result.deleted} 项，${result.failed} 项失败'
-                  : result.skippedActive > 0
-                  ? '已清空 ${result.deleted} 项，${result.skippedActive} 项正在播放已跳过'
-                  : '已清空全部缓存',
-            ),
-          ),
+        showAppSnackBar(
+          context,
+          result.failed > 0
+              ? '已清空 ${result.deleted} 项，${result.failed} 项失败'
+              : result.skippedActive > 0
+              ? '已清空 ${result.deleted} 项，${result.skippedActive} 项正在播放已跳过'
+              : '已清空全部缓存',
         );
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('清理失败，请重试')));
+        showAppSnackBar(context, '清理失败，请重试');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -97,15 +93,11 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
           DeleteResult.notFound => '缓存不存在',
           DeleteResult.failed => '删除失败，请重试',
         };
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        showAppSnackBar(context, message);
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('删除失败，请重试')));
+        showAppSnackBar(context, '删除失败，请重试');
       }
     } finally {
       if (mounted) setState(() => _busy = false);

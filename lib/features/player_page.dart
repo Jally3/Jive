@@ -7,6 +7,7 @@ import 'package:screen_brightness/screen_brightness.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../app/theme.dart';
+import '../data/cache/ad_filter.dart';
 import '../data/cache/cache_manager.dart';
 import '../data/cache/cache_providers.dart';
 import '../data/cache/content_type_sniffer.dart';
@@ -16,6 +17,7 @@ import '../data/cache/hls_parser.dart';
 import '../data/cache/local_proxy.dart';
 import '../data/cache/playback_session.dart';
 import '../data/cache/playback_url_resolver.dart';
+import '../data/cache/prefetch_policy.dart';
 import '../data/history_repository.dart';
 import '../data/video_repository.dart';
 import '../data/vod_source_registry.dart';
@@ -25,6 +27,7 @@ import '../domain/playback_source.dart';
 import '../domain/playback_status.dart';
 import '../domain/video.dart';
 import '../domain/watch_record.dart';
+import '../shared/app_snack_bar.dart';
 import '../shared/playback_scrubber.dart';
 
 class PlayerPage extends ConsumerStatefulWidget {
@@ -85,12 +88,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   int seekGeneration = 0;
   String errorMessage = '视频加载失败，请检查网络后重试';
 
+  /// 当前预取窗口（片数），由 prefetchWindowProvider 驱动（网络类型/开关变化）。
+  int _prefetchWindow = 0;
+
   @override
   void initState() {
     super.initState();
     // Cache provider-backed dependencies while the ConsumerState is mounted.
     // dispose() must not access ref because its BuildContext is deactivated.
     historyRepository = ref.read(historyRepositoryProvider);
+    _prefetchWindow = ref.read(prefetchWindowProvider);
+    // 网络类型或开关变化时更新窗口；窗口从 0 变为可用时按当前位置重锚定。
+    ref.listenManual(prefetchWindowProvider, (previous, next) {
+      _prefetchWindow = next;
+      if (next > 0 && previous != next) {
+        _activeSession?.prefetcher?.updatePosition(
+          controller?.value.position ?? Duration.zero,
+        );
+      }
+    });
     WidgetsBinding.instance.addObserver(this);
     episode = widget.episode;
     _selection = widget.selection ?? selectionFor(widget.video, widget.episode);
@@ -308,7 +324,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     controller = next;
     next.addListener(_handlePlayerValueChanged);
     saveTimer?.cancel();
-    saveTimer = Timer.periodic(const Duration(seconds: 5), (_) => _save());
+    saveTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _onPlaybackTick(),
+    );
     setState(() => initializing = false);
     _scheduleControlsHide();
     unawaited(_save());
@@ -316,7 +335,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     _startWakelockHeartbeat();
     if (session != null) {
       try {
-        final prefetcher = session.buildPrefetcher();
+        final prefetcher = session.buildPrefetcher(
+          windowSize: () => _prefetchWindow,
+        );
         if (prefetcher != null) {
           unawaited(prefetcher.prefetch(fromPosition: resume));
         }
@@ -339,7 +360,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       return await PlaybackSession.prepare(
         selection: target,
         proxy: proxy,
-        parser: HlsParser(client: client),
+        parser: HlsParser(
+          client: client,
+          // 在线边下边播同样过滤广告分片；隐式 IV 加密流由解析器自动排除。
+          adFilter: const AdFilter(enabled: true),
+        ),
         client: client,
         cacheManager: cacheManager,
         store: cacheManager?.store,
@@ -387,17 +412,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final selection = _selection;
     if (selection == null || !selection.hasStableIdentity) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('当前播放源缺少稳定身份，无法下载')));
+        showAppSnackBar(context, '当前播放源缺少稳定身份，无法下载');
       }
       return;
     }
     if (selection.playbackSource.format != PlaybackFormat.hls) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('当前格式不支持下载，仅支持 HLS 视频')));
+        showAppSnackBar(context, '当前格式不支持下载，仅支持 HLS 视频');
       }
       return;
     }
@@ -405,15 +426,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       final manager = await ref.read(downloadManagerProvider.future);
       await manager.enqueue(selection);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已开始下载 ${episode.name}（完成后自动过滤广告）')),
-        );
+        showAppSnackBar(context, '已开始下载 ${episode.name}（自动跳过广告片段）');
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('下载任务创建失败，请稍后重试')));
+        showAppSnackBar(context, '下载任务创建失败，请稍后重试');
       }
     }
   }
@@ -485,6 +502,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         });
         unawaited(WakelockPlus.disable());
       }
+    }
+  }
+
+  /// 播放期定时任务：保存观看进度，并按当前播放位置重锚定预取窗口，
+  /// 让预取始终维持在播放点前方一个窗口（seek 后也会在下一拍跟上）。
+  void _onPlaybackTick() {
+    unawaited(_save());
+    final current = controller;
+    if (current != null && current.value.isInitialized) {
+      _activeSession?.prefetcher?.updatePosition(current.value.position);
     }
   }
 
@@ -1593,6 +1620,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       previewPosition.value = null;
       seekCommitting.value = false;
       await _save();
+      // seek 成功后立即按新位置重排预取窗口，不等下一次定时拍。
+      unawaited(_activeSession?.prefetcher?.updatePosition(finalTarget));
       _scheduleControlsHide();
     } catch (_) {
       if (!_isCurrentSeek(seekController, generation)) return;
@@ -1604,9 +1633,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         } catch (_) {}
       }
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('跳转失败，请稍后重试')));
+        showAppSnackBar(context, '跳转失败，请稍后重试');
       }
       previewPosition.value = null;
       _scheduleControlsHide();
@@ -1657,6 +1684,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 }
 
+/// 播放链路状态指示：视觉上只有一个彩色小圆点，不打断观看；
+/// 长按弹出「当前播放模式」详情底栏（含降级原因），语义标签保留完整状态文案。
 class PlaybackStatusIndicator extends StatelessWidget {
   const PlaybackStatusIndicator({
     super.key,
@@ -1667,6 +1696,12 @@ class PlaybackStatusIndicator extends StatelessWidget {
   final PlaybackStatus status;
   final VoidCallback onLongPress;
 
+  /// 圆点颜色与播放状态的对应关系：
+  /// - 灰  preparing：会话建立中；
+  /// - 绿  streamingAndCaching：走本地代理且分片正在写穿缓存（边下边播）；
+  /// - 蓝  cachePlayback：命中完整缓存离线播放，零流量；
+  /// - 橙  proxyWithoutCaching：走代理但缓存不可用（如配额已满）；
+  /// - 白灰 direct：回退直连（直播、加密流或 manifest 解析失败）。
   static Color colorFor(PlaybackMode mode) {
     switch (mode) {
       case PlaybackMode.preparing:
@@ -1698,27 +1733,19 @@ class PlaybackStatusIndicator extends StatelessWidget {
     final color = colorFor(status.mode);
     return Semantics(
       button: true,
+      // 语义层保留完整状态文案（如「边下边播」），供无障碍与长按详情使用。
       label: '${status.label}，长按查看详情',
       child: GestureDetector(
         key: const ValueKey('playback-status-gesture'),
         onLongPress: onLongPress,
         behavior: HitTestBehavior.opaque,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              iconFor(status.mode, color: color),
-              const SizedBox(width: 3),
-              Text(
-                status.label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
+          // 热区保持可点，视觉元素只有一个 8px 彩色圆点（颜色含义见 colorFor）。
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
         ),
       ),

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:jive/data/cache/ad_filter.dart';
 import 'package:jive/data/cache/cache_index.dart';
 import 'package:jive/data/cache/cache_manager.dart';
 import 'package:jive/data/cache/download_task_manager.dart';
@@ -193,7 +194,7 @@ void main() {
       }
       if (!segmentStarted.isCompleted) segmentStarted.complete();
       await releaseSegment.future;
-      return http.Response('segment', 200);
+      return http.Response('Gsegment', 200);
     });
     final firstManager = DownloadTaskManager(
       store: store,
@@ -266,7 +267,7 @@ void main() {
       }
       await Future<void>.delayed(const Duration(milliseconds: 30));
       activeSegments--;
-      return http.Response('segment', 200);
+      return http.Response('Gsegment', 200);
     });
     final manager = DownloadTaskManager(
       store: store,
@@ -303,138 +304,212 @@ void main() {
     directory.deleteSync(recursive: true);
   });
 
-  test(
-    'download saves raw resources then filters locally for offline playback',
-    () async {
-      final directory = Directory.systemTemp.createTempSync(
-        'jive_download_test',
-      );
-      final store = CacheIndexStore(directory);
-      final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
-      await cache.initialize();
-      final requested = <String>[];
-      final client = MockClient((request) async {
-        requested.add(request.url.toString());
-        if (request.url.path.endsWith('.m3u8')) {
-          return http.Response(_manifest, 200);
-        }
-        return http.Response('segment:${request.url.path}', 200);
-      });
-      final manager = DownloadTaskManager(
-        store: store,
-        cacheManager: cache,
-        client: client,
-        resolveSelection: (_) async => _selection(),
-      );
-      await manager.initialize();
-      final task = await manager.enqueue(_selection());
-
-      DownloadTask current = task;
-      for (var i = 0; i < 100; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-        current = manager.tasks.firstWhere(
-          (item) => item.taskId == task.taskId,
-        );
-        if (current.status == DownloadTaskStatus.completed ||
-            current.status == DownloadTaskStatus.failed) {
-          break;
-        }
+  test('download filters ads upfront and stays offline playable', () async {
+    final directory = Directory.systemTemp.createTempSync('jive_download_test');
+    final store = CacheIndexStore(directory);
+    final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+    await cache.initialize();
+    final requested = <String>[];
+    final client = MockClient((request) async {
+      requested.add(request.url.toString());
+      if (request.url.path.endsWith('.m3u8')) {
+        return http.Response(_manifest, 200);
       }
-      // ignore: avoid_print
+      return http.Response('Gsegment:${request.url.path}', 200);
+    });
+    final manager = DownloadTaskManager(
+      store: store,
+      cacheManager: cache,
+      client: client,
+      resolveSelection: (_) async => _selection(),
+    );
+    await manager.initialize();
+    final task = await manager.enqueue(_selection());
 
-      expect(current.status, DownloadTaskStatus.completed);
-      // Hybrid strategy downloads the original resources first. Filtering is
-      // local and happens only after all raw resources have been committed.
-      expect(requested.where((url) => url.contains('/ads/')), isNotEmpty);
-      final entry = await cache.getEntry(
-        '${current.contentKeyHash}|${current.revisionKeyHash}',
-      );
-      expect(entry?.offlinePlayable, isTrue);
-      expect(entry?.finalizationRequired, isFalse);
-      expect(entry?.filterVersion, 1);
-      final source = await store.loadSourceManifest(
-        current.contentKeyHash!,
-        current.revisionKeyHash!,
-      );
-      final playable = await store.loadProxyManifest(
-        current.contentKeyHash!,
-        current.revisionKeyHash!,
-      );
-      expect(source, contains('/ads/0001.ts'));
-      expect(playable, isNot(contains('/ads/0001.ts')));
-      expect(
-        await File(
-          '${store.entryDir(current.contentKeyHash!, current.revisionKeyHash!).path}/timeline.json',
-        ).readAsString(),
-        contains('"filterVersion":1'),
-      );
+    DownloadTask current = task;
+    for (var i = 0; i < 100; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      current = manager.tasks.firstWhere((item) => item.taskId == task.taskId);
+      if (current.status == DownloadTaskStatus.completed ||
+          current.status == DownloadTaskStatus.failed) {
+        break;
+      }
+    }
+    // ignore: avoid_print
 
-      final proxy = LocalProxyServer();
-      await proxy.start();
-      final offline = await PlaybackSession.prepare(
-        selection: _selection(),
-        proxy: proxy,
-        parser: HlsParser(
-          client: MockClient((_) async => throw StateError('offline')),
-        ),
+    expect(current.status, DownloadTaskStatus.completed);
+    // 先过滤再下载：广告分片不请求、不占缓存，只下载正片分片。
+    expect(requested.where((url) => url.contains('/ads/')), isEmpty);
+    expect(current.filterVersion, 1);
+    final entry = await cache.getEntry(
+      '${current.contentKeyHash}|${current.revisionKeyHash}',
+    );
+    expect(entry?.offlinePlayable, isTrue);
+    expect(entry?.finalizationRequired, isFalse);
+    expect(entry?.filterVersion, 1);
+    final source = await store.loadSourceManifest(
+      current.contentKeyHash!,
+      current.revisionKeyHash!,
+    );
+    final playable = await store.loadProxyManifest(
+      current.contentKeyHash!,
+      current.revisionKeyHash!,
+    );
+    expect(source, contains('/ads/0001.ts'));
+    expect(playable, isNot(contains('/ads/0001.ts')));
+    expect(
+      await File(
+        '${store.entryDir(current.contentKeyHash!, current.revisionKeyHash!).path}/timeline.json',
+      ).readAsString(),
+      contains('"filterVersion":1'),
+    );
+
+    final proxy = LocalProxyServer();
+    await proxy.start();
+    final offline = await PlaybackSession.prepare(
+      selection: _selection(),
+      proxy: proxy,
+      parser: HlsParser(
         client: MockClient((_) async => throw StateError('offline')),
-        cacheManager: cache,
-        store: store,
-      );
-      expect(offline.status.mode.name, 'cachePlayback');
-      expect(offline.session, isNotNull);
-      expect(offline.session!.route.proxyManifest, isNot(contains('/ads/')));
-      final localClient = http.Client();
-      final manifestResponse = await localClient.get(
-        Uri.parse(offline.session!.proxyManifestUrl),
-      );
-      expect(manifestResponse.statusCode, 200);
-      final resourcePath = RegExp(
-        r'(/play/[^\s]+/res/sha256:[0-9a-f]{64})',
-      ).firstMatch(manifestResponse.body)?.group(1);
-      expect(resourcePath, isNotNull);
-      final resourceResponse = await localClient.get(
-        Uri.parse('http://127.0.0.1:${proxy.port}${resourcePath!}'),
-      );
-      expect(resourceResponse.statusCode, 200);
-      expect(resourceResponse.body, isNotEmpty);
-      localClient.close();
-      await offline.session!.close(proxy);
-      await proxy.close();
-      await manager.dispose();
-      await cache.flush();
+      ),
+      client: MockClient((_) async => throw StateError('offline')),
+      cacheManager: cache,
+      store: store,
+    );
+    expect(offline.status.mode.name, 'cachePlayback');
+    expect(offline.session, isNotNull);
+    expect(offline.session!.route.proxyManifest, isNot(contains('/ads/')));
+    final localClient = http.Client();
+    final manifestResponse = await localClient.get(
+      Uri.parse(offline.session!.proxyManifestUrl),
+    );
+    expect(manifestResponse.statusCode, 200);
+    final resourcePath = RegExp(
+      r'(/play/[^\s]+/res/sha256:[0-9a-f]{64})',
+    ).firstMatch(manifestResponse.body)?.group(1);
+    expect(resourcePath, isNotNull);
+    final resourceResponse = await localClient.get(
+      Uri.parse('http://127.0.0.1:${proxy.port}${resourcePath!}'),
+    );
+    expect(resourceResponse.statusCode, 200);
+    expect(resourceResponse.body, isNotEmpty);
+    localClient.close();
+    await offline.session!.close(proxy);
+    await proxy.close();
+    await manager.dispose();
+    await cache.flush();
 
-      final catalog = await cache.resourceCatalog(entry!.key);
-      final missing = catalog.entries.first;
-      await store
-          .resourceFile(
-            entry.contentKeyHash,
-            entry.revisionKeyHash,
-            missing.key,
-            missing.value.ext,
-          )
-          .delete();
-      final restoredCache = CacheManager(
-        store: store,
-        diskSpace: _FakeDiskSpace(),
-      );
-      await restoredCache.initialize();
-      final restoredManager = DownloadTaskManager(
-        store: store,
-        cacheManager: restoredCache,
-        client: MockClient((_) async => throw StateError('offline')),
-        resolveSelection: (_) async => null,
-      );
-      await restoredManager.initialize();
-      final restoredTask = restoredManager.tasks.single;
-      expect(restoredTask.status, DownloadTaskStatus.paused);
-      expect(
-        restoredTask.completedResourceCount,
-        entry.expectedResourceCount - 1,
-      );
-      await restoredManager.dispose();
-      await restoredCache.flush();
-      directory.deleteSync(recursive: true);
-    },
-  );
+    final catalog = await cache.resourceCatalog(entry!.key);
+    final missing = catalog.entries.first;
+    await store
+        .resourceFile(
+          entry.contentKeyHash,
+          entry.revisionKeyHash,
+          missing.key,
+          missing.value.ext,
+        )
+        .delete();
+    final restoredCache = CacheManager(
+      store: store,
+      diskSpace: _FakeDiskSpace(),
+    );
+    await restoredCache.initialize();
+    final restoredManager = DownloadTaskManager(
+      store: store,
+      cacheManager: restoredCache,
+      client: MockClient((_) async => throw StateError('offline')),
+      resolveSelection: (_) async => null,
+    );
+    await restoredManager.initialize();
+    final restoredTask = restoredManager.tasks.single;
+    expect(restoredTask.status, DownloadTaskStatus.paused);
+    expect(
+      restoredTask.completedResourceCount,
+      entry.expectedResourceCount - 1,
+    );
+    await restoredManager.dispose();
+    await restoredCache.flush();
+    directory.deleteSync(recursive: true);
+  });
+
+  test('download reuses segments cached by a streaming session', () async {
+    final directory = Directory.systemTemp.createTempSync(
+      'jive_unified_revision_test',
+    );
+    final store = CacheIndexStore(directory);
+    final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+    await cache.initialize();
+    final requested = <String>[];
+    final client = MockClient((request) async {
+      requested.add(request.url.toString());
+      if (request.url.path.endsWith('.m3u8')) {
+        return http.Response(_manifest, 200);
+      }
+      return http.Response('Gsegment:${request.url.path}', 200);
+    });
+
+    // 第一步：模拟在线播放——流式会话拉取第一个正片分片并写穿缓存。
+    final proxy = LocalProxyServer();
+    await proxy.start();
+    final preparation = await PlaybackSession.prepare(
+      selection: _selection(),
+      proxy: proxy,
+      parser: HlsParser(
+        client: client,
+        adFilter: const AdFilter(enabled: true),
+      ),
+      client: client,
+      cacheManager: cache,
+      store: store,
+    );
+    expect(preparation.status.mode.name, 'streamingAndCaching');
+    final session = preparation.session!;
+    final firstSegment = Uri.parse('https://cdn.example.com/movie/0000.ts');
+    final firstId = HlsParser.resourceId(firstSegment);
+    final streamed = await session.route.fetcher!.fetch(
+      origin: firstSegment,
+      resourceId: firstId,
+      ext: 'ts',
+    );
+    await streamed.body.drain<void>();
+    final streamingRevision = session.route.fetcher!.revisionKeyHash;
+    await session.close(proxy);
+    await proxy.close();
+    expect(requested.where((url) => url.contains('0000.ts')), hasLength(1));
+
+    // 第二步：下载同一集——revision 应与流式缓存一致，已缓存分片不重下。
+    final manager = DownloadTaskManager(
+      store: store,
+      cacheManager: cache,
+      client: client,
+      resolveSelection: (_) async => _selection(),
+    );
+    await manager.initialize();
+    final task = await manager.enqueue(_selection());
+    DownloadTask current = task;
+    for (var i = 0; i < 100; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      current = manager.tasks.firstWhere((item) => item.taskId == task.taskId);
+      if (current.status == DownloadTaskStatus.completed ||
+          current.status == DownloadTaskStatus.failed) {
+        break;
+      }
+    }
+
+    expect(current.status, DownloadTaskStatus.completed);
+    // 统一 revision：下载与流式缓存落在同一个目录。
+    expect(current.revisionKeyHash, streamingRevision);
+    // 已缓存的 0000.ts 没有第二次请求。
+    expect(requested.where((url) => url.contains('0000.ts')), hasLength(1));
+    // 其余正片分片补齐，广告分片不下载。
+    expect(requested.where((url) => url.contains('/ads/')), isEmpty);
+    final entry = await cache.getEntry(
+      '${current.contentKeyHash}|${current.revisionKeyHash}',
+    );
+    expect(entry?.offlinePlayable, isTrue);
+
+    await manager.dispose();
+    await cache.flush();
+    directory.deleteSync(recursive: true);
+  });
 }

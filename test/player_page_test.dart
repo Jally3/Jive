@@ -19,27 +19,39 @@ Video _video() => Video(
 );
 
 void main() {
-  testWidgets('PlaybackStatusIndicator shows mode and handles long press', (
-    tester,
-  ) async {
-    var longPressed = false;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PlaybackStatusIndicator(
-            status: const PlaybackStatus(
-              mode: PlaybackMode.streamingAndCaching,
+  testWidgets(
+    'PlaybackStatusIndicator shows a colored dot and handles long press',
+    (tester) async {
+      var longPressed = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PlaybackStatusIndicator(
+              status: const PlaybackStatus(
+                mode: PlaybackMode.streamingAndCaching,
+              ),
+              onLongPress: () => longPressed = true,
             ),
-            onLongPress: () => longPressed = true,
           ),
         ),
-      ),
-    );
+      );
 
-    expect(find.text('边下边播'), findsOneWidget);
-    await tester.longPress(find.byType(PlaybackStatusIndicator));
-    expect(longPressed, isTrue);
-  });
+      // 圆点取代文字标签：不再渲染状态文字，只渲染对应颜色的圆点。
+      expect(find.text('边下边播'), findsNothing);
+      final dot = tester.widget<Container>(
+        find.descendant(
+          of: find.byType(PlaybackStatusIndicator),
+          matching: find.byType(Container),
+        ),
+      );
+      final decoration = dot.decoration! as BoxDecoration;
+      expect(decoration.shape, BoxShape.circle);
+      expect(decoration.color, Colors.greenAccent);
+
+      await tester.longPress(find.byType(PlaybackStatusIndicator));
+      expect(longPressed, isTrue);
+    },
+  );
 
   testWidgets(
     'PlayerInfoPanel shows description and selectable episode chips',

@@ -5,6 +5,7 @@ import '../core/app_states.dart';
 import '../data/cache/cache_controller.dart';
 import '../data/cache/download_providers.dart';
 import '../data/cache/download_task_manager.dart';
+import '../data/cache/prefetch_policy.dart';
 import '../data/history_repository.dart';
 import '../data/library_repository.dart';
 import '../data/video_repository.dart';
@@ -13,6 +14,7 @@ import '../data/vod_source_preferences.dart';
 import '../domain/playback_progress.dart';
 import '../domain/video.dart';
 import '../domain/watch_record.dart';
+import '../shared/app_snack_bar.dart';
 import '../shared/video_card.dart';
 import '../shared/video_grid.dart';
 import 'cache_management_page.dart';
@@ -120,6 +122,29 @@ class ProfilePage extends ConsumerWidget {
                         builder: (_) => const DownloadManagementPage(),
                       ),
                     ),
+                  ),
+                  const Divider(height: 1, color: AppColors.divider),
+                  Consumer(
+                    builder: (context, ref, _) {
+                      final mode = ref.watch(prefetchModeProvider).value;
+                      final enabled = mode != PrefetchMode.off;
+                      return SwitchListTile(
+                        secondary: const Icon(Icons.speed_outlined),
+                        title: const Text('预加载'),
+                        subtitle: Text(
+                          enabled
+                              ? '播放时提前缓存后续分片（Wi-Fi 30 片 / 蜂窝 5 片）'
+                              : '已关闭，播放时只缓存当前观看的分片',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        value: enabled,
+                        onChanged: (value) => ref
+                            .read(prefetchModeProvider.notifier)
+                            .setMode(
+                              value ? PrefetchMode.auto : PrefetchMode.off,
+                            ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -326,7 +351,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         Navigator.pop(context);
       }
       if (mounted) {
-        messenger.showSnackBar(SnackBar(content: Text(e.toString())));
+        showAppSnackBarVia(messenger, e.toString());
       }
     }
   }

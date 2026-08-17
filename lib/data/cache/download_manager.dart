@@ -7,25 +7,28 @@ class SegmentPrefetcher {
     required this.fetcher,
     required this.segments,
     this.concurrency = 5,
-    this.isWifi,
+    int Function()? windowSize,
     this.maxAttempts = 3,
     this.baseBackoff = const Duration(milliseconds: 500),
     this.maxBackoff = const Duration(seconds: 8),
-  });
+  }) : windowSize = windowSize ?? (() => 30);
 
   final ResourceFetcher fetcher;
   final List<HlsSegment> segments;
   final int concurrency;
 
-  /// 返回当前是否处于 Wi-Fi；为 null 表示未知，未知时**不主动预取**。
-  final bool Function()? isWifi;
+  /// 当前预取窗口大小（片数），每次调度时读取以支持随网络/设置动态变化；
+  /// 返回 0 表示暂停预取（如蜂窝网络下用户关闭了预加载）。
+  final int Function() windowSize;
   final int maxAttempts;
   final Duration baseBackoff;
   final Duration maxBackoff;
 
   bool _paused = false;
   bool _cancelled = false;
+  bool _running = false;
   int _nextIndex = 0;
+  Duration? _pendingPosition;
   final Set<String> _done = {};
   final Set<int> _inFlight = {};
   final Random _random = Random();
@@ -36,23 +39,53 @@ class SegmentPrefetcher {
 
   void cancel() => _cancelled = true;
 
-  Future<void> prefetch({int lookahead = 30, Duration? fromPosition}) async {
-    if (_cancelled || segments.isEmpty) return;
-    final wifi = isWifi;
-    if (wifi == null || !wifi()) return;
-    if (_nextIndex == 0 && fromPosition != null) {
-      _nextIndex = _indexAt(fromPosition);
+  /// 播放位置变化（seek 或周期性进度上报）时重锚定预取窗口。
+  /// 正在运行的预取循环会在当前批次结束后按新位置重排。
+  /// 返回的 Future 在本次触发调度时完成；已有循环在跑时立即返回，
+  /// 由运行中的循环在批次边界消费新位置。
+  Future<void> updatePosition(Duration position) async {
+    _pendingPosition = position;
+    if (!_running && !_cancelled && !_paused) {
+      await prefetch();
     }
-    final end = min(_nextIndex + lookahead, segments.length);
-    while (_nextIndex < end) {
-      if (_cancelled || _paused) return;
-      final batch = <Future<void>>[];
-      while (_nextIndex < end && batch.length < concurrency) {
-        final index = _nextIndex++;
-        if (_inFlight.contains(index)) continue;
-        batch.add(_prefetchOne(index));
+  }
+
+  /// 预取一个窗口。可通过 [fromPosition] 指定起点（起播/恢复）；
+  /// [lookahead] 为测试用的显式窗口覆盖，缺省读 [windowSize]。
+  Future<void> prefetch({int? lookahead, Duration? fromPosition}) async {
+    if (fromPosition != null) _pendingPosition = fromPosition;
+    if (_cancelled || segments.isEmpty || _running) return;
+    _running = true;
+    var didWork = false;
+    try {
+      while (!_cancelled && !_paused) {
+        final pending = _pendingPosition;
+        if (pending != null) {
+          _pendingPosition = null;
+          _nextIndex = _indexAt(pending);
+        } else if (didWork) {
+          // 完成一个窗口后没有新指令：退出，等待下次调度。
+          break;
+        }
+        final window = lookahead ?? windowSize();
+        if (window <= 0) break;
+        final end = min(_nextIndex + window, segments.length);
+        while (_nextIndex < end &&
+            !_cancelled &&
+            !_paused &&
+            _pendingPosition == null) {
+          final batch = <Future<void>>[];
+          while (_nextIndex < end && batch.length < concurrency) {
+            final index = _nextIndex++;
+            if (_inFlight.contains(index)) continue;
+            batch.add(_prefetchOne(index));
+          }
+          if (batch.isNotEmpty) await Future.wait(batch);
+        }
+        didWork = true;
       }
-      if (batch.isNotEmpty) await Future.wait(batch);
+    } finally {
+      _running = false;
     }
   }
 

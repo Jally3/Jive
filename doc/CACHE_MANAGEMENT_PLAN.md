@@ -196,7 +196,7 @@ preparing → ready/playing → closing → closed
 - 重试使用指数退避、抖动和总次数/总时长上限；4xx 不进行无意义重试。
 - 使用连接复用；HTTP/2 只能作为经客户端和真机验证后的优化项，不能作为既定保证。
 - MVP 仅支持前台预下载：播放页面存活且应用位于前台时调度预取；进入后台后保存进度并暂停普通 Dart 下载任务，重新进入播放会话后续传。
-- 当前播放实际请求不受 Wi-Fi 限制；主动预下载默认只在 Wi-Fi 下执行，蜂窝网络不主动预取。
+- 前台主动预下载按网络类型自适应窗口：Wi-Fi/有线 30 片、蜂窝 5 片；用户可在"我的-预加载"中完全关闭。预取窗口随播放位置（含 seek）重锚定。
 - MVP 不实现 Android/iOS 系统后台下载、后台通知或进程终止后自动继续；若未来需要，作为独立项目设计。
 
 ---
@@ -359,7 +359,11 @@ schema 读取规则：
 
 “TS 同步字节”不能作为通用完整性标准，因为 fMP4、加密 HLS、ID3 开头和部分 Range 都不满足该假设。
 
+当前实现（`cache_io.dart` 提交路径）：① 声明了 Content-Length 且未做内容编码时，实际写入字节数必须与之相等，否则视为截断拒绝提交；② 未加密分片按格式做魔数检查——TS 要求 0x47 同步字节或 ID3 开头，fMP4 要求 box 类型头（ftyp/styp/moof/sidx/free）；加密分片（AES-128 密文）跳过魔数检查；未知扩展名放行。校验失败不提交 complete，下次请求重新回源。PTS 级校验仍为后续独立项。
+
 ### 5.5 Range、206 与 partial 合并规则
+
+当前实现（简化版）：Range 请求未命中缓存时，按完整资源回源并写穿缓存，落盘后从本地文件切出请求区间返回 206；缓存不可用时退回 Range 透传。重叠 Range 合并、`.part` 续写等精细规则暂不实现。
 
 阶段 2 原型可以评估重叠 Range 合并是否值得实现，但 MVP 正确性基线现在冻结：
 
@@ -377,15 +381,14 @@ schema 读取规则：
 
 ### 6.1 容量协调器
 
-- 默认动态目标配额为可管理空间的 15%，目标下限 1GB、目标上限 8GB。
-- MVP 只提供“自动配额”，不允许用户手动覆盖，不提供 1GB/2GB/5GB/不限等档位；后续根据真实设备指标重新评审是否开放手动设置。
+- 实现版配额策略（`computeEffectiveQuota`，`cache_manager.dart`）：有效配额 = 可管理空间 − 系统安全余量；**不设 15% 比例、1GB 下限或 8GB 上限**——缓存文件放在持久目录，允许充分利用设备剩余空间。
+- MVP 只提供“自动配额”，不允许用户手动覆盖；后续根据真实设备指标重新评审是否开放手动设置。
 - 为避免缓存写入本身导致“可用空间下降 → 配额下降 → 立即淘汰”的反馈循环，可管理空间按 `当前可用空间 + Jive 当前缓存占用` 计算。
-- 系统安全余量为设备总容量的 5%，最低 2GB、最高 10GB；有效配额不得占用安全余量。空间不足时，有效配额允许低于 1GB，甚至降为 0 并停止落盘，不能为了满足目标下限挤满设备。
-- 有效配额计算：`min(clamp(可管理空间 × 15%, 1GB, 8GB), max(0, 可管理空间 − 系统安全余量), 平台缓存上限)`；不支持查询平台缓存上限时忽略最后一项，但仍执行安全余量限制。
-- Android 优先参考 `StorageManager.getCacheQuotaBytes()`/可分配空间；iOS 优先参考 volume available capacity for opportunistic usage。配额在启动、回到前台和大文件写入前重算，不在每个片段后频繁波动。
+- 系统安全余量为设备总容量的 5%，最低 2GB、最高 10GB；有效配额不得占用安全余量。空间不足时，有效配额允许降为 0 并停止落盘，不能为了满足目标下限挤满设备。
+- 有效配额计算：`max(0, (可用空间 + Jive 缓存占用) − clamp(总容量 × 5%, 2GB, 10GB))`。
+- 平台缓存上限（如 Android `StorageManager.getCacheQuotaBytes()`）**不用于限制本缓存**：它约束的是系统临时 Cache 目录，而 Jive 缓存位于应用持久目录（`Application Support`），该参数仅为平台兼容保留。
 - 容量计算为：已提交完整文件 + 活跃写入预留；`.part` 也必须受临时文件上限约束。
 - 配额检查、容量预留、LRU 淘汰和提交在同一协调器内串行执行，避免多个并发任务同时通过检查。
-- 除逻辑配额外保留系统磁盘安全余量；系统剩余空间不足时，即使逻辑配额未满也停止落盘。
 - 无法淘汰足够空间时，当前资源只回源播放，不写缓存。
 
 ### 6.2 single-flight 与引用保护
@@ -518,7 +521,7 @@ AES-128 的隐式 IV 可能依赖 `EXT-X-MEDIA-SEQUENCE`，删除片段后直接
 
 ### 9.2 存储与备份
 
-- 使用 `path_provider` 提供的系统 Cache 目录，允许操作系统在空间紧张时自动回收。
+- 使用 `path_provider` 的 `getApplicationSupportDirectory()/jive_cache`（应用持久目录，系统**不会**自动回收）；显式下载必须跨重启存活，且不受 Android 临时缓存配额（约 2.5GB）限制。早期版本的临时目录数据在首次启动时整体迁移。
 - “完整缓存可离线播放”只描述缓存当前仍存在时的能力，不承诺永久保存或下次必定命中。
 - 索引必须接受整个目录或部分资源被系统随时清理；启动和访问时发现缺失文件后自动修正完成度、占用统计和可离线状态。
 - 文件权限保持应用私有；清除应用数据后缓存不可恢复。
@@ -554,7 +557,7 @@ AES-128 的隐式 IV 可能依赖 `EXT-X-MEDIA-SEQUENCE`，删除片段后直接
 | 播放页改造 | `lib/features/player_page.dart` | 接入 PlaybackSession、generation 和回退 |
 | 我的入口 | `lib/features/profile_page.dart` | 入口和实时统计 |
 
-阶段 1 的缓存核心通过构造函数注入 `Directory root` 和 `DiskSpaceProvider`，不得 import Flutter、Riverpod、`path_provider` 或其他平台插件；测试使用临时目录和 fake disk provider。`ContentKeyBuilder.v1` 使用 SHA-256，可引入纯 Dart `crypto` 依赖。阶段 3 才在应用组合层使用 `path_provider` 获取系统 Cache 目录，并实现 `PlatformDiskSpaceProvider` 查询总容量、可用空间和平台缓存上限。`path_provider` 本身不提供这些容量数据，需使用原生 API、平台通道或经评估的独立插件。
+阶段 1 的缓存核心通过构造函数注入 `Directory root` 和 `DiskSpaceProvider`，不得 import Flutter、Riverpod、`path_provider` 或其他平台插件；测试使用临时目录和 fake disk provider。`ContentKeyBuilder.v1` 使用 SHA-256，可引入纯 Dart `crypto` 依赖。阶段 3 才在应用组合层使用 `path_provider` 获取应用持久目录（`getApplicationSupportDirectory()`），并实现 `PlatformDiskSpaceProvider` 查询总容量、可用空间和平台缓存上限。`path_provider` 本身不提供这些容量数据，需使用原生 API、平台通道或经评估的独立插件。
 
 本地服务使用 `dart:io` `HttpServer`；是否补充专门 HTTP/HLS 依赖应在原型验证后决定，不能假定现有 `http` 客户端支持 HTTP/2。
 
@@ -632,15 +635,15 @@ AES-128 的隐式 IV 可能依赖 `EXT-X-MEDIA-SEQUENCE`，删除片段后直接
 
 本方案涉及的产品范围和缓存策略已经审核完成，当前无待决策项。
 
-- 动态配额采用可管理空间的 15%，目标下限 1GB、目标上限 8GB，并受系统安全余量和平台缓存上限进一步约束。
-- MVP 只提供“自动配额”；先以真实设备指标验证 15%/1GB/8GB 策略，后续再评审手动档位，始终不允许绕过系统安全余量。
-- Wi-Fi 下允许前台主动预下载；蜂窝网络只服务当前播放实际请求，不主动预取。
+- 动态配额 = 可管理空间（可用空间 + Jive 缓存占用）− 系统安全余量（总容量 5%，clamp 2~10GB）；不设比例/上下限，平台缓存上限不约束持久目录。
+- MVP 只提供“自动配额”；先以真实设备指标验证当前策略，后续再评审手动档位，始终不允许绕过系统安全余量。
+- 前台主动预下载按网络类型自适应窗口：Wi-Fi/有线 30 片、蜂窝 5 片；用户可在"我的-预加载"中完全关闭。预取窗口随播放位置（含 seek）重锚定。
 - 磁盘、手动删除和淘汰单位为剧集 revision，UI 按影片分组；先淘汰最久未访问的部分缓存，再淘汰最久未访问的完整缓存。
 - 活动播放项禁止立即删除，自动淘汰也必须跳过。
 - MVP HLS 范围为实用型方案 B；加密、DRM、多音轨和能力矩阵外内容回退直连。
 - `WatchRecord` 保存原始剧情时间轴和映射版本，并对历史记录向后兼容迁移。
 - MVP 仅做前台预下载，不实现系统后台下载。
-- 使用系统 Cache 目录，允许操作系统自动回收。
+- 使用应用持久目录（Application Support），系统不自动回收；淘汰完全由 LRU 按配额主动执行。
 - 纳入轻量可选 `PlaybackSource` 契约，当前适配器返回空 headers，敏感 headers 只驻留会话内存。
 - 播放链路使用带稳定 line/episode identity 的 `PlaybackSelection`；contentKey 只能由 `ContentKeyBuilder.v1` 生成。
 - cache state/index 使用字段级 schema v1 并严格校验版本；WatchRecord 使用 schema v2，旧记录兼容读取并在下次保存迁移。

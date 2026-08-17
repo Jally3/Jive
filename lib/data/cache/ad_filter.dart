@@ -1,7 +1,6 @@
 import 'dart:math';
 import 'hls_parser.dart';
 
-const bool adFilterEnabled = false;
 const String adFilterVersion = 'adfilter-v1';
 
 const int adTimelineVersion = 1;
@@ -94,6 +93,7 @@ class AdFilter {
   static const Set<String> _explicitMarkers = {
     '/ad/',
     '/ads/',
+    '/adjump/',
     '/gg/',
     '/gdt/',
     '/zj/',
