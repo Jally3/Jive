@@ -26,7 +26,7 @@ class VideoCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AspectRatio(
-            aspectRatio: 2 / 3,
+            aspectRatio: 4 / 5,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: Stack(
@@ -52,24 +52,6 @@ class VideoCard extends StatelessWidget {
                             ),
                           ),
                   ),
-                  Align(
-                    alignment: Alignment.bottomRight,
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Container(
-                        width: 44,
-                        height: 44,
-                        decoration: const BoxDecoration(
-                          color: AppColors.accent,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.play_arrow_rounded,
-                          color: AppColors.onAccent,
-                        ),
-                      ),
-                    ),
-                  ),
                   if (progress != null && progress! > 0)
                     Align(
                       alignment: Alignment.bottomCenter,
@@ -87,10 +69,10 @@ class VideoCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             video.title,
-            maxLines: 2,
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 17,
+              fontSize: 16,
               height: 1.3,
               fontWeight: FontWeight.w600,
             ),
@@ -100,7 +82,11 @@ class VideoCard extends StatelessWidget {
             _meta,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, color: AppColors.secondary),
+            style: const TextStyle(
+              fontSize: 12,
+              height: 1.3,
+              color: AppColors.secondary,
+            ),
           ),
         ],
       ),

@@ -152,39 +152,65 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                 children: [
                   Row(
                     children: [
-                      Text(
-                        '已用 ${_formatBytes(used)} / ${_formatBytes(quota)}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                      SizedBox.square(
+                        dimension: 56,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            CircularProgressIndicator(
+                              value: fraction,
+                              strokeWidth: 6,
+                              strokeCap: StrokeCap.round,
+                              backgroundColor: AppColors.divider,
+                              color: AppColors.accent,
+                            ),
+                            Text(
+                              '${(fraction * 100).round()}%',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const Spacer(),
-                      const Text(
-                        '自动',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.secondary,
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '已用 ${_formatBytes(used)} / ${_formatBytes(quota)}',
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const Text(
+                                  '自动',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.secondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '完整资源 ${_formatBytes(stats.completeBytes)} · 临时文件 ${_formatBytes(stats.partialBytes)} · ${stats.entryCount} 个缓存剧集',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.secondary,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: fraction,
-                      minHeight: 6,
-                      backgroundColor: AppColors.divider,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '完整资源 ${_formatBytes(stats.completeBytes)} · 临时文件 ${_formatBytes(stats.partialBytes)} · ${stats.entryCount} 个缓存剧集',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.secondary,
-                    ),
                   ),
                   const SizedBox(height: 16),
                   SizedBox(
@@ -232,40 +258,99 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
             ),
           ),
           const Divider(height: 1, color: AppColors.divider),
-          for (final entry in group.$2)
-            ListTile(
-              dense: true,
-              title: Text(
-                entry.episodeName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                _entrySummary(entry),
-                style: const TextStyle(fontSize: 12),
-              ),
-              trailing: IconButton(
-                tooltip: '删除',
-                onPressed: _busy ? null : () => _deleteEntry(entry),
-                icon: const Icon(Icons.delete_outline, size: 20),
-              ),
-            ),
+          for (final entry in group.$2) _entryTile(entry),
         ],
       ),
     );
   }
 
-  String _entrySummary(CacheEntry entry) {
+  Widget _entryTile(CacheEntry entry) {
     final size = _formatBytes(entry.completeBytes + entry.partialBytes);
-    final status = entry.offlinePlayable
-        ? '可离线'
-        : entry.status == CacheEntryStatus.failed
-        ? '下载失败'
-        : '部分缓存 ${(entry.progress * 100).round()}%';
     final accessed = entry.lastAccessMs > 0
         ? ' · ${_timeAgo(entry.lastAccessMs)}'
         : '';
-    return '$size · $status$accessed';
+    final (label, color) = _entryStatus(entry);
+    final showProgress =
+        !entry.offlinePlayable && entry.status != CacheEntryStatus.failed;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        entry.episodeName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: color,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '$size$accessed',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.secondary,
+                  ),
+                ),
+                if (showProgress) ...[
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: entry.progress.clamp(0.0, 1.0),
+                      minHeight: 4,
+                      backgroundColor: AppColors.divider,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: '删除',
+            onPressed: _busy ? null : () => _deleteEntry(entry),
+            icon: const Icon(Icons.delete_outline, size: 20),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 条目状态标签与颜色：可离线 / 下载失败 / 部分缓存百分比。
+  (String, Color) _entryStatus(CacheEntry entry) {
+    if (entry.offlinePlayable) return ('可离线', AppColors.success);
+    if (entry.status == CacheEntryStatus.failed) {
+      return ('下载失败', AppColors.error);
+    }
+    return ('${(entry.progress * 100).round()}%', AppColors.accent);
   }
 
   static Map<String, List<CacheEntry>> _groupByTitle(List<CacheEntry> entries) {

@@ -40,6 +40,8 @@ class ProfilePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) => DefaultTabController(
     length: 2,
     child: SafeArea(
+      // bottom: false：让收藏/历史网格延伸到底部毛玻璃导航栏下方透出。
+      bottom: false,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -156,6 +158,7 @@ class _FavoritesTab extends ConsumerWidget {
               )
             : VideoGrid(
                 videos: records.map((record) => record.video).toList(),
+                bottomPadding: 96,
                 onTap: (video) => Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -356,7 +359,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         ),
         Expanded(
           child: GridView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
             itemCount: records!.length,
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: MediaQuery.sizeOf(context).width >= 700 ? 4 : 2,
