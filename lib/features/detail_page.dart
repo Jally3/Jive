@@ -11,6 +11,7 @@ import '../data/vod_source_registry.dart';
 import '../domain/video.dart';
 import '../domain/playback_selection.dart';
 import '../domain/vod_source.dart';
+import '../shared/app_snack_bar.dart';
 import 'detail_source_controller.dart';
 import 'detail_more_sources_sheet.dart';
 import 'download_management_page.dart';
@@ -134,7 +135,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       );
     } catch (e) {
       if (mounted) {
-        m.showSnackBar(SnackBar(content: Text('$e（可尝试查找其他来源）')));
+        showAppSnackBarVia(m, '$e（可尝试查找其他来源）');
       }
     } finally {
       if (mounted) setState(() => resolving = false);
@@ -227,7 +228,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                           ],
                         ),
                         const Text(
-                          '下载完成后会自动过滤广告片段',
+                          '下载时自动跳过广告片段',
                           style: TextStyle(
                             fontSize: 12,
                             color: AppColors.secondary,
@@ -378,16 +379,21 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         throw const VideoDataException('选中的剧集缺少稳定身份，无法下载');
       }
       if (mounted) {
-        ScaffoldMessenger.of(
+        showAppSnackBar(
           context,
-        ).showSnackBar(SnackBar(content: Text('已开始下载 $created 集（完成后自动过滤广告）')));
+          '已开始下载 $created 集（自动跳过广告片段）',
+          action: SnackBarAction(
+            label: '查看',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const DownloadManagementPage()),
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         final reason = (e is Exception) ? e.toString() : '未知错误';
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('下载任务创建失败：$reason')));
+        showAppSnackBar(context, '下载任务创建失败：$reason');
       }
     } finally {
       if (mounted) setState(() => downloadResolving = false);
@@ -403,7 +409,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         actions: [
           IconButton(
             tooltip: '下载管理',
-            icon: const Icon(Icons.download_outlined),
+            icon: const Icon(Icons.download_done_outlined),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const DownloadManagementPage()),
             ),
@@ -441,95 +447,108 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
 
   Widget _content(Video v) => ListView(
     padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+    // section 间距统一为 24/28，模块内部 4/8/12（8pt 体系）。
     children: [
       _header(v),
-      const SizedBox(height: 20),
+      const SizedBox(height: 24),
       Row(
         children: [
-          Expanded(child: _playBtn(v)),
+          // 播放 : 下载 ≈ 65 : 35，收藏收起为同高图标按钮。
+          Expanded(flex: 13, child: _playBtn(v)),
           const SizedBox(width: 8),
-          Expanded(child: _downloadBtn(v)),
+          Expanded(flex: 7, child: _downloadBtn(v)),
+          const SizedBox(width: 8),
+          _favBtn(v),
         ],
       ),
-      const SizedBox(height: 8),
-      _favBtn(v),
-      const SizedBox(height: 16),
+      const SizedBox(height: 28),
       _sourceSection(),
-      const SizedBox(height: 24),
+      const SizedBox(height: 28),
       _desc(v),
-      const SizedBox(height: 16),
+      const SizedBox(height: 28),
       _eps(v),
     ],
   );
 
-  Widget _header(Video v) => Row(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: SizedBox(
-          width: 128,
-          child: AspectRatio(
-            aspectRatio: 2 / 3,
-            child: ColoredBox(
-              color: AppColors.elevated,
-              child: v.posterUrl.isEmpty
-                  ? const Icon(
-                      Icons.movie_outlined,
-                      size: 44,
-                      color: AppColors.tertiary,
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: v.posterUrl,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, _, _) => const Icon(
+  Widget _header(Video v) {
+    // 元信息合并为少量纯文本行，不用图标，避免与封面争夺视觉焦点。
+    final infoLine = [
+      v.area,
+      v.year,
+      v.category,
+      if (v.episodes.isNotEmpty)
+        v.episodes.length == 1 ? '正片' : '${v.episodes.length}集',
+    ].where((e) => e.isNotEmpty).join(' · ');
+    const metaStyle = TextStyle(
+      color: AppColors.secondary,
+      fontSize: 13,
+      height: 1.5,
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            width: 120,
+            child: AspectRatio(
+              aspectRatio: 3 / 4,
+              child: ColoredBox(
+                color: AppColors.elevated,
+                child: v.posterUrl.isEmpty
+                    ? const Icon(
                         Icons.movie_outlined,
+                        size: 44,
                         color: AppColors.tertiary,
+                      )
+                    : CachedNetworkImage(
+                        imageUrl: v.posterUrl,
+                        fit: BoxFit.cover,
+                        errorWidget: (_, _, _) => const Icon(
+                          Icons.movie_outlined,
+                          color: AppColors.tertiary,
+                        ),
                       ),
-                    ),
+              ),
             ),
           ),
         ),
-      ),
-      const SizedBox(width: 16),
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              v.title,
-              style: const TextStyle(
-                fontSize: 22,
-                height: 1.35,
-                fontWeight: FontWeight.w700,
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                v.title,
+                style: const TextStyle(
+                  fontSize: 22,
+                  height: 1.35,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            _Meta(
-              icon: Icons.category_outlined,
-              text: v.category.isEmpty ? '类型未知' : v.category,
-            ),
-            if (v.remarks.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              _Meta(icon: Icons.update, text: v.remarks),
+              if (infoLine.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(infoLine, style: metaStyle),
+              ],
+              if (v.remarks.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(v.remarks, style: metaStyle),
+              ],
+              if (v.actors.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  v.actors,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: metaStyle,
+                ),
+              ],
             ],
-            if (v.year.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              _Meta(icon: Icons.calendar_today, text: v.year),
-            ],
-            if (v.area.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              _Meta(icon: Icons.public, text: v.area),
-            ],
-            if (v.actors.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              _Meta(icon: Icons.people_outline, text: v.actors),
-            ],
-          ],
+          ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 
   Widget _playBtn(Video v) => SizedBox(
     height: 48,
@@ -553,6 +572,8 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       onPressed: v.episodes.isEmpty || resolving || downloadResolving
           ? null
           : _chooseDownloads,
+      // 次操作用普通文字色，把琥珀色留给播放主按钮。
+      style: OutlinedButton.styleFrom(foregroundColor: AppColors.text),
       icon: downloadResolving
           ? const SizedBox.square(
               dimension: 18,
@@ -568,10 +589,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       final favs = ref.watch(favoriteControllerProvider);
       final fav =
           favs.value?.any((i) => i.video.globalId == v.globalId) ?? false;
-      return SizedBox(
-        width: double.infinity,
-        height: 44,
-        child: OutlinedButton.icon(
+      return SizedBox.square(
+        dimension: 48,
+        child: OutlinedButton(
           onPressed: favs.isLoading
               ? null
               : () async {
@@ -580,20 +600,19 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                         .read(favoriteControllerProvider.notifier)
                         .toggle(v);
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(fav ? '已取消收藏' : '已收藏')),
-                      );
+                      showAppSnackBar(context, fav ? '已取消收藏' : '已收藏');
                     }
                   } catch (_) {
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('收藏保存失败，请重试')),
-                      );
+                      showAppSnackBar(context, '收藏保存失败，请重试');
                     }
                   }
                 },
-          icon: Icon(fav ? Icons.favorite : Icons.favorite_outline),
-          label: Text(fav ? '取消收藏' : '收藏'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.text,
+            padding: EdgeInsets.zero,
+          ),
+          child: Icon(fav ? Icons.favorite : Icons.favorite_outline, size: 20),
         ),
       );
     },
@@ -709,9 +728,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     detail = s.detail;
     error = null;
     if (matched == null && prior != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('当前剧集在目标源不存在，已切换到第一集')));
+      showAppSnackBar(context, '当前剧集在目标源不存在，已切换到第一集');
     }
     setState(() {});
   }
@@ -827,9 +844,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     await sc!.loadCandidateDetail(s.source.id, c);
     if (!mounted) return;
     if (sc!.activeVideo.sourceId != s.source.id) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('该来源加载失败，已保留当前来源')));
+      showAppSnackBar(context, '该来源加载失败，已保留当前来源');
       return;
     }
     detail = sc!.activeVideo;
@@ -837,9 +852,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     final matched = sc!.findEpisodeByName(prior);
     selected = matched ?? 0;
     if (matched == null && prior != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('当前剧集在目标源不存在，已切换到第一集')));
+      showAppSnackBar(context, '当前剧集在目标源不存在，已切换到第一集');
     }
     setState(() {});
   }
@@ -919,7 +932,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     children: [
       const Text(
         '简介',
-        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 8),
       Text(
@@ -933,12 +946,16 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         ),
       ),
       if (v.description.length > 100)
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            onPressed: () => setState(() => expanded = !expanded),
-            child: Text(expanded ? '收起' : '展开'),
+        // 紧跟正文、弱化颜色，不再用主题色按钮样式。
+        TextButton(
+          onPressed: () => setState(() => expanded = !expanded),
+          style: TextButton.styleFrom(
+            foregroundColor: AppColors.secondary,
+            padding: EdgeInsets.zero,
+            minimumSize: const Size(0, 32),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
+          child: Text(expanded ? '收起' : '展开'),
         ),
     ],
   );
@@ -952,7 +969,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             const Expanded(
               child: Text(
                 '剧集',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
             ),
             Text(
@@ -962,6 +979,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             if (v.episodes.length > 1)
               TextButton.icon(
                 onPressed: () => setState(() => reversed = !reversed),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.secondary,
+                ),
                 icon: const Icon(Icons.swap_vert, size: 18),
                 label: Text(reversed ? '正序' : '倒序'),
               ),
@@ -994,25 +1014,4 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       ],
     );
   }
-}
-
-class _Meta extends StatelessWidget {
-  const _Meta({required this.icon, required this.text});
-  final IconData icon;
-  final String text;
-  @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Icon(icon, size: 16, color: AppColors.tertiary),
-      const SizedBox(width: 6),
-      Expanded(
-        child: Text(
-          text,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: AppColors.secondary, fontSize: 13),
-        ),
-      ),
-    ],
-  );
 }

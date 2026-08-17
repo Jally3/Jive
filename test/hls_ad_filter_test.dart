@@ -112,6 +112,31 @@ void main() {
     expect(decision.mediaPlaylist!.timelineMapping, isNull);
   });
 
+  test('filter enabled but no ads keeps the original timeline', () async {
+    const clean = '''
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXTINF:4.0,
+https://cdn.example.com/movie/0000.ts
+#EXTINF:4.0,
+https://cdn.example.com/movie/0001.ts
+#EXTINF:4.0,
+https://cdn.example.com/movie/0002.ts
+#EXT-X-ENDLIST
+''';
+    final parser = HlsParser(
+      client: MockClient((request) async => http.Response(clean, 200)),
+      adFilter: const AdFilter(enabled: true),
+    );
+    final decision = await parser.resolve(source());
+    expect(decision.isCacheable, isTrue);
+    expect(decision.filterConfidence, isNull);
+    final playlist = decision.mediaPlaylist!;
+    expect(playlist.segments, hasLength(3));
+    expect(playlist.timelineMapping, isNull);
+  });
+
   test('structural failure keeps original manifest (rollback)', () async {
     final parser = HlsParser(
       client: MockClient((request) async => http.Response(_mediaWithAds, 200)),
@@ -132,5 +157,62 @@ void main() {
     );
     expect(decision.isCacheable, isFalse);
     expect(parser, isNotNull);
+  });
+
+  // 真实样本回归：广告分片时长(3s)比正片(1s)长、路径含 /adjump/、
+  // 前后 DISCONTINUITY 包裹，时长类检测器对此全部失效，只能靠明牌路径。
+  test('adjump path markers remove longer-than-content ad segments', () async {
+    final buffer = StringBuffer()
+      ..writeln('#EXTM3U')
+      ..writeln('#EXT-X-VERSION:3')
+      ..writeln('#EXT-X-TARGETDURATION:10');
+    void content(int from, int to) {
+      for (var i = from; i <= to; i++) {
+        buffer.writeln('#EXTINF:1.0,');
+        buffer.writeln('${i.toString().padLeft(7, '0')}.ts');
+      }
+    }
+
+    void adBlock() {
+      buffer.writeln('#EXT-X-DISCONTINUITY');
+      for (var i = 0; i < 9; i++) {
+        buffer.writeln('#EXTINF:${i == 8 ? 1.76 : 3.0},');
+        buffer.writeln(
+          '/video/adjump/time/1786905362888000000$i.ts',
+        );
+      }
+      buffer.writeln('#EXT-X-DISCONTINUITY');
+    }
+
+    content(0, 299);
+    adBlock();
+    content(300, 2399);
+    adBlock();
+    content(2400, 2499);
+    buffer.writeln('#EXT-X-ENDLIST');
+
+    final parser = HlsParser(
+      client: MockClient(
+        (request) async => http.Response(buffer.toString(), 200),
+      ),
+      adFilter: const AdFilter(enabled: true),
+    );
+    final decision = await parser.resolve(source());
+    expect(decision.isCacheable, isTrue);
+    expect(decision.filterConfidence, 1.0);
+    final playlist = decision.mediaPlaylist!;
+    // 2500 个正片分片保留，两段共 18 个 adjump 广告分片被移除。
+    expect(playlist.segments, hasLength(2500));
+    expect(
+      playlist.segments.every((s) => !s.uri.path.contains('adjump')),
+      isTrue,
+    );
+    final mapping = playlist.timelineMapping!;
+    // RemovedRange 按被删分片逐个记录（每段 9 片，共 18 条）。
+    expect(mapping.ranges, hasLength(18));
+    // 每段广告 8×3.0 + 1.76 = 25.76s。
+    expect(mapping.removedMs, 25760 * 2);
+    final plan = parser.buildProxyPlan(playlist, 'tok');
+    expect(plan.proxyManifest, isNot(contains('adjump')));
   });
 }

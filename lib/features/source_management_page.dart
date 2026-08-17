@@ -10,6 +10,7 @@ import '../data/video_repository.dart';
 import '../data/vod_source_preferences.dart';
 import '../data/vod_source_registry.dart';
 import '../domain/vod_source.dart';
+import '../shared/app_snack_bar.dart';
 
 const _healthKeyPrefix = 'source_health_';
 const _checkTimeout = Duration(seconds: 8);
@@ -122,9 +123,7 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
   Future<void> _setDefault(VodSource source) async {
     await ref.read(selectedVodSourceProvider.notifier).select(source);
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('默认来源已改为：${source.name}')));
+    showAppSnackBar(context, '默认来源已改为：${source.name}');
   }
 
   @override

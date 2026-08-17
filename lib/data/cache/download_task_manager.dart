@@ -548,11 +548,12 @@ class DownloadTaskManager {
       if (selection.playbackSource.format == PlaybackFormat.unknown) {
         selection = await _urlResolver.resolveSelection(selection);
       }
-      // Hybrid download strategy: resolve and download the original media
-      // playlist first. Ad filtering is deliberately deferred until every
-      // raw resource is safely on disk, so a filter failure can fall back to
-      // a playable original manifest without redownloading anything.
-      final parser = HlsParser(client: client);
+      // 统一下载策略：解析时即过滤广告（与在线播放共用同一过滤逻辑和
+      // revision），只下载正片分片；广告分片不下载、不占缓存。
+      final parser = HlsParser(
+        client: client,
+        adFilter: const AdFilter(enabled: true),
+      );
       HlsDecision decision;
       final savedManifest =
           task.contentKeyHash == null || task.revisionKeyHash == null
@@ -573,20 +574,18 @@ class DownloadTaskManager {
       if (!decision.isCacheable || decision.mediaPlaylist == null) {
         throw _DownloadException(_reasonForManifest(decision.reason));
       }
-      final rawPlaylist = decision.mediaPlaylist!;
-      final sourcePlaylist = decision.sourcePlaylist ?? rawPlaylist;
-      final rawPlan = HlsParser(
-        client: client,
-      ).buildProxyPlan(rawPlaylist, _proxyToken());
-      if (rawPlan.resources.isEmpty) {
+      final playlist = decision.mediaPlaylist!;
+      final sourcePlaylist = decision.sourcePlaylist ?? playlist;
+      final plan = parser.buildProxyPlan(playlist, _proxyToken());
+      if (plan.resources.isEmpty) {
         throw const _DownloadException(DownloadFailureReason.unsupportedHls);
       }
       final contentKey = _contentKey(selection);
-      final fingerprint = sha256
-          .convert(utf8.encode(rawPlaylist.raw))
-          .toString();
-      final revisionKeyHash =
-          'sha256:${sha256.convert(utf8.encode('${rawPlaylist.baseUri}|$fingerprint|filter:$downloadFilterVersion')).toString()}';
+      final fingerprint = sha256.convert(utf8.encode(playlist.raw)).toString();
+      final revisionKeyHash = hlsRevisionKeyHash(playlist.baseUri, fingerprint);
+      final mapping = playlist.timelineMapping;
+      final filterVersion = mapping == null ? 0 : downloadFilterVersion;
+      final timelineVersion = mapping == null ? 0 : adTimelineVersion;
       final entry = await cacheManager.upsertEntry(
         CacheEntry(
           contentKeyVersion: contentKey.version,
@@ -596,8 +595,8 @@ class DownloadTaskManager {
           manifestBaseUrl: urlNormalizer.normalizeToString(
             selection.playbackSource.url,
           ),
-          filterVersion: 0,
-          timelineVersion: 0,
+          filterVersion: filterVersion,
+          timelineVersion: timelineVersion,
           sourceId: selection.sourceId,
           sourceVideoId: selection.sourceVideoId,
           title: selection.title,
@@ -616,11 +615,20 @@ class DownloadTaskManager {
       await store.saveProxyManifest(
         contentKey.hash,
         revisionKeyHash,
-        rawPlan.proxyManifest,
+        plan.proxyManifest,
       );
+      if (mapping != null) {
+        await _saveTimeline(
+          contentKey.hash,
+          revisionKeyHash,
+          fingerprint,
+          mapping,
+          decision.filterConfidence,
+        );
+      }
       await cacheManager.setExpectations(
         entry.key,
-        rawPlan.expectedResourceCount,
+        plan.expectedResourceCount,
         requireFinalization: true,
       );
       ref = await cacheManager.acquire(entry.key);
@@ -628,9 +636,9 @@ class DownloadTaskManager {
         task.copyWith(
           contentKeyHash: contentKey.hash,
           revisionKeyHash: revisionKeyHash,
-          expectedResourceCount: rawPlan.expectedResourceCount,
-          filterVersion: 0,
-          mediaPlaylistUrl: rawPlaylist.baseUri.toString(),
+          expectedResourceCount: plan.expectedResourceCount,
+          filterVersion: filterVersion,
+          mediaPlaylistUrl: playlist.baseUri.toString(),
         ),
       );
       final fetcher = ResourceFetcher(
@@ -647,8 +655,9 @@ class DownloadTaskManager {
         },
         onBytesReceived: (bytes) => _recordBytes(taskId, bytes),
         failOnCacheUnavailable: true,
+        encryptedSegments: playlist.hasEncryption,
       );
-      final resources = rawPlan.resources.entries.toList();
+      final resources = plan.resources.entries.toList();
       var cursor = 0;
       Future<void> worker() async {
         while (true) {
@@ -657,7 +666,7 @@ class DownloadTaskManager {
           if (index >= resources.length) return;
           final resource = resources[index];
           final id = resource.key;
-          final ext = rawPlan.extByResourceId[id] ?? 'bin';
+          final ext = plan.extByResourceId[id] ?? 'bin';
           final existing = await cacheManager.resourceRecord(entry.key, id);
           if (existing?.complete == true) {
             _resourceLengths[taskId]?[id] = existing!.size;
@@ -697,53 +706,7 @@ class DownloadTaskManager {
         return;
       }
 
-      // Filter locally only after the complete raw resource set has been
-      // committed. The filtered manifest points at the same resource IDs, so
-      // this step does not issue any additional network requests.
-      var playablePlaylist = rawPlaylist;
-      double? filterConfidence;
-      var finalFilterVersion = 0;
-      var finalTimelineVersion = 0;
-      try {
-        if (!rawPlaylist.hasImplicitEncryptionIv) {
-          final outcome = const AdFilter(enabled: true).filter(rawPlaylist);
-          if (outcome.removedAny && outcome.filtered.isNotEmpty) {
-            playablePlaylist = HlsParser(
-              client: client,
-            ).buildFilteredPlaylist(rawPlaylist, outcome);
-            filterConfidence = outcome.confidence;
-            finalFilterVersion = downloadFilterVersion;
-            finalTimelineVersion = adTimelineVersion;
-            await _saveTimeline(
-              contentKey.hash,
-              revisionKeyHash,
-              fingerprint,
-              outcome.mapping,
-              outcome.confidence,
-            );
-          }
-        }
-      } catch (_) {
-        // The raw manifest is the safe fallback. It is already fully
-        // downloaded and remains playable even if local classification fails.
-        playablePlaylist = rawPlaylist;
-        filterConfidence = null;
-        finalFilterVersion = 0;
-        finalTimelineVersion = 0;
-      }
-      final playablePlan = HlsParser(
-        client: client,
-      ).buildProxyPlan(playablePlaylist, _proxyToken());
-      await store.saveProxyManifest(
-        contentKey.hash,
-        revisionKeyHash,
-        playablePlan.proxyManifest,
-      );
-      await cacheManager.updateManifestMetadata(
-        entry.key,
-        filterVersion: finalFilterVersion,
-        timelineVersion: finalTimelineVersion,
-      );
+      // 过滤已在解析阶段完成，分片集合与在线播放一致，无需后置过滤步骤。
       final finalized = await cacheManager.finalizeEntry(entry.key);
       if (!finalized) {
         throw const _DownloadException(DownloadFailureReason.cacheWriteFailed);
@@ -759,8 +722,8 @@ class DownloadTaskManager {
           expectedResourceCount: resources.length,
           downloadedBytes: current.completeBytes,
           totalBytes: current.completeBytes,
-          filterVersion: finalFilterVersion,
-          filterConfidence: filterConfidence,
+          filterVersion: filterVersion,
+          filterConfidence: decision.filterConfidence,
           clearError: true,
           speedBytesPerSecond: 0,
         ),
@@ -801,7 +764,11 @@ class DownloadTaskManager {
       }
     } catch (_) {
       final current = _tasks[taskId];
-      if (current != null && !_pauseRequested.contains(taskId)) {
+      // 与 _DownloadException 分支一致：暂停请求优先于失败落账，
+      // 避免暂停瞬间的在途分片报错把任务卡在 downloading。
+      if (current != null && _pauseRequested.contains(taskId)) {
+        await _set(current.copyWith(status: DownloadTaskStatus.paused));
+      } else if (current != null && !_cancelRequested.contains(taskId)) {
         await _set(
           current.copyWith(
             status: DownloadTaskStatus.failed,

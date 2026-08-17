@@ -66,7 +66,7 @@ void main() {
       var originHits = 0;
       final client = MockClient((request) async {
         originHits++;
-        return http.Response('segment-data-1234', 200);
+        return http.Response('Gsegment-data-1234', 200);
       });
       final created = await manager.upsertEntry(entry('1'));
       final fetcher = ResourceFetcher(
@@ -85,7 +85,7 @@ void main() {
         ext: 'ts',
       );
       expect(first.fromCache, isFalse);
-      expect(await _collect(first.body), 'segment-data-1234');
+      expect(await _collect(first.body), 'Gsegment-data-1234');
 
       final stats = await manager.stats();
       expect(stats.entries.single.completeBytes, greaterThan(0));
@@ -97,14 +97,14 @@ void main() {
         ext: 'ts',
       );
       expect(second.fromCache, isTrue);
-      expect(await _collect(second.body), 'segment-data-1234');
+      expect(await _collect(second.body), 'Gsegment-data-1234');
       expect(originHits, 1);
     },
   );
 
   test('cached resource serves a sub range with 206', () async {
     final client = MockClient(
-      (request) async => http.Response('0123456789', 200),
+      (request) async => http.Response('G123456789', 200),
     );
     final created = await manager.upsertEntry(entry('1'));
     final fetcher = ResourceFetcher(
@@ -136,7 +136,7 @@ void main() {
 
   test('invalid range on cached resource returns 416', () async {
     final client = MockClient(
-      (request) async => http.Response('0123456789', 200),
+      (request) async => http.Response('G123456789', 200),
     );
     final created = await manager.upsertEntry(entry('1'));
     final fetcher = ResourceFetcher(
@@ -164,39 +164,53 @@ void main() {
     expect(ranged.statusCode, 416);
   });
 
-  test('ranged requests pass through without being cached', () async {
-    var originHits = 0;
-    final client = MockClient((request) async {
-      originHits++;
-      return http.Response(
-        'abcdef',
-        206,
-        headers: {'content-range': 'bytes 0-5/100'},
+  test(
+    'ranged request on uncached resource caches the full body and slices',
+    () async {
+      var originHits = 0;
+      final client = MockClient((request) async {
+        originHits++;
+        // 完整资源 10 字节（合法的 fMP4 box 头）；Range 未命中时先全量写穿缓存。
+        return http.Response('0000ftypXX', 200);
+      });
+      final created = await manager.upsertEntry(entry('1'));
+      final fetcher = ResourceFetcher(
+        client: client,
+        sessionHeaders: const {},
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: 'ck1',
+        revisionKeyHash: 'rk1',
       );
-    });
-    final created = await manager.upsertEntry(entry('1'));
-    final fetcher = ResourceFetcher(
-      client: client,
-      sessionHeaders: const {},
-      manager: manager,
-      store: store,
-      entryKey: created.key,
-      contentKeyHash: 'ck1',
-      revisionKeyHash: 'rk1',
-    );
-    final id = 'sha256:${'a' * 64}';
-    final result = await fetcher.fetch(
-      origin: Uri.parse('https://cdn.example.com/a.m4s'),
-      resourceId: id,
-      ext: 'm4s',
-      downstreamHeaders: {'range': 'bytes=0-5'},
-    );
-    expect(result.statusCode, 206);
-    expect(await _collect(result.body), 'abcdef');
-    expect(originHits, 1);
-    final record = await manager.resourceRecord(created.key, id);
-    expect(record, isNull);
-  });
+      final id = 'sha256:${'a' * 64}';
+      final first = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/a.m4s'),
+        resourceId: id,
+        ext: 'm4s',
+        downstreamHeaders: {'range': 'bytes=4-7'},
+      );
+      expect(first.statusCode, 206);
+      expect(first.headers['content-range'], 'bytes 4-7/10');
+      expect(await _collect(first.body), 'ftyp');
+      // 完整资源已提交进缓存。
+      final record = await manager.resourceRecord(created.key, id);
+      expect(record?.complete, isTrue);
+      expect(record?.size, 10);
+
+      // 第二次 Range 请求直接命中缓存，不再回源。
+      final second = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/a.m4s'),
+        resourceId: id,
+        ext: 'm4s',
+        downstreamHeaders: {'range': 'bytes=0-3'},
+      );
+      expect(second.statusCode, 206);
+      expect(second.fromCache, isTrue);
+      expect(await _collect(second.body), '0000');
+      expect(originHits, 1);
+    },
+  );
 
   test('over quota fetch streams through without caching', () async {
     manager = CacheManager(
@@ -204,7 +218,9 @@ void main() {
       diskSpace: _FakeDiskSpace(2 * _gb, total: 64 * _gb),
     );
     await manager.initialize();
-    final client = MockClient((request) async => http.Response('payload', 200));
+    final client = MockClient(
+      (request) async => http.Response('Gpayload', 200),
+    );
     final created = await manager.upsertEntry(entry('1'));
     PlaybackFallbackReason? bypassReason;
     final fetcher = ResourceFetcher(
@@ -223,7 +239,7 @@ void main() {
       resourceId: id,
       ext: 'ts',
     );
-    expect(await _collect(result.body), 'payload');
+    expect(await _collect(result.body), 'Gpayload');
     expect(bypassReason, PlaybackFallbackReason.cacheQuotaExceeded);
     final record = await manager.resourceRecord(created.key, id);
     expect(record, isNull);
@@ -239,7 +255,7 @@ void main() {
       await manager.initialize();
       final created = await manager.upsertEntry(entry('1'));
       final fetcher = ResourceFetcher(
-        client: MockClient((_) async => http.Response('payload', 200)),
+        client: MockClient((_) async => http.Response('Gpayload', 200)),
         sessionHeaders: const {},
         manager: manager,
         store: store,
@@ -267,7 +283,7 @@ void main() {
       final client = MockClient((request) async {
         originHits++;
         await Future<void>.delayed(const Duration(milliseconds: 20));
-        return http.Response('data', 200);
+        return http.Response('Gdata', 200);
       });
       final created = await manager.upsertEntry(entry('1'));
       final fetcher = ResourceFetcher(
@@ -297,6 +313,103 @@ void main() {
       expect(originHits, 1);
     },
   );
+
+  test('truncated body (content-length mismatch) is not committed', () async {
+    var originHits = 0;
+    final client = MockClient((request) async {
+      originHits++;
+      // 声明 100 字节但只给 10 字节：截断响应。
+      return http.Response(
+        'G123456789',
+        200,
+        headers: {'content-length': '100'},
+      );
+    });
+    final created = await manager.upsertEntry(entry('1'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+    );
+    final id = 'sha256:${'a' * 64}';
+    final result = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/a.ts'),
+      resourceId: id,
+      ext: 'ts',
+    );
+    await _collect(result.body);
+    // 截断内容不得提交为完整资源；下次请求重新回源。
+    final record = await manager.resourceRecord(created.key, id);
+    expect(record?.complete, isNot(true));
+    final second = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/a.ts'),
+      resourceId: id,
+      ext: 'ts',
+    );
+    expect(second.fromCache, isFalse);
+    await _collect(second.body);
+    expect(originHits, 2);
+  });
+
+  test('html error page for a media segment is not committed', () async {
+    var originHits = 0;
+    final client = MockClient((request) async {
+      originHits++;
+      return http.Response('<html>error</html>', 200);
+    });
+    final created = await manager.upsertEntry(entry('1'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+    );
+    final id = 'sha256:${'a' * 64}';
+    final result = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/a.ts'),
+      resourceId: id,
+      ext: 'ts',
+    );
+    await _collect(result.body);
+    // 魔数不匹配（TS 缺 0x47 同步字节），不提交缓存。
+    final record = await manager.resourceRecord(created.key, id);
+    expect(record?.complete, isNot(true));
+    expect(originHits, 1);
+  });
+
+  test('encrypted segments skip the magic check', () async {
+    final client = MockClient(
+      // 密文没有 0x47 同步字节，也不应被拒绝。
+      (request) async => http.Response('ciphertext!!', 200),
+    );
+    final created = await manager.upsertEntry(entry('1'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+      encryptedSegments: true,
+    );
+    final id = 'sha256:${'a' * 64}';
+    final result = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/a.ts'),
+      resourceId: id,
+      ext: 'ts',
+    );
+    await _collect(result.body);
+    final record = await manager.resourceRecord(created.key, id);
+    expect(record?.complete, isTrue);
+  });
 }
 
 Future<String> _collect(Stream<List<int>> stream) async {

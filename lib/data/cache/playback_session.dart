@@ -146,8 +146,10 @@ class PlaybackSession {
         manifestFingerprint = sha256
             .convert(utf8.encode(playlist.raw))
             .toString();
-        final revisionKeyHash =
-            'sha256:${sha256.convert(utf8.encode('${playlist.baseUri}|$manifestFingerprint')).toString()}';
+        final revisionKeyHash = hlsRevisionKeyHash(
+          playlist.baseUri,
+          manifestFingerprint,
+        );
         entryKey = '${contentKey.hash}|$revisionKeyHash';
         await mgr.upsertEntry(
           CacheEntry(
@@ -197,6 +199,7 @@ class PlaybackSession {
           entryKey: entryKey,
           contentKeyHash: contentKey.hash,
           revisionKeyHash: revisionKeyHash,
+          encryptedSegments: playlist.hasEncryption,
           onCacheBypass: onCacheBypass,
         );
       }
@@ -323,13 +326,17 @@ class PlaybackSession {
 
   SegmentPrefetcher? get prefetcher => _prefetcher;
 
-  SegmentPrefetcher? buildPrefetcher() {
+  SegmentPrefetcher? buildPrefetcher({int Function()? windowSize}) {
     final existing = _prefetcher;
     if (existing != null) return existing;
     final fetcher = route.fetcher;
     final segments = playlist?.segments;
     if (fetcher == null || segments == null || segments.isEmpty) return null;
-    final created = SegmentPrefetcher(fetcher: fetcher, segments: segments);
+    final created = SegmentPrefetcher(
+      fetcher: fetcher,
+      segments: segments,
+      windowSize: windowSize,
+    );
     _prefetcher = created;
     return created;
   }

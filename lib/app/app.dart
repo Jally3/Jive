@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_states.dart';
@@ -90,23 +91,50 @@ class _AppShellState extends State<AppShell> {
   var index = 0;
   var profileRevision = 0;
   late final List<Widget?> pages;
+  final _searchFocusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     pages = List<Widget?>.filled(3, null);
     pages[0] = const HomePage();
+    // 预建搜索页：首次构建开销挪到启动阶段，避免首次切换 tab 时
+    // 在同一帧内建整棵子树造成卡顿。
+    pages[1] = SearchPage(focusNode: _searchFocusNode);
+  }
+
+  @override
+  void dispose() {
+    _searchFocusNode.dispose();
+    super.dispose();
   }
 
   Widget _createPage(int value) => switch (value) {
     0 => const HomePage(),
-    1 => const SearchPage(),
+    1 => SearchPage(focusNode: _searchFocusNode),
     2 => ProfilePage(key: ValueKey(profileRevision)),
     _ => const SizedBox.shrink(),
   };
 
+  void _onSelect(int value) => setState(() {
+    index = value;
+    if (value == 2) {
+      profileRevision++;
+      pages[value] = ProfilePage(key: ValueKey(profileRevision));
+    } else {
+      pages[value] ??= _createPage(value);
+    }
+    if (value == 1) {
+      // 等 tab 切换动画结束再弹键盘，避免键盘动画与首帧绘制抢资源。
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted && index == 1) _searchFocusNode.requestFocus();
+      });
+    }
+  });
+
   @override
   Widget build(BuildContext context) => Scaffold(
+    extendBody: true,
     body: IndexedStack(
       index: index,
       children: List.generate(
@@ -114,30 +142,119 @@ class _AppShellState extends State<AppShell> {
         (value) => pages[value] ?? const SizedBox.shrink(),
       ),
     ),
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: index,
-      onDestinationSelected: (value) => setState(() {
-        index = value;
-        if (value == 2) {
-          profileRevision++;
-          pages[value] = ProfilePage(key: ValueKey(profileRevision));
-        } else {
-          pages[value] ??= _createPage(value);
-        }
-      }),
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.home_outlined),
-          selectedIcon: Icon(Icons.home),
-          label: '首页',
-        ),
-        NavigationDestination(icon: Icon(Icons.search), label: '搜索'),
-        NavigationDestination(
-          icon: Icon(Icons.person_outline),
-          selectedIcon: Icon(Icons.person),
-          label: '我的',
-        ),
-      ],
+    bottomNavigationBar: SafeArea(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth:
+                    MediaQuery.orientationOf(context) == Orientation.landscape
+                    ? 600
+                    : 480,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: _FloatingNavBar(index: index, onSelect: _onSelect),
+              ),
+            ),
+          ),
+        ],
+      ),
     ),
   );
+}
+
+class _FloatingNavBar extends StatelessWidget {
+  const _FloatingNavBar({required this.index, required this.onSelect});
+
+  final int index;
+  final ValueChanged<int> onSelect;
+
+  static const _items = [
+    (Icons.home_outlined, Icons.home, '首页'),
+    (Icons.search, Icons.search, '搜索'),
+    (Icons.person_outline, Icons.person, '我的'),
+  ];
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 64,
+    decoration: const BoxDecoration(
+      borderRadius: BorderRadius.all(Radius.circular(32)),
+      boxShadow: [
+        BoxShadow(color: AppColors.scrim, blurRadius: 24, offset: Offset(0, 6)),
+      ],
+    ),
+    // 毛玻璃：半透明底色 + 背景模糊，页面内容滚到导航栏下方时透出。
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(32),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Material(
+          color: AppColors.surface.withValues(alpha: 0.3),
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(32),
+            side: const BorderSide(color: AppColors.divider),
+          ),
+          child: Row(
+            children: [
+              for (var i = 0; i < _items.length; i++)
+                Expanded(
+                  child: _NavItem(
+                    icon: _items[i].$1,
+                    selectedIcon: _items[i].$2,
+                    label: _items[i].$3,
+                    selected: index == i,
+                    onTap: () => onSelect(i),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppColors.accent : AppColors.secondary;
+    return InkWell(
+      borderRadius: BorderRadius.circular(32),
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(selected ? selectedIcon : icon, color: color, size: 24),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: color,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -47,7 +47,7 @@ void main() {
     final fetched = <String>[];
     final client = MockClient((request) async {
       fetched.add(request.url.path);
-      return http.Response('payload-${request.url.pathSegments.last}', 200);
+      return http.Response('Gpayload-${request.url.pathSegments.last}', 200);
     });
     final created = await manager.upsertEntry(
       CacheEntry(
@@ -86,7 +86,6 @@ void main() {
       fetcher: fetcher,
       segments: segments,
       concurrency: 3,
-      isWifi: () => true,
     );
     await prefetcher.prefetch(
       fromPosition: const Duration(seconds: 16),
@@ -104,7 +103,7 @@ void main() {
     var requests = 0;
     final client = MockClient((request) async {
       requests++;
-      return http.Response('data', 200);
+      return http.Response('Gdata', 200);
     });
     final created = await manager.upsertEntry(
       CacheEntry(
@@ -142,7 +141,6 @@ void main() {
       fetcher: fetcher,
       segments: segments,
       concurrency: 5,
-      isWifi: () => true,
     );
     final future = prefetcher.prefetch(lookahead: 20);
     prefetcher.cancel();
@@ -150,52 +148,11 @@ void main() {
     expect(requests, lessThan(20));
   });
 
-  test('does not prefetch when wifi status is unknown', () async {
-    var requests = 0;
-    final client = MockClient((request) async {
-      requests++;
-      return http.Response('data', 200);
-    });
-    final created = await manager.upsertEntry(
-      CacheEntry(
-        contentKeyVersion: 1,
-        contentKeyHash: 'ck1',
-        revisionKeyHash: 'rk1',
-        manifestFingerprint: 'fp',
-        sourceId: 's',
-        sourceVideoId: 'v',
-        title: '影片',
-        playbackLineIdentity: 'line',
-        playbackLineName: '',
-        episodeIdentity: 'ep',
-        episodeId: '1',
-        episodeName: '第1集',
-      ),
-    );
-    final fetcher = ResourceFetcher(
-      client: client,
-      sessionHeaders: const {},
-      manager: manager,
-      store: manager.store,
-      entryKey: created.key,
-      contentKeyHash: 'ck1',
-      revisionKeyHash: 'rk1',
-    );
-    final prefetcher = SegmentPrefetcher(
-      fetcher: fetcher,
-      segments: [
-        HlsSegment(uri: Uri.parse('https://cdn.example.com/m/seg0.ts')),
-      ],
-    );
-    await prefetcher.prefetch(lookahead: 5);
-    expect(requests, 0);
-  });
-
   test('resume continues from the cursor and skips already cached', () async {
     final fetched = <String>[];
     final client = MockClient((request) async {
       fetched.add(request.url.path);
-      return http.Response('data', 200);
+      return http.Response('Gdata', 200);
     });
     final created = await manager.upsertEntry(
       CacheEntry(
@@ -234,7 +191,6 @@ void main() {
       fetcher: fetcher,
       segments: segments,
       concurrency: 5,
-      isWifi: () => true,
     );
     await prefetcher.prefetch(lookahead: 4);
     expect(fetched, hasLength(4));
@@ -246,5 +202,111 @@ void main() {
     await prefetcher.prefetch(lookahead: 4);
     expect(fetched, isNotEmpty);
     expect(fetched.first, '/m/seg4.ts');
+  });
+
+  test('updatePosition re-anchors the prefetch window after seek', () async {
+    final fetched = <String>[];
+    final client = MockClient((request) async {
+      fetched.add(request.url.path);
+      return http.Response('Gdata', 200);
+    });
+    final created = await manager.upsertEntry(
+      CacheEntry(
+        contentKeyVersion: 1,
+        contentKeyHash: 'ck1',
+        revisionKeyHash: 'rk1',
+        manifestFingerprint: 'fp',
+        sourceId: 's',
+        sourceVideoId: 'v',
+        title: '影片',
+        playbackLineIdentity: 'line',
+        playbackLineName: '',
+        episodeIdentity: 'ep',
+        episodeId: '1',
+        episodeName: '第1集',
+      ),
+    );
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: manager.store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+    );
+    final segments = [
+      for (var i = 0; i < 20; i++)
+        HlsSegment(
+          uri: Uri.parse('https://cdn.example.com/m/seg$i.ts'),
+          duration: 4,
+        ),
+    ];
+    final prefetcher = SegmentPrefetcher(
+      fetcher: fetcher,
+      segments: segments,
+      concurrency: 5,
+      windowSize: () => 2,
+    );
+    await prefetcher.prefetch(fromPosition: Duration.zero);
+    expect(fetched, ['/m/seg0.ts', '/m/seg1.ts']);
+    fetched.clear();
+
+    // seek 到 32s（第 8 片，4s/片）：窗口重排到第 8、9 片。
+    await prefetcher.updatePosition(const Duration(seconds: 32));
+    expect(fetched, ['/m/seg8.ts', '/m/seg9.ts']);
+    fetched.clear();
+
+    // 周期性进度上报：窗口随播放位置前移。
+    await prefetcher.updatePosition(const Duration(seconds: 44));
+    expect(fetched, ['/m/seg11.ts', '/m/seg12.ts']);
+  });
+
+  test('zero window disables prefetching', () async {
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      return http.Response('Gdata', 200);
+    });
+    final created = await manager.upsertEntry(
+      CacheEntry(
+        contentKeyVersion: 1,
+        contentKeyHash: 'ck1',
+        revisionKeyHash: 'rk1',
+        manifestFingerprint: 'fp',
+        sourceId: 's',
+        sourceVideoId: 'v',
+        title: '影片',
+        playbackLineIdentity: 'line',
+        playbackLineName: '',
+        episodeIdentity: 'ep',
+        episodeId: '1',
+        episodeName: '第1集',
+      ),
+    );
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: manager.store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+    );
+    var window = 0;
+    final prefetcher = SegmentPrefetcher(
+      fetcher: fetcher,
+      segments: [
+        HlsSegment(uri: Uri.parse('https://cdn.example.com/m/seg0.ts')),
+      ],
+      windowSize: () => window,
+    );
+    await prefetcher.prefetch(fromPosition: Duration.zero);
+    expect(requests, 0);
+
+    // 窗口恢复（如网络切回 Wi-Fi）后再次调度即可预取。
+    window = 5;
+    await prefetcher.updatePosition(Duration.zero);
+    expect(requests, 1);
   });
 }

@@ -13,7 +13,13 @@ import 'detail_page.dart';
 import 'multi_source_search_controller.dart';
 
 class SearchPage extends ConsumerStatefulWidget {
-  const SearchPage({super.key});
+  /// 外部传入的焦点节点：搜索页在 IndexedStack 中预建但默认隐藏，
+  /// 不能用 autofocus（会在启动时抢焦点弹键盘），由 AppShell 在
+  /// 切换到搜索 tab 后延时 requestFocus。
+  const SearchPage({super.key, this.focusNode});
+
+  final FocusNode? focusNode;
+
   @override
   ConsumerState<SearchPage> createState() => _SearchPageState();
 }
@@ -103,6 +109,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Widget build(BuildContext context) {
     final sourceState = ref.watch(selectedVodSourceProvider);
     return SafeArea(
+      // bottom: false：让结果网格延伸到底部毛玻璃导航栏下方透出。
+      bottom: false,
       child: sourceState.when(
         loading: () => const AppLoadingView(label: '正在加载来源…'),
         error: (error, _) => AppErrorView(
@@ -133,7 +141,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         const SizedBox(height: 16),
         TextField(
           controller: input,
-          autofocus: true,
+          focusNode: widget.focusNode,
           onChanged: _onInputChanged,
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
@@ -332,7 +340,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         child: VideoGrid(
           videos: activeState.items,
           onTap: _open,
-          bottomPadding: activeState.loading ? 72 : 24,
+          bottomPadding: activeState.loading ? 168 : 96,
         ),
       ),
     );
