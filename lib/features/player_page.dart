@@ -46,8 +46,7 @@ class PlayerPage extends ConsumerStatefulWidget {
   ConsumerState<PlayerPage> createState() => _PlayerPageState();
 }
 
-class _PlayerPageState extends ConsumerState<PlayerPage>
-    with WidgetsBindingObserver {
+class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObserver {
   late final HistoryRepository historyRepository;
   VideoPlayerController? controller;
   late Episode episode;
@@ -81,8 +80,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   double verticalDragStartY = 0;
   double verticalDragStartValue = 0;
   int verticalDragGeneration = 0;
-  final ValueNotifier<({bool isVolume, double value})?> verticalDrag =
-      ValueNotifier(null);
+  final ValueNotifier<({bool isVolume, double value})?> verticalDrag = ValueNotifier(null);
   Future<void> longPressSpeedChange = Future.value();
   bool wasPlayingBeforeSeek = false;
   Future<void> seekPause = Future.value();
@@ -103,9 +101,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     ref.listenManual(prefetchWindowProvider, (previous, next) {
       _prefetchWindow = next;
       if (next > 0 && previous != next) {
-        _activeSession?.prefetcher?.updatePosition(
-          controller?.value.position ?? Duration.zero,
-        );
+        _activeSession?.prefetcher?.updatePosition(controller?.value.position ?? Duration.zero);
       }
     });
     WidgetsBinding.instance.addObserver(this);
@@ -132,25 +128,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         // Try the cache before resolving an unknown URL through the network.
         // Downloaded HLS endpoints are often extensionless and cannot be
         // reconstructed from the persisted URL alone.
-        if (target.playbackSource.format == PlaybackFormat.unknown &&
-            target.hasStableIdentity) {
+        if (target.playbackSource.format == PlaybackFormat.unknown && target.hasStableIdentity) {
           final offlinePreparation = await _prepareSession(target, generation);
-          if (offlinePreparation.status.mode == PlaybackMode.cachePlayback &&
-              offlinePreparation.session != null) {
+          if (offlinePreparation.status.mode == PlaybackMode.cachePlayback && offlinePreparation.session != null) {
             session = offlinePreparation.session;
-            target = target.copyWith(
-              playbackSource: target.playbackSource.copyWith(
-                format: PlaybackFormat.hls,
-              ),
-            );
+            target = target.copyWith(playbackSource: target.playbackSource.copyWith(format: PlaybackFormat.hls));
             preparedStatus = offlinePreparation.status;
           }
         }
         if (session == null) {
           final client = _sessionClient ??= http.Client();
-          target = await (_urlResolver ??= PlaybackUrlResolver(
-            client: client,
-          )).resolveSelection(target);
+          target = await (_urlResolver ??= PlaybackUrlResolver(client: client)).resolveSelection(target);
           if (!mounted || generation != setupGeneration) return;
           _selection = target;
           episode = target.episode;
@@ -168,22 +156,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       }
     }
     final directUrl = target?.episode.url ?? episode.url;
-    var status = const PlaybackStatus(
-      mode: PlaybackMode.direct,
-      reason: PlaybackFallbackReason.stableIdentityMissing,
-    );
+    var status = const PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.stableIdentityMissing);
     if (target == null || !target.hasStableIdentity) {
-      status = const PlaybackStatus(
-        mode: PlaybackMode.direct,
-        reason: PlaybackFallbackReason.stableIdentityMissing,
-      );
+      status = const PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.stableIdentityMissing);
     } else if (preparedStatus != null) {
       status = preparedStatus;
     } else if (target.playbackSource.format != PlaybackFormat.hls) {
       if (target.playbackSource.format == PlaybackFormat.unknown) {
-        final sniffed = await ContentTypeSniffer().sniff(
-          target.playbackSource.url.toString(),
-        );
+        final sniffed = await ContentTypeSniffer().sniff(target.playbackSource.url.toString());
         if (sniffed == PlaybackFormat.hls) {
           _selection = target = PlaybackSelection(
             sourceId: target.sourceId,
@@ -202,16 +182,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             return;
           }
         } else {
-          status = const PlaybackStatus(
-            mode: PlaybackMode.direct,
-            reason: PlaybackFallbackReason.unsupportedFormat,
-          );
+          status = const PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.unsupportedFormat);
         }
       } else {
-        status = const PlaybackStatus(
-          mode: PlaybackMode.direct,
-          reason: PlaybackFallbackReason.unsupportedFormat,
-        );
+        status = const PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.unsupportedFormat);
       }
     } else {
       final preparation = await _prepareSession(target, generation);
@@ -227,12 +201,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final isHls = target?.playbackSource.format == PlaybackFormat.hls;
     var next = VideoPlayerController.networkUrl(
       Uri.parse(proxyUrl ?? directUrl),
-      formatHint:
-          (proxyUrl != null ||
-              isHls ||
-              directUrl.toLowerCase().contains('.m3u8'))
-          ? VideoFormat.hls
-          : null,
+      formatHint: (proxyUrl != null || isHls || directUrl.toLowerCase().contains('.m3u8')) ? VideoFormat.hls : null,
     );
     try {
       await next.initialize().timeout(const Duration(seconds: 20));
@@ -256,9 +225,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         );
         next = VideoPlayerController.networkUrl(
           Uri.parse(directUrl),
-          formatHint: (isHls || directUrl.toLowerCase().contains('.m3u8'))
-              ? VideoFormat.hls
-              : null,
+          formatHint: (isHls || directUrl.toLowerCase().contains('.m3u8')) ? VideoFormat.hls : null,
         );
         try {
           await next.initialize().timeout(const Duration(seconds: 20));
@@ -325,10 +292,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     controller = next;
     next.addListener(_handlePlayerValueChanged);
     saveTimer?.cancel();
-    saveTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _onPlaybackTick(),
-    );
+    saveTimer = Timer.periodic(const Duration(seconds: 5), (_) => _onPlaybackTick());
     setState(() => initializing = false);
     _scheduleControlsHide();
     unawaited(_save());
@@ -336,9 +300,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     _startWakelockHeartbeat();
     if (session != null) {
       try {
-        final prefetcher = session.buildPrefetcher(
-          windowSize: () => _prefetchWindow,
-        );
+        final prefetcher = session.buildPrefetcher(windowSize: () => _prefetchWindow);
         if (prefetcher != null) {
           unawaited(prefetcher.prefetch(fromPosition: resume));
         }
@@ -346,10 +308,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
   }
 
-  Future<PlaybackSessionPreparation> _prepareSession(
-    PlaybackSelection target,
-    int generation,
-  ) async {
+  Future<PlaybackSessionPreparation> _prepareSession(PlaybackSelection target, int generation) async {
     try {
       final proxy = _proxy ??= LocalProxyServer();
       await proxy.start();
@@ -371,10 +330,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         store: cacheManager?.store,
         onCacheBypass: (reason) {
           _setPlaybackStatus(
-            PlaybackStatus(
-              mode: PlaybackMode.proxyWithoutCaching,
-              reason: reason,
-            ),
+            PlaybackStatus(mode: PlaybackMode.proxyWithoutCaching, reason: reason),
             generation: generation,
           );
         },
@@ -382,10 +338,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     } catch (_) {
       return const PlaybackSessionPreparation(
         session: null,
-        status: PlaybackStatus(
-          mode: PlaybackMode.direct,
-          reason: PlaybackFallbackReason.proxyStartFailed,
-        ),
+        status: PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.proxyStartFailed),
       );
     }
   }
@@ -440,9 +393,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     // 在关闭会话前，把当前过滤时间轴位置换算成原始时间轴，供重试恢复使用。
     final position = controller?.value.position ?? Duration.zero;
     final mapping = _activeSession?.timelineMapping;
-    final oldPosition = mapping == null
-        ? position
-        : mapping.filteredToSource(position);
+    final oldPosition = mapping == null ? position : mapping.filteredToSource(position);
     setupGeneration++;
     await _closeActiveSession();
     _resetSeekState();
@@ -454,33 +405,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     try {
       final source = ref
           .read(vodSourceRegistryProvider)
-          .maybeWhen(
-            data: (r) => r.findById(widget.video.sourceId),
-            orElse: () => null,
-          );
+          .maybeWhen(data: (r) => r.findById(widget.video.sourceId), orElse: () => null);
       if (source == null) throw const VideoDataException('未知来源');
-      final fresh = await ref
-          .read(videoRepositoryProvider)
-          .resolvePlayback(source, widget.video.ref);
+      final fresh = await ref.read(videoRepositoryProvider).resolvePlayback(source, widget.video.ref);
       // 优先在稳定线路内按 episodeIdentity 匹配，再退回线路内 name/id，不跨线路。
       final line = fresh.playbackLines
-          .where(
-            (l) =>
-                _selection != null &&
-                l.identity == _selection!.playbackLineIdentity,
-          )
+          .where((l) => _selection != null && l.identity == _selection!.playbackLineIdentity)
           .toList();
       final candidates = line.isNotEmpty ? line.first.episodes : fresh.episodes;
       Episode? match;
       if (_selection != null && _selection!.episodeIdentity.isNotEmpty) {
-        final byIdentity = candidates.where(
-          (item) => item.identity == _selection!.episodeIdentity,
-        );
+        final byIdentity = candidates.where((item) => item.identity == _selection!.episodeIdentity);
         if (byIdentity.isNotEmpty) match = byIdentity.first;
       }
-      match ??= candidates
-          .where((item) => item.name == episode.name || item.id == episode.id)
-          .firstOrNull;
+      match ??= candidates.where((item) => item.name == episode.name || item.id == episode.id).firstOrNull;
       if (match == null) {
         throw const VideoDataException('该剧集的播放地址已经失效');
       }
@@ -523,13 +461,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final positionMs = mapping == null
         ? current.value.position.inMilliseconds
         : mapping.filteredToSource(current.value.position).inMilliseconds;
-    final durationMs =
-        _activeSession?.originalDurationMs ??
-        current.value.duration.inMilliseconds;
-    final progress = PlaybackProgress.normalize(
-      positionMs: positionMs,
-      durationMs: durationMs,
-    );
+    final durationMs = _activeSession?.originalDurationMs ?? current.value.duration.inMilliseconds;
+    final progress = PlaybackProgress.normalize(positionMs: positionMs, durationMs: durationMs);
     final record = WatchRecord(
       video: widget.video.copyWith(episodes: const []),
       episodeId: episode.id,
@@ -586,8 +519,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   /// Wakelocks may be released by the OS, so this is called at playback and
   /// lifecycle transitions instead of only during setup.
   Future<void> _syncWakelock() async {
-    final shouldKeepAwake =
-        mounted && !failed && controller?.value.isPlaying == true;
+    final shouldKeepAwake = mounted && !failed && controller?.value.isPlaying == true;
     try {
       await WakelockPlus.toggle(enable: shouldKeepAwake);
     } catch (_) {
@@ -622,43 +554,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             children: [
               Text(
                 '当前播放模式',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 16),
               Row(
                 children: [
-                  PlaybackStatusIndicator.iconFor(
-                    status.mode,
-                    color: PlaybackStatusIndicator.colorFor(status.mode),
-                  ),
+                  PlaybackStatusIndicator.iconFor(status.mode, color: PlaybackStatusIndicator.colorFor(status.mode)),
                   const SizedBox(width: 10),
                   Text(
                     status.label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
                   ),
                 ],
               ),
               const SizedBox(height: 10),
-              Text(
-                status.description,
-                style: const TextStyle(color: Colors.white70, height: 1.45),
-              ),
+              Text(status.description, style: const TextStyle(color: Colors.white70, height: 1.45)),
               if (status.reasonText != null) ...[
                 const SizedBox(height: 8),
-                Text(
-                  '原因：${status.reasonText}',
-                  style: const TextStyle(
-                    color: Colors.orangeAccent,
-                    height: 1.45,
-                  ),
-                ),
+                Text('原因：${status.reasonText}', style: const TextStyle(color: Colors.orangeAccent, height: 1.45)),
               ],
             ],
           ),
@@ -669,13 +584,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   Future<void> _toggleFullScreen() async {
     fullScreen = !fullScreen;
-    await SystemChrome.setEnabledSystemUIMode(
-      fullScreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
-    );
+    await SystemChrome.setEnabledSystemUIMode(fullScreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge);
     await SystemChrome.setPreferredOrientations(
-      fullScreen
-          ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
-          : [DeviceOrientation.portraitUp],
+      fullScreen ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight] : [DeviceOrientation.portraitUp],
     );
     if (mounted) setState(() {});
   }
@@ -810,9 +721,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   Widget build(BuildContext context) {
     // 退出全屏时屏幕旋转动画有几帧延迟，期间 MediaQuery 仍是横屏尺寸；
     // 布局按实际方向选择，避免竖屏 Column 布局在横屏尺寸下溢出。
-    final landscape =
-        fullScreen ||
-        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final landscape = fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape;
     return PopScope(
       canPop: !fullScreen,
       onPopInvokedWithResult: (didPop, _) {
@@ -830,18 +739,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                 title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.video.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      episode.name,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.secondary,
-                      ),
-                    ),
+                    Text(widget.video.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(episode.name, style: const TextStyle(fontSize: 12, color: AppColors.secondary)),
                   ],
                 ),
                 backgroundColor: Colors.black,
@@ -896,11 +795,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         const SizedBox(height: 12),
         Text(errorMessage, textAlign: TextAlign.center),
         const SizedBox(height: 16),
-        FilledButton.icon(
-          onPressed: _retry,
-          icon: const Icon(Icons.refresh),
-          label: const Text('重新获取并重试'),
-        ),
+        FilledButton.icon(onPressed: _retry, icon: const Icon(Icons.refresh), label: const Text('重新获取并重试')),
       ],
     ),
   );
@@ -918,15 +813,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               task.episodeIdentity == _selection!.episodeIdentity,
         )
         .firstOrNull;
-    final aspectRatio = current.value.aspectRatio == 0
-        ? 16 / 9
-        : current.value.aspectRatio;
+    final aspectRatio = current.value.aspectRatio == 0 ? 16 / 9 : current.value.aspectRatio;
     // 铺满（cover）只在横屏布局生效：视频等比放大覆盖整个区域，超出部分
     // 裁剪，不改变画面比例；竖屏与适应（contain）模式保持完整画面。
-    final cover =
-        fillScreen &&
-        (fullScreen ||
-            MediaQuery.orientationOf(context) == Orientation.landscape);
+    final cover = fillScreen && (fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape);
     final stack = Stack(
       alignment: Alignment.center,
       children: [
@@ -935,11 +825,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             child: FittedBox(
               fit: BoxFit.cover,
               clipBehavior: Clip.hardEdge,
-              child: SizedBox(
-                width: aspectRatio * 100,
-                height: 100,
-                child: VideoPlayer(current),
-              ),
+              child: SizedBox(width: aspectRatio * 100, height: 100, child: VideoPlayer(current)),
             ),
           )
         else
@@ -951,18 +837,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               onTap: _toggleControls,
               onDoubleTap: _togglePlayback,
               onHorizontalDragStart: _screenHorizontalDragStart,
-              onHorizontalDragUpdate: (details) =>
-                  _screenHorizontalDragUpdate(details, constraints.maxWidth),
+              onHorizontalDragUpdate: (details) => _screenHorizontalDragUpdate(details, constraints.maxWidth),
               onHorizontalDragEnd: (_) => _screenHorizontalDragEnd(),
               onHorizontalDragCancel: _screenHorizontalDragCancel,
-              onLongPressStart: (details) =>
-                  _screenLongPressStart(details, constraints.maxWidth),
+              onLongPressStart: (details) => _screenLongPressStart(details, constraints.maxWidth),
               onLongPressEnd: (_) => _screenLongPressEnd(),
               onLongPressCancel: _screenLongPressCancel,
-              onVerticalDragStart: (details) =>
-                  _screenVerticalDragStart(details, constraints.maxWidth),
-              onVerticalDragUpdate: (details) =>
-                  _screenVerticalDragUpdate(details, constraints.maxHeight),
+              onVerticalDragStart: (details) => _screenVerticalDragStart(details, constraints.maxWidth),
+              onVerticalDragUpdate: (details) => _screenVerticalDragUpdate(details, constraints.maxHeight),
               onVerticalDragEnd: (_) => _screenVerticalDragEnd(),
               onVerticalDragCancel: _screenVerticalDragEnd,
               child: const ColoredBox(color: Colors.transparent),
@@ -970,13 +852,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           ),
         ),
         AnimatedBuilder(
-          animation: Listenable.merge([
-            previewPosition,
-            seekCommitting,
-            screenSeeking,
-            speedBoosting,
-            verticalDrag,
-          ]),
+          animation: Listenable.merge([previewPosition, seekCommitting, screenSeeking, speedBoosting, verticalDrag]),
           builder: (_, _) {
             final drag = verticalDrag.value;
             if (drag != null) {
@@ -988,10 +864,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1008,11 +881,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                         const SizedBox(width: 8),
                         Text(
                           '${(drag.value * 100).round()}%',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
                         ),
                       ],
                     ),
@@ -1037,11 +906,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                         SizedBox(width: 8),
                         Text(
                           '2× 播放中',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
                         ),
                       ],
                     ),
@@ -1063,41 +928,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 22,
-                    vertical: 14,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       seekCommitting.value
                           ? const SizedBox.square(
                               dimension: 26,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 3,
-                                color: Colors.white,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white),
                             )
-                          : Icon(
-                              forward ? Icons.fast_forward : Icons.fast_rewind,
-                              color: Colors.white,
-                              size: 30,
-                            ),
+                          : Icon(forward ? Icons.fast_forward : Icons.fast_rewind, color: Colors.white, size: 30),
                       const SizedBox(height: 4),
                       Text(
                         formatPlaybackTime(target),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700),
                       ),
                       Text(
                         '/ ${formatPlaybackTime(current.value.duration)}',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 13,
-                        ),
+                        style: const TextStyle(color: Colors.white70, fontSize: 13),
                       ),
                     ],
                   ),
@@ -1108,8 +956,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         ),
         // 横屏布局没有 AppBar（含 iPad 横屏但未全屏的情况），
         // 统一由播放器内顶栏提供返回和标题。
-        if (fullScreen ||
-            MediaQuery.orientationOf(context) == Orientation.landscape)
+        if (fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape)
           AnimatedOpacity(
             opacity: controlsVisible ? 1 : 0,
             duration: const Duration(milliseconds: 200),
@@ -1125,9 +972,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                       children: [
                         IconButton(
                           key: const ValueKey('fullscreen-back'),
-                          onPressed: fullScreen
-                              ? _toggleFullScreen
-                              : () => unawaited(Navigator.maybePop(context)),
+                          onPressed: fullScreen ? _toggleFullScreen : () => unawaited(Navigator.maybePop(context)),
                           tooltip: fullScreen ? '退出全屏' : '返回',
                           icon: const Icon(Icons.arrow_back),
                         ),
@@ -1166,21 +1011,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                   child: Padding(
                     padding: const EdgeInsets.only(top: 24),
                     child: AnimatedBuilder(
-                      animation: Listenable.merge([
-                        current,
-                        previewPosition,
-                        seekCommitting,
-                      ]),
+                      animation: Listenable.merge([current, previewPosition, seekCommitting]),
                       builder: (_, _) => Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           PlaybackScrubber(
-                            position:
-                                previewPosition.value ?? current.value.position,
+                            position: previewPosition.value ?? current.value.position,
                             duration: current.value.duration,
-                            buffered: current.value.buffered.isEmpty
-                                ? Duration.zero
-                                : current.value.buffered.last.end,
+                            buffered: current.value.buffered.isEmpty ? Duration.zero : current.value.buffered.last.end,
                             enabled:
                                 !failed &&
                                 current.value.isInitialized &&
@@ -1200,19 +1038,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                                 IconButton(
                                   onPressed: _togglePlayback,
                                   iconSize: 30,
-                                  icon: Icon(
-                                    current.value.isPlaying
-                                        ? Icons.pause
-                                        : Icons.play_arrow,
-                                  ),
+                                  icon: Icon(current.value.isPlaying ? Icons.pause : Icons.play_arrow),
                                 ),
                                 IconButton(
                                   onPressed: () {
                                     _showControls();
-                                    setState(
-                                      () => volumeSliderVisible =
-                                          !volumeSliderVisible,
-                                    );
+                                    setState(() => volumeSliderVisible = !volumeSliderVisible);
                                   },
                                   onLongPress: () => unawaited(_toggleMute()),
                                   tooltip: '音量（长按静音）',
@@ -1226,89 +1057,46 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                                 ),
                                 Text(
                                   '${formatPlaybackTime(previewPosition.value ?? current.value.position)} / ${formatPlaybackTime(current.value.duration)}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white70,
-                                  ),
+                                  style: const TextStyle(fontSize: 12, color: Colors.white70),
                                 ),
                                 const SizedBox(width: 6),
                                 PlaybackStatusIndicator(
-                                  key: const ValueKey(
-                                    'playback-status-indicator',
-                                  ),
+                                  key: const ValueKey('playback-status-indicator'),
                                   status: playbackStatus,
                                   onLongPress: _showPlaybackStatusDetails,
                                 ),
                                 if (!fullScreen)
                                   IconButton(
-                                    key: const ValueKey(
-                                      'player-download-button',
-                                    ),
-                                    tooltip:
-                                        currentDownload?.status ==
-                                            DownloadTaskStatus.completed
-                                        ? '已下载'
-                                        : '下载本集',
-                                    onPressed:
-                                        currentDownload?.status ==
-                                            DownloadTaskStatus.completed
+                                    key: const ValueKey('player-download-button'),
+                                    tooltip: currentDownload?.status == DownloadTaskStatus.completed ? '已下载' : '下载本集',
+                                    onPressed: currentDownload?.status == DownloadTaskStatus.completed
                                         ? null
                                         : _downloadCurrentEpisode,
-                                    icon: Icon(
-                                      switch (currentDownload?.status) {
-                                        DownloadTaskStatus.completed =>
-                                          Icons.download_done,
-                                        DownloadTaskStatus.downloading =>
-                                          Icons.downloading,
-                                        DownloadTaskStatus.queued =>
-                                          Icons.schedule,
-                                        DownloadTaskStatus.paused =>
-                                          Icons.pause_circle_outline,
-                                        DownloadTaskStatus.failed =>
-                                          Icons.refresh,
-                                        DownloadTaskStatus.cancelled ||
-                                        null => Icons.download_outlined,
-                                      },
-                                    ),
+                                    icon: Icon(switch (currentDownload?.status) {
+                                      DownloadTaskStatus.completed => Icons.download_done,
+                                      DownloadTaskStatus.downloading => Icons.downloading,
+                                      DownloadTaskStatus.queued => Icons.schedule,
+                                      DownloadTaskStatus.paused => Icons.pause_circle_outline,
+                                      DownloadTaskStatus.failed => Icons.refresh,
+                                      DownloadTaskStatus.cancelled || null => Icons.download_outlined,
+                                    }),
                                   ),
                                 const Spacer(),
                                 PopupMenuButton<double>(
                                   key: const ValueKey('playback-speed-menu'),
                                   tooltip: '播放速度',
                                   initialValue: playbackSpeed,
-                                  onSelected: (speed) =>
-                                      unawaited(_setPlaybackSpeed(speed)),
+                                  onSelected: (speed) => unawaited(_setPlaybackSpeed(speed)),
                                   itemBuilder: (_) => const [
-                                    PopupMenuItem(
-                                      value: 0.5,
-                                      child: Text('0.5×'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 0.75,
-                                      child: Text('0.75×'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 1.0,
-                                      child: Text('正常'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 1.25,
-                                      child: Text('1.25×'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 1.5,
-                                      child: Text('1.5×'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 2.0,
-                                      child: Text('2×'),
-                                    ),
+                                    PopupMenuItem(value: 0.5, child: Text('0.5×')),
+                                    PopupMenuItem(value: 0.75, child: Text('0.75×')),
+                                    PopupMenuItem(value: 1.0, child: Text('正常')),
+                                    PopupMenuItem(value: 1.25, child: Text('1.25×')),
+                                    PopupMenuItem(value: 1.5, child: Text('1.5×')),
+                                    PopupMenuItem(value: 2.0, child: Text('2×')),
                                   ],
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 10,
-                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -1316,51 +1104,33 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                                         const SizedBox(width: 3),
                                         Text(
                                           '${playbackSpeed.toStringAsFixed(playbackSpeed % 1 == 0 ? 0 : 2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}×',
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w700,
-                                          ),
+                                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
                                         ),
                                       ],
                                     ),
                                   ),
                                 ),
-                                if (fullScreen ||
-                                    MediaQuery.orientationOf(context) ==
-                                        Orientation.landscape)
+                                if (fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape)
                                   IconButton(
                                     onPressed: () {
                                       _showControls();
                                       setState(() => fillScreen = !fillScreen);
                                       if (fillScreen) {
-                                        showAppToast(
-                                          context,
-                                          '已切换为铺满模式，画面边缘可能被裁剪',
-                                        );
+                                        showAppToast(context, '已切换为铺满模式，画面边缘可能被裁剪');
                                       }
                                     },
                                     tooltip: fillScreen ? '适应' : '铺满',
-                                    icon: Icon(
-                                      fillScreen
-                                          ? Icons.fit_screen
-                                          : Icons.crop_free,
-                                    ),
+                                    icon: Icon(fillScreen ? Icons.fit_screen : Icons.crop_free),
                                   ),
                                 // iPad 横屏本来就是横屏布局，全屏按钮没有作用，
                                 // 只在竖屏（进入全屏）或全屏态（退出全屏）显示。
-                                if (fullScreen ||
-                                    MediaQuery.orientationOf(context) ==
-                                        Orientation.portrait)
+                                if (fullScreen || MediaQuery.orientationOf(context) == Orientation.portrait)
                                   IconButton(
                                     onPressed: () {
                                       _showControls();
                                       _toggleFullScreen();
                                     },
-                                    icon: Icon(
-                                      fullScreen
-                                          ? Icons.fullscreen_exit
-                                          : Icons.fullscreen,
-                                    ),
+                                    icon: Icon(fullScreen ? Icons.fullscreen_exit : Icons.fullscreen),
                                   ),
                               ],
                             ),
@@ -1418,10 +1188,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 8,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
                       child: SizedBox(
                         height: 140,
                         width: 48,
@@ -1550,17 +1317,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   void _screenVerticalDragStart(DragStartDetails details, double width) {
     final current = controller;
-    if (current == null ||
-        !current.value.isInitialized ||
-        isSeeking ||
-        seekCommitting.value) {
+    if (current == null || !current.value.isInitialized || isSeeking || seekCommitting.value) {
       return;
     }
     final isVolume = details.localPosition.dx >= width / 2;
     verticalDragStartY = details.localPosition.dy;
-    verticalDragStartValue = isVolume
-        ? current.value.volume.clamp(0.0, 1.0)
-        : screenBrightness;
+    verticalDragStartValue = isVolume ? current.value.volume.clamp(0.0, 1.0) : screenBrightness;
     controlsTimer?.cancel();
     verticalDragGeneration++;
     verticalDrag.value = (isVolume: isVolume, value: verticalDragStartValue);
@@ -1643,18 +1405,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       return;
     }
     final generation = seekGeneration;
-    final finalTarget = _clampSeekTarget(
-      previewPosition.value ?? target,
-      seekController.value.duration,
-    );
+    final finalTarget = _clampSeekTarget(previewPosition.value ?? target, seekController.value.duration);
     isSeeking = false;
     previewPosition.value = finalTarget;
     seekCommitting.value = true;
     try {
       await seekPause;
       if (!_isCurrentSeek(seekController, generation)) return;
-      if ((finalTarget - positionBeforeSeek).abs() >
-          const Duration(milliseconds: 250)) {
+      if ((finalTarget - positionBeforeSeek).abs() > const Duration(milliseconds: 250)) {
         await seekController.seekTo(finalTarget);
       }
       if (!_isCurrentSeek(seekController, generation)) return;
@@ -1730,11 +1488,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 /// 播放链路状态指示：视觉上只有一个彩色小圆点，不打断观看；
 /// 长按弹出「当前播放模式」详情底栏（含降级原因），语义标签保留完整状态文案。
 class PlaybackStatusIndicator extends StatelessWidget {
-  const PlaybackStatusIndicator({
-    super.key,
-    required this.status,
-    required this.onLongPress,
-  });
+  const PlaybackStatusIndicator({super.key, required this.status, required this.onLongPress});
 
   final PlaybackStatus status;
   final VoidCallback onLongPress;
@@ -1798,12 +1552,7 @@ class PlaybackStatusIndicator extends StatelessWidget {
 
 /// 竖屏（非全屏）状态下播放器下方的信息面板：整部简介 + 选集列表。
 class PlayerInfoPanel extends StatefulWidget {
-  const PlayerInfoPanel({
-    super.key,
-    required this.video,
-    required this.current,
-    required this.onEpisodeTap,
-  });
+  const PlayerInfoPanel({super.key, required this.video, required this.current, required this.onEpisodeTap});
 
   final Video video;
   final Episode current;
@@ -1824,22 +1573,14 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
       children: [
         const Text(
           '简介',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
         Text(
           video.description.isEmpty ? '暂无简介' : video.description,
           maxLines: expanded ? null : 4,
           overflow: expanded ? null : TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 14,
-            height: 1.55,
-          ),
+          style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.55),
         ),
         if (video.description.length > 100)
           Align(
@@ -1852,11 +1593,7 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
         const SizedBox(height: 16),
         Text(
           '选集（${video.episodes.length}）',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-          ),
+          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 12),
         Wrap(
