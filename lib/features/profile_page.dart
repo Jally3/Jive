@@ -54,6 +54,7 @@ class ProfilePage extends ConsumerWidget {
                 child: const TabBar(
                   isScrollable: true,
                   tabAlignment: TabAlignment.start,
+                  padding: EdgeInsets.only(left: 16),
                   labelColor: AppColors.text,
                   unselectedLabelColor: AppColors.tertiary,
                   labelStyle: TextStyle(
