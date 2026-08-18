@@ -11,7 +11,7 @@ import '../data/vod_source_registry.dart';
 import '../domain/video.dart';
 import '../domain/playback_selection.dart';
 import '../domain/vod_source.dart';
-import '../shared/app_snack_bar.dart';
+import '../shared/app_toast.dart';
 import 'detail_source_controller.dart';
 import 'detail_more_sources_sheet.dart';
 import 'download_management_page.dart';
@@ -91,7 +91,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       resolving = true;
       if (episodeIndex != null) selected = episodeIndex;
     });
-    final m = ScaffoldMessenger.of(context);
+    final overlay = Overlay.of(context);
     try {
       final cachedSelection = await _cachedSelectionForCurrentEpisode();
       if (cachedSelection != null) {
@@ -135,7 +135,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       );
     } catch (e) {
       if (mounted) {
-        showAppSnackBarVia(m, '$e（可尝试查找其他来源）');
+        showAppToastVia(overlay, '$e（可尝试查找其他来源）');
       }
     } finally {
       if (mounted) setState(() => resolving = false);
@@ -379,21 +379,19 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         throw const VideoDataException('选中的剧集缺少稳定身份，无法下载');
       }
       if (mounted) {
-        showAppSnackBar(
+        showAppToast(
           context,
           '已开始下载 $created 集（自动跳过广告片段）',
-          action: SnackBarAction(
-            label: '查看',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const DownloadManagementPage()),
-            ),
+          actionLabel: '查看',
+          onAction: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const DownloadManagementPage()),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         final reason = (e is Exception) ? e.toString() : '未知错误';
-        showAppSnackBar(context, '下载任务创建失败：$reason');
+        showAppToast(context, '下载任务创建失败：$reason');
       }
     } finally {
       if (mounted) setState(() => downloadResolving = false);
@@ -600,11 +598,11 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                         .read(favoriteControllerProvider.notifier)
                         .toggle(v);
                     if (mounted) {
-                      showAppSnackBar(context, fav ? '已取消收藏' : '已收藏');
+                      showAppToast(context, fav ? '已取消收藏' : '已收藏');
                     }
                   } catch (_) {
                     if (mounted) {
-                      showAppSnackBar(context, '收藏保存失败，请重试');
+                      showAppToast(context, '收藏保存失败，请重试');
                     }
                   }
                 },
@@ -728,7 +726,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     detail = s.detail;
     error = null;
     if (matched == null && prior != null) {
-      showAppSnackBar(context, '当前剧集在目标源不存在，已切换到第一集');
+      showAppToast(context, '当前剧集在目标源不存在，已切换到第一集');
     }
     setState(() {});
   }
@@ -844,7 +842,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     await sc!.loadCandidateDetail(s.source.id, c);
     if (!mounted) return;
     if (sc!.activeVideo.sourceId != s.source.id) {
-      showAppSnackBar(context, '该来源加载失败，已保留当前来源');
+      showAppToast(context, '该来源加载失败，已保留当前来源');
       return;
     }
     detail = sc!.activeVideo;
@@ -852,7 +850,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     final matched = sc!.findEpisodeByName(prior);
     selected = matched ?? 0;
     if (matched == null && prior != null) {
-      showAppSnackBar(context, '当前剧集在目标源不存在，已切换到第一集');
+      showAppToast(context, '当前剧集在目标源不存在，已切换到第一集');
     }
     setState(() {});
   }

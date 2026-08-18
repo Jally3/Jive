@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
+import 'package:jive/app/theme.dart';
+import 'package:jive/data/cache/download_providers.dart';
+import 'package:jive/data/cache/download_task_manager.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
@@ -87,11 +90,68 @@ final _testOverrides = [
   vodSourceRegistryProvider.overrideWith(
     (ref) async => VodSourceRegistry([_testSource, _altSource], {}),
   ),
+  downloadTasksProvider.overrideWith(
+    (ref) => Stream.value(const <DownloadTask>[]),
+  ),
 ];
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('bottom navigation adapts sizing and opacity by device and tab', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final container = ProviderContainer(overrides: _testOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const JiveApp()),
+    );
+    await tester.pump();
+
+    final nav = find.byKey(const ValueKey('floating-nav-bar'));
+    final surface = find.byKey(const ValueKey('floating-nav-surface'));
+    Text navLabel(String label) => tester.widget<Text>(
+      find.descendant(of: nav, matching: find.text(label)),
+    );
+    Icon navIcon(IconData icon) => tester.widget<Icon>(
+      find.descendant(of: nav, matching: find.byIcon(icon)),
+    );
+
+    expect(tester.getSize(nav).height, 64);
+    expect(navLabel('首页').style?.fontSize, 12);
+    expect(navIcon(Icons.home).size, 24);
+    expect(
+      tester.widget<Material>(surface).color,
+      AppColors.surface.withValues(alpha: 0.3),
+    );
+
+    await tester.tap(find.descendant(of: nav, matching: find.text('我的')));
+    await tester.pump();
+    expect(
+      tester.widget<Material>(surface).color,
+      AppColors.surface.withValues(alpha: 0.78),
+    );
+
+    tester.view.physicalSize = const Size(834, 1194);
+    await tester.pump();
+    expect(tester.getSize(nav).height, 72);
+    expect(navLabel('我的').style?.fontSize, 13);
+    expect(navIcon(Icons.person).size, 26);
+
+    await tester.tap(find.descendant(of: nav, matching: find.text('首页')));
+    await tester.pump();
+    expect(
+      tester.widget<Material>(surface).color,
+      AppColors.surface.withValues(alpha: 0.3),
+    );
+  });
 
   testWidgets('loads home content and opens the complete detail page', (
     tester,
@@ -153,7 +213,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await tester.tap(find.text('我的'));
     await tester.pump();
-    await tester.tap(find.text('来源管理'));
+    expect(find.text('播放源'), findsOneWidget);
+    expect(find.text('更多设置'), findsOneWidget);
+    await tester.tap(find.text('播放源'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('共 2 个来源，点击可设为默认'), findsOneWidget);
@@ -256,6 +318,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('历史影片'), findsOneWidget);
       expect(find.text('继续 第1集 · 1:05'), findsOneWidget);
+      final metadataBottom = tester.getBottomLeft(find.text('电影片')).dy;
+      final resumeTop = tester.getTopLeft(find.text('继续 第1集 · 1:05')).dy;
+      expect(resumeTop - metadataBottom, lessThanOrEqualTo(8));
       await tester.tap(find.text('清空'));
       await tester.pump();
       expect(find.text('清空观看记录？'), findsOneWidget);

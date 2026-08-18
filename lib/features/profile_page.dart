@@ -2,10 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/theme.dart';
 import '../core/app_states.dart';
-import '../data/cache/cache_controller.dart';
 import '../data/cache/download_providers.dart';
 import '../data/cache/download_task_manager.dart';
-import '../data/cache/prefetch_policy.dart';
 import '../data/history_repository.dart';
 import '../data/library_repository.dart';
 import '../data/video_repository.dart';
@@ -14,152 +12,248 @@ import '../data/vod_source_preferences.dart';
 import '../domain/playback_progress.dart';
 import '../domain/video.dart';
 import '../domain/watch_record.dart';
-import '../shared/app_snack_bar.dart';
+import '../shared/app_toast.dart';
 import '../shared/video_card.dart';
 import '../shared/video_grid.dart';
-import 'cache_management_page.dart';
 import 'detail_page.dart';
 import 'download_management_page.dart';
+import 'more_settings_page.dart';
 import 'player_page.dart';
 import 'source_management_page.dart';
-
-String _cacheBytes(int bytes) {
-  if (bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  var value = bytes.toDouble();
-  var unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  final precision = value >= 100 || unit == 0 ? 0 : 1;
-  return '${value.toStringAsFixed(precision)} ${units[unit]}';
-}
 
 class ProfilePage extends ConsumerWidget {
   const ProfilePage({super.key});
   @override
-  Widget build(BuildContext context, WidgetRef ref) => DefaultTabController(
-    length: 2,
-    child: SafeArea(
-      // bottom: false：让收藏/历史网格延伸到底部毛玻璃导航栏下方透出。
-      bottom: false,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 24, 16, 12),
-            child: Text(
-              '我的',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Card(
-              color: AppColors.elevated,
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.source_outlined),
-                    title: const Text('来源管理'),
-                    subtitle: Text(
-                      ref
-                          .watch(selectedVodSourceProvider)
-                          .maybeWhen(data: (s) => s.name, orElse: () => '加载中'),
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      color: AppColors.tertiary,
-                    ),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const SourceManagementPage(),
-                      ),
-                    ),
-                  ),
-                  const Divider(height: 1, color: AppColors.divider),
-                  Consumer(
-                    builder: (context, ref, _) {
-                      final stats = ref.watch(cacheControllerProvider);
-                      final subtitle = stats.value == null
-                          ? '正在统计…'
-                          : '已用 ${_cacheBytes(stats.value!.usedBytes)} / 配额 ${_cacheBytes(stats.value!.quotaBytes)} · ${stats.value!.entryCount} 个缓存剧集';
-                      return ListTile(
-                        leading: const Icon(Icons.cleaning_services_outlined),
-                        title: const Text('缓存管理'),
-                        subtitle: Text(
-                          subtitle,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        trailing: const Icon(
-                          Icons.chevron_right,
-                          color: AppColors.tertiary,
-                        ),
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const CacheManagementPage(),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  const Divider(height: 1, color: AppColors.divider),
-                  ListTile(
-                    leading: const Icon(Icons.download_outlined),
-                    title: const Text('下载管理'),
-                    subtitle: const Text(
-                      '查看下载进度、速度和已完成剧集',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      color: AppColors.tertiary,
-                    ),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const DownloadManagementPage(),
-                      ),
-                    ),
-                  ),
-                  const Divider(height: 1, color: AppColors.divider),
-                  Consumer(
-                    builder: (context, ref, _) {
-                      final mode = ref.watch(prefetchModeProvider).value;
-                      final enabled = mode != PrefetchMode.off;
-                      return SwitchListTile(
-                        secondary: const Icon(Icons.speed_outlined),
-                        title: const Text('预加载'),
-                        subtitle: Text(
-                          enabled
-                              ? '播放时提前缓存后续分片（Wi-Fi 30 片 / 蜂窝 5 片）'
-                              : '已关闭，播放时只缓存当前观看的分片',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        value: enabled,
-                        onChanged: (value) => ref
-                            .read(prefetchModeProvider.notifier)
-                            .setMode(
-                              value ? PrefetchMode.auto : PrefetchMode.off,
-                            ),
-                      );
-                    },
-                  ),
-                ],
+  Widget build(BuildContext context, WidgetRef ref) {
+    final expanded = MediaQuery.sizeOf(context).width > 600;
+    return DefaultTabController(
+      length: 2,
+      child: SafeArea(
+        // bottom: false：让收藏/历史网格延伸到底部毛玻璃导航栏下方透出。
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 24, 16, 12),
+              child: Text(
+                '我的',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
               ),
             ),
-          ),
-          const TabBar(
-            tabs: [
-              Tab(text: '收藏'),
-              Tab(text: '最近观看'),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: _QuickActions(),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: expanded ? 360 : double.infinity,
+                ),
+                child: const TabBar(
+                  isScrollable: true,
+                  tabAlignment: TabAlignment.start,
+                  labelColor: AppColors.text,
+                  unselectedLabelColor: AppColors.tertiary,
+                  labelStyle: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  unselectedLabelStyle: TextStyle(fontSize: 15),
+                  labelPadding: EdgeInsets.only(right: 28),
+                  indicatorColor: AppColors.accent,
+                  indicatorSize: TabBarIndicatorSize.label,
+                  indicatorWeight: 3,
+                  dividerColor: Colors.transparent,
+                  tabs: [
+                    Tab(text: '收藏'),
+                    Tab(text: '最近观看'),
+                  ],
+                ),
+              ),
+            ),
+            const Expanded(
+              child: TabBarView(children: [_FavoritesTab(), _HistoryTab()]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickActions extends ConsumerWidget {
+  const _QuickActions();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final width = MediaQuery.sizeOf(context).width;
+    final compact = width < 360;
+    final expanded = width > 600;
+    final tasks = ref.watch(downloadTasksProvider);
+    final source = ref.watch(selectedVodSourceProvider);
+    final downloadSubtitle = tasks.maybeWhen(
+      data: (items) =>
+          _downloadSubtitle(items, compact: compact, expanded: expanded),
+      orElse: () => '加载中',
+    );
+    final sourceSubtitle = source.when(
+      data: (item) => item.name,
+      loading: () => '加载中',
+      error: (_, _) => '来源异常',
+    );
+    return Align(
+      alignment: expanded ? Alignment.centerLeft : Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: expanded ? 720 : double.infinity),
+        child: Row(
+          children: [
+            Expanded(
+              child: _QuickActionCard(
+                icon: Icons.download_outlined,
+                title: expanded ? '离线下载' : '下载',
+                subtitle: downloadSubtitle,
+                compact: compact,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const DownloadManagementPage(),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(width: compact ? 8 : 12),
+            Expanded(
+              child: _QuickActionCard(
+                icon: Icons.source_outlined,
+                title: '播放源',
+                subtitle: sourceSubtitle,
+                compact: compact,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const SourceManagementPage(),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(width: compact ? 8 : 12),
+            Expanded(
+              child: _QuickActionCard(
+                icon: Icons.settings_outlined,
+                title: expanded ? '更多设置' : '更多',
+                subtitle: expanded ? '播放与存储' : '播放设置',
+                compact: compact,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const MoreSettingsPage()),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _downloadSubtitle(
+    List<DownloadTask> tasks, {
+    required bool compact,
+    required bool expanded,
+  }) {
+    final active = tasks
+        .where(
+          (task) =>
+              task.status == DownloadTaskStatus.queued ||
+              task.status == DownloadTaskStatus.downloading,
+        )
+        .toList();
+    final completed = tasks
+        .where((task) => task.status == DownloadTaskStatus.completed)
+        .length;
+    if (active.isNotEmpty) {
+      if (compact) return '${active.length}个进行中';
+      final progress = _overallProgress(active);
+      return progress == null
+          ? '${active.length} 个下载中'
+          : '${active.length} 个下载中 · $progress%';
+    }
+    if (completed > 0) return '已下载 $completed 部';
+    return expanded ? '暂无下载' : '无下载';
+  }
+
+  int? _overallProgress(List<DownloadTask> active) {
+    final measurable = active.where((task) => task.progress > 0).toList();
+    if (measurable.isEmpty) return null;
+    final total = measurable.fold<double>(
+      0,
+      (sum, task) => sum + task.progress,
+    );
+    return (total / measurable.length * 100).round();
+  }
+}
+
+class _QuickActionCard extends StatelessWidget {
+  const _QuickActionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    required this.compact,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: compact ? 56 : 60,
+    child: Material(
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: AppColors.divider.withValues(alpha: 0.8)),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 12),
+          child: Row(
+            children: [
+              Icon(icon, size: compact ? 18 : 20, color: AppColors.secondary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: compact ? 12 : 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: compact ? 10 : 11,
+                        color: AppColors.tertiary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
-          const Expanded(
-            child: TabBarView(children: [_FavoritesTab(), _HistoryTab()]),
-          ),
-        ],
+        ),
       ),
     ),
   );
@@ -249,7 +343,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
   }
 
   Future<void> _resume(WatchRecord record) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final overlay = Overlay.of(context);
     var dialogOpen = true;
     showDialog<void>(
       context: context,
@@ -351,7 +445,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         Navigator.pop(context);
       }
       if (mounted) {
-        showAppSnackBarVia(messenger, e.toString());
+        showAppToastVia(overlay, e.toString());
       }
     }
   }
@@ -383,19 +477,35 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
           ),
         ),
         Expanded(
-          child: GridView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-            itemCount: records!.length,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: MediaQuery.sizeOf(context).width >= 700 ? 4 : 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 20,
-              childAspectRatio: .49,
-            ),
-            itemBuilder: (_, i) => _HistoryCard(
-              record: records![i],
-              onTap: () => _resume(records![i]),
-            ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final crossAxisCount = constraints.maxWidth >= 700 ? 4 : 2;
+              const horizontalPadding = 32.0;
+              const crossAxisSpacing = 12.0;
+              // 海报为 4:5；其下为 VideoCard 信息区约 52，观看进度行约 20。
+              // 按实际卡宽计算单元格高度，避免固定比例把两段信息撑开。
+              const infoHeight = 72.0;
+              final cardWidth =
+                  (constraints.maxWidth -
+                      horizontalPadding -
+                      crossAxisSpacing * (crossAxisCount - 1)) /
+                  crossAxisCount;
+              return GridView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                itemCount: records!.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  crossAxisSpacing: crossAxisSpacing,
+                  mainAxisSpacing: 20,
+                  childAspectRatio:
+                      cardWidth / (cardWidth * 5 / 4 + infoHeight),
+                ),
+                itemBuilder: (_, i) => _HistoryCard(
+                  record: records![i],
+                  onTap: () => _resume(records![i]),
+                ),
+              );
+            },
           ),
         ),
       ],
@@ -419,6 +529,7 @@ class _HistoryCard extends StatelessWidget {
           onTap: onTap,
         ),
       ),
+      const SizedBox(height: 4),
       Text(
         record.completed
             ? '${record.episodeName} · 已播完'

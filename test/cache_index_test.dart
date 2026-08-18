@@ -73,6 +73,15 @@ void main() {
     expect(restored.resources['sha256:${'0' * 64}']?.lastAccessMs, 9);
   });
 
+  test('downloadOrigin round trips and defaults to false for old states', () {
+    final flagged = CacheEntry.fromJson(
+      entry().copyWith(downloadOrigin: true).toJson(),
+    );
+    expect(flagged.downloadOrigin, isTrue);
+    final legacy = entry().toJson()..remove('downloadOrigin');
+    expect(CacheEntry.fromJson(legacy).downloadOrigin, isFalse);
+  });
+
   test('index save and load round trip', () async {
     await store.saveIndex([entry(), entry(title: '另一部')]);
     final loaded = await store.loadIndex();

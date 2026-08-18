@@ -45,6 +45,13 @@ class ClearAllResult {
   int failed;
 }
 
+class CacheEvictionResult {
+  CacheEvictionResult({this.deleted = 0, this.freedBytes = 0});
+
+  int deleted;
+  int freedBytes;
+}
+
 class CacheRef {
   CacheRef._(this._manager, this.entryKey);
 
@@ -84,11 +91,13 @@ class CacheManager {
     required this.store,
     required this.diskSpace,
     this.saveThrottle = const Duration(milliseconds: 800),
+    this.maxAge = const Duration(days: 3),
   });
 
   final CacheIndexStore store;
   final DiskSpaceProvider diskSpace;
   final Duration saveThrottle;
+  Duration? maxAge;
 
   final AsyncMutex _lock = AsyncMutex();
   final Map<String, CacheEntry> _entries = {};
@@ -98,10 +107,20 @@ class CacheManager {
   int _nextLeaseId = 1;
   int _quotaBytes = 0;
   int _usedByDisk = 0;
+  int _expiredCleanupCount = 0;
+  int _expiredCleanupFreedBytes = 0;
   Timer? _saveTimer;
   bool _saving = false;
 
   int get quotaBytes => _quotaBytes;
+
+  int get expiredCleanupCount => _expiredCleanupCount;
+
+  int get expiredCleanupFreedBytes => _expiredCleanupFreedBytes;
+
+  void setMaxAge(Duration? value) {
+    maxAge = value;
+  }
 
   Future<void> initialize() async {
     final loaded = await store.loadIndex();
@@ -119,17 +138,21 @@ class CacheManager {
     });
     await store.cleanupTempFiles();
     await reconcile();
+    await evictExpired();
     await refreshQuota();
     await _flushIndex();
   }
 
   /// 以实际磁盘资源为准重算每个条目的字节/计数/可离线状态；
   /// 文件缺失或大小不匹配时回退，deleting 残留重试删除。
+  /// 正向 reconcile 之后执行反向清扫：删除无有效 state.json 的孤儿目录、
+  /// 无记录的 .part 残留，并为提交崩溃窗遗留的完整文件补建记录。
   Future<void> reconcile() async {
     await _lock.synchronize(() async {
       for (final entryKey in _entries.keys.toList()) {
         await _reconcileEntry(entryKey);
       }
+      await _sweepOrphans();
       _recomputeUsed();
     });
   }
@@ -149,6 +172,16 @@ class CacheManager {
           return;
         }
       }
+      _entries.remove(entryKey);
+      _resources.remove(entryKey);
+      return;
+    }
+    // 幻影条目：索引/内存里有记录但磁盘上 state.json 已不存在
+    // （目录已被删除或淘汰中途崩溃）。直接移除记录，不再重建目录
+    // 写回 state.json；残留目录由反向清扫删除。
+    if (!await store
+        .stateFile(entry.contentKeyHash, entry.revisionKeyHash)
+        .exists()) {
       _entries.remove(entryKey);
       _resources.remove(entryKey);
       return;
@@ -238,6 +271,113 @@ class CacheManager {
     _usedByDisk = used;
   }
 
+  /// 反向清扫：按文件找记录，清掉正向 reconcile 覆盖不到的三类泄漏——
+  /// 无有效 state.json 的孤儿目录、无记录的 .part 残留、提交崩溃窗
+  /// 遗留的无记录完整文件（补建 complete 记录而非删除）。
+  Future<void> _sweepOrphans() async {
+    final entriesRoot = store.entriesDir();
+    if (!await entriesRoot.exists()) return;
+    await for (final contentDir in entriesRoot.list()) {
+      if (contentDir is! Directory) continue;
+      await for (final revisionDir in contentDir.list()) {
+        if (revisionDir is! Directory) continue;
+        final contentKeyHash = _baseName(contentDir.path);
+        final revisionKeyHash = _baseName(revisionDir.path);
+        final entryKey = '$contentKeyHash|$revisionKeyHash';
+        if (_entries.containsKey(entryKey)) {
+          await _sweepEntryFiles(entryKey);
+          continue;
+        }
+        // 记录不存在的目录：仅"无 state.json 或 JSON 损坏"才整体删除；
+        // 未知版本目录隔离保留，等待未来版本读取。
+        final probe = await store.probeState(contentKeyHash, revisionKeyHash);
+        if (probe == CacheStateProbe.missing ||
+            probe == CacheStateProbe.corrupt) {
+          try {
+            await store.deleteEntryDir(contentKeyHash, revisionKeyHash);
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
+  Future<void> _sweepEntryFiles(String entryKey) async {
+    final entry = _entries[entryKey];
+    if (entry == null) return;
+    final records = _resources[entryKey] ??= {};
+    var recordsChanged = false;
+
+    final resourcesDir = store.resourcesDir(
+      entry.contentKeyHash,
+      entry.revisionKeyHash,
+    );
+    if (await resourcesDir.exists()) {
+      await for (final entity in resourcesDir.list()) {
+        if (entity is! File) continue;
+        final name = _baseName(entity.path);
+        final dot = name.lastIndexOf('.');
+        final resourceId = dot > 0 ? name.substring(0, dot) : '';
+        final ext = dot > 0 ? name.substring(dot + 1) : '';
+        if (!isValidResourceId(resourceId) || !isValidResourceExt(ext)) {
+          try {
+            await entity.delete();
+          } catch (_) {}
+          continue;
+        }
+        final record = records[resourceId];
+        if (record != null && record.complete) {
+          // 记录完好的正式文件保留；同 ID 不同扩展名的是残留，删除。
+          if (record.ext == ext) continue;
+          try {
+            await entity.delete();
+          } catch (_) {}
+          continue;
+        }
+        // 提交崩溃窗：rename 已完成但记录未写入。文件在 rename 前已通过
+        // 完整性校验，补建 complete 记录是安全的。
+        final length = await entity.length();
+        if (ext == 'key' && length != 16) {
+          try {
+            await entity.delete();
+          } catch (_) {}
+          continue;
+        }
+        records[resourceId] = CacheResourceRecord(
+          resourceType: ext == 'key'
+              ? CacheResourceType.key
+              : CacheResourceType.segment,
+          status: CacheResourceStatus.complete,
+          size: length,
+          ext: ext,
+        );
+        recordsChanged = true;
+      }
+    }
+
+    final partialsDir = store.partialsDir(
+      entry.contentKeyHash,
+      entry.revisionKeyHash,
+    );
+    if (await partialsDir.exists()) {
+      await for (final entity in partialsDir.list()) {
+        if (entity is! File) continue;
+        final name = _baseName(entity.path);
+        if (!name.endsWith('.part')) continue;
+        final resourceId = name.substring(0, name.length - '.part'.length);
+        final record = records[resourceId];
+        // 无记录（写入中途杀进程）或已有 complete 记录的 .part 均为残留。
+        if (record == null || record.complete) {
+          try {
+            await entity.delete();
+          } catch (_) {}
+        }
+      }
+    }
+
+    // 补建/清理记录后重算该条目字节数与计数并持久化。
+    if (recordsChanged) await _reconcileEntry(entryKey);
+  }
+
   Future<int> refreshQuota() async {
     final total = await diskSpace.totalCapacityBytes();
     final available = await diskSpace.availableBytes();
@@ -257,7 +397,11 @@ class CacheManager {
         final existing = _entries[entry.key];
         if (existing != null) return existing;
         final nowMs = _now();
-        final created = entry.copyWith(createdAtMs: nowMs, updatedAtMs: nowMs);
+        final created = entry.copyWith(
+          lastAccessMs: entry.lastAccessMs == 0 ? nowMs : entry.lastAccessMs,
+          createdAtMs: nowMs,
+          updatedAtMs: nowMs,
+        );
         _entries[entry.key] = created;
         await _persistState(entry.key);
         _scheduleIndexSave();
@@ -334,6 +478,51 @@ class CacheManager {
     _scheduleIndexSave();
   });
 
+  Future<void> markDownloadOrigin(String entryKey) =>
+      _lock.synchronize(() async {
+        final entry = _entries[entryKey];
+        if (entry == null || entry.downloadOrigin) return;
+        _entries[entryKey] = entry.copyWith(
+          downloadOrigin: true,
+          updatedAtMs: _now(),
+        );
+        await _persistState(entryKey);
+        _scheduleIndexSave();
+      });
+
+  Future<CacheEvictionResult> evictExpired({Duration? maxAge, DateTime? now}) =>
+      _lock.synchronize(
+        () => _evictExpiredLocked(maxAge: maxAge ?? this.maxAge, now: now),
+      );
+
+  Future<CacheEvictionResult> _evictExpiredLocked({
+    Duration? maxAge,
+    DateTime? now,
+  }) async {
+    final result = CacheEvictionResult();
+    final limit = maxAge;
+    if (limit == null) return result;
+    final cutoff =
+        (now ?? DateTime.now()).millisecondsSinceEpoch - limit.inMilliseconds;
+    for (final entry in _entries.values.toList()) {
+      if (entry.downloadOrigin) continue;
+      if ((_refs[entry.key] ?? 0) > 0) continue;
+      if (entry.status == CacheEntryStatus.deleting) continue;
+      if (entry.lastAccessMs >= cutoff) continue;
+      final size = entry.completeBytes + entry.partialBytes;
+      final deleted = await _removeEntry(entry);
+      if (deleted == DeleteResult.deleted) {
+        result.deleted++;
+        result.freedBytes += size;
+      }
+    }
+    if (result.deleted > 0) {
+      _expiredCleanupCount += result.deleted;
+      _expiredCleanupFreedBytes += result.freedBytes;
+    }
+    return result;
+  }
+
   Future<WriteLease?> reserve(String entryKey, int bytes) => _lock.synchronize(
     () async {
       final entry = _entries[entryKey];
@@ -341,7 +530,11 @@ class CacheManager {
         return null;
       }
       if (bytes <= 0 || _quotaBytes <= 0) return null;
-      final used = _usedByDisk + _pendingBytes();
+      var used = _usedByDisk + _pendingBytes();
+      if (used + bytes > _quotaBytes) {
+        await _evictExpiredLocked();
+        used = _usedByDisk + _pendingBytes();
+      }
       if (used + bytes > _quotaBytes) {
         await _evictToFree(bytes - (_quotaBytes - used), excludeKey: entryKey);
       }
@@ -421,7 +614,11 @@ class CacheManager {
         if (!_pending.containsKey(lease.id)) return false;
         if (totalBytes <= lease.bytes) return true;
         final additional = totalBytes - lease.bytes;
-        final used = _usedByDisk + _pendingBytes();
+        var used = _usedByDisk + _pendingBytes();
+        if (used + additional > _quotaBytes) {
+          await _evictExpiredLocked();
+          used = _usedByDisk + _pendingBytes();
+        }
         if (used + additional > _quotaBytes) {
           await _evictToFree(
             additional - (_quotaBytes - used),
@@ -462,6 +659,14 @@ class CacheManager {
 
   Future<CacheEntry?> getEntry(String entryKey) =>
       _lock.synchronize(() async => _entries[entryKey]);
+
+  /// 轻量可写性查询：条目存在且非 deleting 时才允许落盘。
+  /// 供缓存写入方在 create(recursive: true) 重建目录前调用，
+  /// 避免条目删除后在途写流重建孤儿目录。
+  Future<bool> isWritable(String entryKey) => _lock.synchronize(() async {
+    final entry = _entries[entryKey];
+    return entry != null && entry.status != CacheEntryStatus.deleting;
+  });
 
   Future<CacheEntry?> findOffline(
     String contentKeyHash,
@@ -660,3 +865,5 @@ class CacheManager {
 }
 
 int _now() => DateTime.now().millisecondsSinceEpoch;
+
+String _baseName(String path) => path.split(Platform.pathSeparator).last;

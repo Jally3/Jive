@@ -186,7 +186,7 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
                           ),
                         ),
                       Align(
-                        alignment: const Alignment(0, 0.45),
+                        alignment: Alignment.center,
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 120),
                           height: active ? 6 : 4,
@@ -200,7 +200,7 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
                               FractionallySizedBox(
                                 alignment: Alignment.centerLeft,
                                 widthFactor: loaded,
-                                child: const ColoredBox(color: Colors.white38),
+                                child: const ColoredBox(color: Colors.white54),
                               ),
                               FractionallySizedBox(
                                 alignment: Alignment.centerLeft,
@@ -214,7 +214,7 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
                         ),
                       ),
                       Align(
-                        alignment: Alignment(played * 2 - 1, 0.45),
+                        alignment: Alignment(played * 2 - 1, 0),
                         child: AnimatedContainer(
                           key: const ValueKey('playback-thumb'),
                           duration: const Duration(milliseconds: 120),

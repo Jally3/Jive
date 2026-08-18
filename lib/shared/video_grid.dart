@@ -10,12 +10,14 @@ class VideoGrid extends StatelessWidget {
     this.topPadding = 8,
     this.bottomPadding = 24,
     this.controller,
+    this.footer,
   });
   final List<Video> videos;
   final ValueChanged<Video> onTap;
   final double topPadding;
   final double bottomPadding;
   final ScrollController? controller;
+  final Widget? footer;
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
@@ -24,18 +26,40 @@ class VideoGrid extends StatelessWidget {
     // 海报 4:5，按实际卡宽动态算比例，避免固定比例在窄屏溢出、宽屏留白。
     const infoHeight = 52.0;
     final cardWidth = (width - 32 - 12 * (crossAxisCount - 1)) / crossAxisCount;
-    return GridView.builder(
+    return CustomScrollView(
       controller: controller,
-      padding: EdgeInsets.fromLTRB(16, topPadding, 16, bottomPadding),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 24,
-        childAspectRatio: cardWidth / (cardWidth * 5 / 4 + infoHeight),
-      ),
-      itemCount: videos.length,
-      itemBuilder: (_, index) =>
-          VideoCard(video: videos[index], onTap: () => onTap(videos[index])),
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            topPadding,
+            16,
+            footer == null ? bottomPadding : 0,
+          ),
+          sliver: SliverGrid(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => VideoCard(
+                video: videos[index],
+                onTap: () => onTap(videos[index]),
+              ),
+              childCount: videos.length,
+            ),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 24,
+              childAspectRatio: cardWidth / (cardWidth * 5 / 4 + infoHeight),
+            ),
+          ),
+        ),
+        if (footer != null)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: bottomPadding),
+              child: footer,
+            ),
+          ),
+      ],
     );
   }
 }

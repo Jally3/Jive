@@ -360,8 +360,29 @@ class _HomePageState extends ConsumerState<HomePage>
           videos: c.items,
           onTap: _open,
           topPadding: _topBarHeight,
-          bottomPadding: c.loading ? 168 : 96,
+          bottomPadding: 96,
           controller: _scrollController,
+          footer: c.loading
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : (!c.hasMore
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20),
+                        child: Center(
+                          child: Text(
+                            '没有更多了',
+                            style: TextStyle(
+                              color: AppColors.tertiary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      )
+                    : null),
         ),
       ),
     );

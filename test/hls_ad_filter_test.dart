@@ -177,9 +177,7 @@ https://cdn.example.com/movie/0002.ts
       buffer.writeln('#EXT-X-DISCONTINUITY');
       for (var i = 0; i < 9; i++) {
         buffer.writeln('#EXTINF:${i == 8 ? 1.76 : 3.0},');
-        buffer.writeln(
-          '/video/adjump/time/1786905362888000000$i.ts',
-        );
+        buffer.writeln('/video/adjump/time/1786905362888000000$i.ts');
       }
       buffer.writeln('#EXT-X-DISCONTINUITY');
     }

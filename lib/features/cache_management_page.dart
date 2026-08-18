@@ -5,7 +5,7 @@ import '../core/app_states.dart';
 import '../data/cache/cache_controller.dart';
 import '../data/cache/cache_index.dart';
 import '../data/cache/cache_manager.dart';
-import '../shared/app_snack_bar.dart';
+import '../shared/app_toast.dart';
 
 class CacheManagementPage extends ConsumerStatefulWidget {
   const CacheManagementPage({super.key});
@@ -43,7 +43,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
           .read(cacheControllerProvider.notifier)
           .clearAll();
       if (mounted) {
-        showAppSnackBar(
+        showAppToast(
           context,
           result.failed > 0
               ? '已清空 ${result.deleted} 项，${result.failed} 项失败'
@@ -54,7 +54,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
       }
     } catch (_) {
       if (mounted) {
-        showAppSnackBar(context, '清理失败，请重试');
+        showAppToast(context, '清理失败，请重试');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -93,11 +93,11 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
           DeleteResult.notFound => '缓存不存在',
           DeleteResult.failed => '删除失败，请重试',
         };
-        showAppSnackBar(context, message);
+        showAppToast(context, message);
       }
     } catch (_) {
       if (mounted) {
-        showAppSnackBar(context, '删除失败，请重试');
+        showAppToast(context, '删除失败，请重试');
       }
     } finally {
       if (mounted) setState(() => _busy = false);

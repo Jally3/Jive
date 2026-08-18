@@ -48,6 +48,12 @@ class CacheResourceIntegrityException implements Exception {
   const CacheResourceIntegrityException();
 }
 
+/// 落盘前条目已不可写（已被删除或正在删除）：放弃本次缓存写入，
+/// 按旁路语义处理，不影响回源播放。
+class CacheEntryNotWritableException implements Exception {
+  const CacheEntryNotWritableException();
+}
+
 class ResourceFetcher {
   ResourceFetcher({
     required this.client,
@@ -255,6 +261,16 @@ class ResourceFetcher {
       revisionKeyHash!,
       resourceId,
     );
+    // 写入前守卫：条目在 reserve 之后被删除时不再重建目录，直接旁路。
+    if (!await manager!.isWritable(entryKey!)) {
+      await lease.cancel();
+      _reportCacheBypass(PlaybackFallbackReason.cacheWriteFailed);
+      return CacheFetchResult(
+        statusCode: upstream.statusCode,
+        headers: _upstreamHeaders(upstream),
+        body: upstream.stream,
+      );
+    }
     await part.parent.create(recursive: true);
     final sink = part.openWrite();
     final controller = StreamController<List<int>>();
@@ -288,6 +304,12 @@ class ResourceFetcher {
           }
           if (declaredLength <= 0) {
             onResourceLength?.call(resourceId, written);
+          }
+          // 提交前守卫：条目在在途写入期间被删除时放弃落盘，
+          // 避免 create(recursive: true) 重建已删目录形成孤儿。
+          // 删除与写入之间的残余竞态由启动反向清扫兜底。
+          if (!await manager!.isWritable(entryKey!)) {
+            throw const CacheEntryNotWritableException();
           }
           final resource = store!.resourceFile(
             contentKeyHash!,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -410,6 +411,51 @@ void main() {
     final record = await manager.resourceRecord(created.key, id);
     expect(record?.complete, isTrue);
   });
+
+  test(
+    'in-flight write after entry deletion leaves no dirs, files or records',
+    () async {
+      final bodyController = StreamController<List<int>>();
+      final client = MockClient.streaming((request, headers) async {
+        return http.StreamedResponse(
+          bodyController.stream,
+          200,
+          headers: {'content-length': '6'},
+        );
+      });
+      final created = await manager.upsertEntry(entry('1'));
+      PlaybackFallbackReason? bypassReason;
+      final fetcher = ResourceFetcher(
+        client: client,
+        sessionHeaders: const {},
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: 'ck1',
+        revisionKeyHash: 'rk1',
+        onCacheBypass: (reason) => bypassReason = reason,
+      );
+      final id = 'sha256:${'a' * 64}';
+      final result = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/a.ts'),
+        resourceId: id,
+        ext: 'ts',
+      );
+      bodyController.add('G12345'.codeUnits);
+      // 写入在途时用户删除该条目
+      expect(await manager.deleteEntry(created.key), DeleteResult.deleted);
+      await bodyController.close();
+      // 已流出的字节仍送达播放器，回源播放不受影响
+      expect(await _collect(result.body), 'G12345');
+
+      expect(bypassReason, PlaybackFallbackReason.cacheWriteFailed);
+      // 不重建已删目录，不落正式文件，不留记录
+      expect(store.entryDir('ck1', 'rk1').existsSync(), isFalse);
+      expect(store.resourceFile('ck1', 'rk1', id, 'ts').existsSync(), isFalse);
+      expect(await manager.resourceRecord(created.key, id), isNull);
+      expect((await manager.stats()).entryCount, 0);
+    },
+  );
 }
 
 Future<String> _collect(Stream<List<int>> stream) async {

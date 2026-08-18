@@ -51,6 +51,4 @@ Android 调试包输出：`build/app/outputs/flutter-apk/app-debug.apk`。
 
 > 仅允许 HTTPS 源；HTTP 源会被标记但需要人工确认授权后使用。
 
-实现与验证状态见 `doc/IMPLEMENTATION_STATUS.md`。
-
 > 第三方 VOD 内容和播放源在正式发布前必须完成授权与平台合规确认。

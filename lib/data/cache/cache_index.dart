@@ -33,6 +33,12 @@ bool isValidResourceExt(String ext) => allowedResourceExts.contains(ext);
 
 enum CacheEntryStatus { partial, complete, deleting, failed }
 
+/// 启动清扫时对条目目录 state.json 的探测结论：
+/// - missing / corrupt：目录为孤儿残留，可整体删除；
+/// - unknownVersion：未来版本写入的目录，隔离保留，不删除；
+/// - valid：当前版本可读的有效状态。
+enum CacheStateProbe { missing, corrupt, unknownVersion, valid }
+
 enum CacheResourceType { segment, map, key, init, other }
 
 enum CacheResourceStatus { partial, complete }
@@ -110,6 +116,7 @@ class CacheEntry {
     required this.episodeId,
     required this.episodeName,
     this.status = CacheEntryStatus.partial,
+    this.downloadOrigin = false,
     this.expectedResourceCount = 0,
     this.committedResourceCount = 0,
     this.completeBytes = 0,
@@ -138,6 +145,7 @@ class CacheEntry {
   final String episodeId;
   final String episodeName;
   final CacheEntryStatus status;
+  final bool downloadOrigin;
   final int expectedResourceCount;
   final int committedResourceCount;
   final int completeBytes;
@@ -173,6 +181,7 @@ class CacheEntry {
     'episodeId': episodeId,
     'episodeName': episodeName,
     'status': status.name,
+    'downloadOrigin': downloadOrigin,
     'expectedResourceCount': expectedResourceCount,
     'committedResourceCount': committedResourceCount,
     'completeBytes': completeBytes,
@@ -206,6 +215,7 @@ class CacheEntry {
       episodeId: _optionalString(json['episodeId']),
       episodeName: _optionalString(json['episodeName']),
       status: _entryStatus(json['status']),
+      downloadOrigin: json['downloadOrigin'] == true,
       expectedResourceCount: _nonNegative(json['expectedResourceCount']),
       committedResourceCount: _nonNegative(json['committedResourceCount']),
       completeBytes: _nonNegative(json['completeBytes']),
@@ -228,6 +238,7 @@ class CacheEntry {
     int? filterVersion,
     int? timelineVersion,
     CacheEntryStatus? status,
+    bool? downloadOrigin,
     int? expectedResourceCount,
     int? committedResourceCount,
     int? completeBytes,
@@ -255,6 +266,7 @@ class CacheEntry {
     episodeId: episodeId,
     episodeName: episodeName,
     status: status ?? this.status,
+    downloadOrigin: downloadOrigin ?? this.downloadOrigin,
     expectedResourceCount: expectedResourceCount ?? this.expectedResourceCount,
     committedResourceCount:
         committedResourceCount ?? this.committedResourceCount,
@@ -287,6 +299,7 @@ class RevisionState extends CacheEntry {
     required super.episodeId,
     required super.episodeName,
     super.status,
+    super.downloadOrigin,
     super.expectedResourceCount,
     super.committedResourceCount,
     super.completeBytes,
@@ -328,6 +341,7 @@ class RevisionState extends CacheEntry {
     episodeId: entry.episodeId,
     episodeName: entry.episodeName,
     status: entry.status,
+    downloadOrigin: entry.downloadOrigin,
     expectedResourceCount: entry.expectedResourceCount,
     committedResourceCount: entry.committedResourceCount,
     completeBytes: entry.completeBytes,
@@ -590,6 +604,28 @@ class CacheIndexStore {
   ) async {
     final dir = entryDir(contentKeyHash, revisionKeyHash);
     if (await dir.exists()) await dir.delete(recursive: true);
+  }
+
+  /// 探测条目目录的 state.json 状态，供启动反向清扫区分
+  /// "可删除的孤儿目录"与"需隔离保留的未知版本目录"。
+  Future<CacheStateProbe> probeState(
+    String contentKeyHash,
+    String revisionKeyHash,
+  ) async {
+    final file = stateFile(contentKeyHash, revisionKeyHash);
+    if (!await file.exists()) return CacheStateProbe.missing;
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map) return CacheStateProbe.corrupt;
+      if (decoded['schemaVersion'] != cacheSchemaVersion) {
+        return CacheStateProbe.unknownVersion;
+      }
+      // 与 rebuildFromStates 同一载入口径：结构不完整同样视为损坏。
+      RevisionState.fromJson(Map<String, dynamic>.from(decoded));
+      return CacheStateProbe.valid;
+    } catch (_) {
+      return CacheStateProbe.corrupt;
+    }
   }
 
   Future<void> cleanupTempFiles() async {

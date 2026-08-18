@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/data/cache/cache_index.dart';
@@ -297,7 +298,7 @@ void main() {
       await manager.initialize();
       final first = await manager.upsertEntry(entry('1'));
       await manager.touch(first.key);
-      await manager.upsertEntry(entry('2'));
+      await manager.upsertEntry(entry('2').copyWith(lastAccessMs: 1));
       final stats = await manager.stats();
       expect(stats.entries.first.title, '影片1');
       expect(stats.entries.last.title, '影片2');
@@ -399,5 +400,253 @@ void main() {
         expect(stats.entries.single.completeBytes, 0);
       },
     );
+
+    test(
+      'initialize sweeps orphan dirs but isolates unknown-version states',
+      () async {
+        // 无 state.json 的孤儿目录（淘汰/删除中途崩溃残留）
+        final noStateDir = store.entryDir('ckA', 'rkA');
+        await noStateDir.create(recursive: true);
+        final noStateResource = File(
+          '${store.resourcesDir('ckA', 'rkA').path}/sha256:${'a' * 64}.ts',
+        );
+        await noStateResource.parent.create(recursive: true);
+        await noStateResource.writeAsBytes(List.filled(10, 0));
+
+        // state.json 损坏（JSON 无法解析）
+        final corruptDir = store.entryDir('ckB', 'rkB');
+        await corruptDir.create(recursive: true);
+        await store.stateFile('ckB', 'rkB').writeAsString('{not json');
+
+        // 未知版本 state.json：隔离保留，等待未来版本读取
+        final futureDir = store.entryDir('ckC', 'rkC');
+        await futureDir.create(recursive: true);
+        final futureState = entry('C').toJson()..['schemaVersion'] = 999;
+        await store
+            .stateFile('ckC', 'rkC')
+            .writeAsString(jsonEncode(futureState));
+
+        final manager = CacheManager(store: store, diskSpace: disk);
+        await manager.initialize();
+
+        expect(noStateDir.existsSync(), isFalse);
+        expect(corruptDir.existsSync(), isFalse);
+        expect(futureDir.existsSync(), isTrue);
+        final stats = await manager.stats();
+        expect(stats.entryCount, 0);
+        expect(stats.usedBytes, 0);
+      },
+    );
+
+    test(
+      'initialize removes unrecorded .part files and keeps recorded ones',
+      () async {
+        final manager = CacheManager(store: store, diskSpace: disk);
+        await manager.initialize();
+        final created = await manager.upsertEntry(entry('1'));
+        final recordedId = 'sha256:${'a' * 64}';
+        await manager.markPartial(created.key, recordedId, 64);
+        final recordedPart = store.partialFile('ck1', 'rk1', recordedId);
+        await recordedPart.parent.create(recursive: true);
+        await recordedPart.writeAsBytes(List.filled(64, 1));
+        // 写入中途杀进程留下的无记录 .part
+        final orphanPart = File(
+          '${store.partialsDir('ck1', 'rk1').path}/sha256:${'b' * 64}.part',
+        );
+        await orphanPart.writeAsBytes(List.filled(32, 2));
+        await manager.flush();
+
+        final restored = CacheManager(store: store, diskSpace: disk);
+        await restored.initialize();
+        expect(recordedPart.existsSync(), isTrue);
+        expect(orphanPart.existsSync(), isFalse);
+        final stats = await restored.stats();
+        expect(stats.partialBytes, 64);
+        expect(stats.usedBytes, 64);
+      },
+    );
+
+    test(
+      'initialize backfills records for unnamed-window complete files',
+      () async {
+        final manager = CacheManager(store: store, diskSpace: disk);
+        await manager.initialize();
+        final created = await manager.upsertEntry(entry('1'));
+        await manager.setExpectations(created.key, 1);
+        await manager.flush();
+        // 提交崩溃窗：rename 成正式文件后、记录写入前崩溃
+        final backfillId = 'sha256:${'c' * 64}';
+        final resource = store.resourceFile('ck1', 'rk1', backfillId, 'ts');
+        await resource.parent.create(recursive: true);
+        await resource.writeAsBytes(List.filled(128, 3));
+        // 命名无法解析的文件直接删除
+        final junk = File('${store.resourcesDir('ck1', 'rk1').path}/notes.txt');
+        await junk.writeAsString('junk');
+
+        final restored = CacheManager(store: store, diskSpace: disk);
+        await restored.initialize();
+        expect(junk.existsSync(), isFalse);
+        expect(resource.existsSync(), isTrue);
+        final record = await restored.resourceRecord(created.key, backfillId);
+        expect(record?.complete, isTrue);
+        expect(record?.size, 128);
+        expect(record?.ext, 'ts');
+        final stats = await restored.stats();
+        expect(stats.entries.single.committedResourceCount, 1);
+        expect(stats.completeBytes, 128);
+        expect(stats.usedBytes, 128);
+      },
+    );
+
+    test(
+      'reconcile drops phantom entries without rebuilding state.json',
+      () async {
+        final manager = CacheManager(store: store, diskSpace: disk);
+        await manager.initialize();
+        await manager.upsertEntry(entry('1'));
+        await manager.flush();
+        // 模拟目录被外部整体删除但 index.json 仍有记录
+        await store.deleteEntryDir('ck1', 'rk1');
+
+        final restored = CacheManager(store: store, diskSpace: disk);
+        await restored.initialize();
+        expect((await restored.stats()).entryCount, 0);
+        // 不再重建目录写回 state.json
+        expect(store.entryDir('ck1', 'rk1').existsSync(), isFalse);
+        expect(await store.loadIndex(), isEmpty);
+      },
+    );
+
+    test('evictExpired removes only entries older than the cutoff', () async {
+      final now = DateTime.now();
+      const maxAge = Duration(days: 3);
+      final cutoff = now.millisecondsSinceEpoch - maxAge.inMilliseconds;
+      final manager = CacheManager(
+        store: store,
+        diskSpace: disk,
+        maxAge: maxAge,
+      );
+      await manager.initialize();
+      final expired = await manager.upsertEntry(
+        entry('expired').copyWith(lastAccessMs: cutoff - 1),
+      );
+      final boundary = await manager.upsertEntry(
+        entry('boundary').copyWith(lastAccessMs: cutoff),
+      );
+      final fresh = await manager.upsertEntry(
+        entry('fresh').copyWith(lastAccessMs: now.millisecondsSinceEpoch),
+      );
+
+      final result = await manager.evictExpired(maxAge: maxAge, now: now);
+      expect(result.deleted, 1);
+      expect(manager.expiredCleanupCount, 1);
+      expect(await manager.getEntry(expired.key), isNull);
+      expect(await manager.getEntry(boundary.key), isNotNull);
+      expect(await manager.getEntry(fresh.key), isNotNull);
+    });
+
+    test('downloadOrigin entries are exempt from TTL cleanup', () async {
+      final now = DateTime.now();
+      const maxAge = Duration(days: 3);
+      final cutoff = now.millisecondsSinceEpoch - maxAge.inMilliseconds;
+      final manager = CacheManager(
+        store: store,
+        diskSpace: disk,
+        maxAge: maxAge,
+      );
+      await manager.initialize();
+      final download = await manager.upsertEntry(
+        entry('download').copyWith(lastAccessMs: cutoff - 1),
+      );
+      await manager.markDownloadOrigin(download.key);
+      final result = await manager.evictExpired(maxAge: maxAge, now: now);
+      expect(result.deleted, 0);
+      expect((await manager.getEntry(download.key))!.downloadOrigin, isTrue);
+    });
+
+    test('quota LRU does not exempt downloadOrigin entries', () async {
+      disk = _FakeDiskSpace(1000, total: null);
+      final manager = CacheManager(store: store, diskSpace: disk, maxAge: null);
+      await manager.initialize();
+      final old = await manager.upsertEntry(entry('old'));
+      await manager.markDownloadOrigin(old.key);
+      final oldLease = await manager.reserve(old.key, 600);
+      await oldLease!.commitResource(
+        resourceId: 'sha256:${'a' * 64}',
+        size: 600,
+        ext: 'ts',
+      );
+      final fresh = await manager.upsertEntry(entry('fresh'));
+      final freshLease = await manager.reserve(fresh.key, 600);
+      expect(freshLease, isNotNull);
+      await freshLease?.cancel();
+      expect(await manager.getEntry(old.key), isNull);
+      expect(await manager.getEntry(fresh.key), isNotNull);
+    });
+
+    test('expired referenced entries are skipped until released', () async {
+      final now = DateTime.now();
+      const maxAge = Duration(days: 3);
+      final cutoff = now.millisecondsSinceEpoch - maxAge.inMilliseconds;
+      final manager = CacheManager(
+        store: store,
+        diskSpace: disk,
+        maxAge: maxAge,
+      );
+      await manager.initialize();
+      final busy = await manager.upsertEntry(
+        entry('busy').copyWith(lastAccessMs: cutoff - 1),
+      );
+      final ref = await manager.acquire(busy.key);
+      final skipped = await manager.evictExpired(maxAge: maxAge, now: now);
+      expect(skipped.deleted, 0);
+      expect(await manager.getEntry(busy.key), isNotNull);
+      await ref.dispose();
+      final cleaned = await manager.evictExpired(maxAge: maxAge, now: now);
+      expect(cleaned.deleted, 1);
+      expect(await manager.getEntry(busy.key), isNull);
+    });
+
+    test('disabled TTL keeps expired entries', () async {
+      final now = DateTime.now();
+      final manager = CacheManager(store: store, diskSpace: disk, maxAge: null);
+      await manager.initialize();
+      final old = await manager.upsertEntry(
+        entry('old').copyWith(
+          lastAccessMs: now
+              .subtract(const Duration(days: 30))
+              .millisecondsSinceEpoch,
+        ),
+      );
+      final result = await manager.evictExpired(now: now);
+      expect(result.deleted, 0);
+      expect(await manager.getEntry(old.key), isNotNull);
+    });
+
+    test('initialize evicts expired entries after reconcile', () async {
+      final manager = CacheManager(
+        store: store,
+        diskSpace: disk,
+        maxAge: const Duration(days: 3),
+      );
+      await manager.initialize();
+      final old = await manager.upsertEntry(
+        entry('old').copyWith(
+          lastAccessMs: DateTime.now()
+              .subtract(const Duration(days: 4))
+              .millisecondsSinceEpoch,
+        ),
+      );
+      await manager.flush();
+
+      final restored = CacheManager(
+        store: store,
+        diskSpace: disk,
+        maxAge: const Duration(days: 3),
+      );
+      await restored.initialize();
+      expect(await restored.getEntry(old.key), isNull);
+      expect((await restored.stats()).entryCount, 0);
+    });
   });
 }

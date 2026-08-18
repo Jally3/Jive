@@ -631,6 +631,7 @@ class DownloadTaskManager {
         plan.expectedResourceCount,
         requireFinalization: true,
       );
+      await cacheManager.markDownloadOrigin(entry.key);
       ref = await cacheManager.acquire(entry.key);
       task = await _set(
         task.copyWith(

@@ -6,7 +6,6 @@
 
 - `APP_REQUIREMENTS_V1.md`
 - `ARCHITECTURE.md`
-- `BACKEND_ARCHITECTURE.md`
 - 当前 VOD 源：暴风资源 API
 
 ## 2. 开发策略
@@ -356,7 +355,7 @@
 
 ## 13. 进入后端开发的触发条件
 
-满足以下任一条件时，开始实现 `BACKEND_ARCHITECTURE.md` 中的后端：
+满足以下任一条件时，开始设计并实现自有后端：
 
 - 需要接入第二个 VOD 源。
 - 需要登录、会员、支付或权限控制。

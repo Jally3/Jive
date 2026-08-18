@@ -5,7 +5,7 @@ import '../core/app_states.dart';
 import '../data/cache/download_providers.dart';
 import '../data/cache/download_task_manager.dart';
 import '../domain/video.dart';
-import '../shared/app_snack_bar.dart';
+import '../shared/app_toast.dart';
 import 'cache_management_page.dart';
 import 'player_page.dart';
 
@@ -384,12 +384,12 @@ class _DownloadManagementPageState
         }
       }
       if (mounted) {
-        showAppSnackBar(context, '批量操作已完成');
+        showAppToast(context, '批量操作已完成');
         _exitEditing();
       }
     } catch (_) {
       if (mounted) {
-        showAppSnackBar(context, '批量操作失败，请重试');
+        showAppToast(context, '批量操作失败，请重试');
       }
     } finally {
       if (mounted) setState(() => batchBusy = false);
@@ -458,7 +458,7 @@ class _DownloadManagementPageState
       await (await _manager(ref)).pauseAll();
     } catch (_) {
       if (mounted) {
-        showAppSnackBar(context, '批量暂停失败，请重试');
+        showAppToast(context, '批量暂停失败，请重试');
       }
     } finally {
       if (mounted) setState(() => batchBusy = false);
@@ -484,7 +484,7 @@ class _DownloadManagementPageState
       }
     } catch (_) {
       if (mounted) {
-        showAppSnackBar(context, '批量恢复失败，请重试');
+        showAppToast(context, '批量恢复失败，请重试');
       }
     } finally {
       if (mounted) setState(() => batchBusy = false);
@@ -501,7 +501,7 @@ class _DownloadManagementPageState
       await action(await _manager(ref));
     } catch (_) {
       if (mounted) {
-        showAppSnackBar(context, '操作失败，请重试');
+        showAppToast(context, '操作失败，请重试');
       }
     } finally {
       if (mounted) setState(() => busyTaskIds.remove(task.taskId));
@@ -890,7 +890,7 @@ class _DownloadManagementPageState
     final selection = await manager.selectionForTask(task);
     if (!context.mounted) return;
     if (selection == null || !selection.hasStableIdentity) {
-      showAppSnackBar(context, '无法恢复该下载的播放信息，请重新下载');
+      showAppToast(context, '无法恢复该下载的播放信息，请重新下载');
       return;
     }
     final episode = selection.episode;

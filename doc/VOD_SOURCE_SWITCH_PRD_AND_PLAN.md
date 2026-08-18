@@ -364,7 +364,7 @@ lib/data/vod_source_preferences.dart
 - 多条 `PlaybackLine` 解析和默认线路选择测试。
 - 剧集保持、播放器重试和历史续播测试。
 
-同步更新 `README.md`、`ARCHITECTURE.md` 和 `doc/IMPLEMENTATION_STATUS.md`。
+同步更新 `README.md` 和 `ARCHITECTURE.md`。
 
 ## 10. 风险与对策
 

@@ -179,44 +179,62 @@ class _FloatingNavBar extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) => Container(
-    height: 64,
-    decoration: const BoxDecoration(
-      borderRadius: BorderRadius.all(Radius.circular(32)),
-      boxShadow: [
-        BoxShadow(color: AppColors.scrim, blurRadius: 24, offset: Offset(0, 6)),
-      ],
-    ),
-    // 毛玻璃：半透明底色 + 背景模糊，页面内容滚到导航栏下方时透出。
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(32),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Material(
-          color: AppColors.surface.withValues(alpha: 0.3),
-          clipBehavior: Clip.antiAlias,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(32),
-            side: const BorderSide(color: AppColors.divider),
+  Widget build(BuildContext context) {
+    final isTablet = MediaQuery.sizeOf(context).shortestSide >= 600;
+    final height = isTablet ? 72.0 : 64.0;
+    final radius = height / 2;
+    // 首页保留更通透的毛玻璃；其他页面提高底色不透明度，
+    // 避免图标和文字被页面内容干扰。
+    final surfaceAlpha = index == 0 ? 0.3 : 0.78;
+    return Container(
+      key: const ValueKey('floating-nav-bar'),
+      height: height,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.all(Radius.circular(radius)),
+        boxShadow: const [
+          BoxShadow(
+            color: AppColors.scrim,
+            blurRadius: 24,
+            offset: Offset(0, 6),
           ),
-          child: Row(
-            children: [
-              for (var i = 0; i < _items.length; i++)
-                Expanded(
-                  child: _NavItem(
-                    icon: _items[i].$1,
-                    selectedIcon: _items[i].$2,
-                    label: _items[i].$3,
-                    selected: index == i,
-                    onTap: () => onSelect(i),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Material(
+            key: const ValueKey('floating-nav-surface'),
+            color: AppColors.surface.withValues(alpha: surfaceAlpha),
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(radius),
+              side: BorderSide(
+                color: isTablet
+                    ? AppColors.secondary.withValues(alpha: 0.25)
+                    : AppColors.divider,
+              ),
+            ),
+            child: Row(
+              children: [
+                for (var i = 0; i < _items.length; i++)
+                  Expanded(
+                    child: _NavItem(
+                      icon: _items[i].$1,
+                      selectedIcon: _items[i].$2,
+                      label: _items[i].$3,
+                      selected: index == i,
+                      isTablet: isTablet,
+                      onTap: () => onSelect(i),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _NavItem extends StatelessWidget {
@@ -225,6 +243,7 @@ class _NavItem extends StatelessWidget {
     required this.selectedIcon,
     required this.label,
     required this.selected,
+    required this.isTablet,
     required this.onTap,
   });
 
@@ -232,28 +251,49 @@ class _NavItem extends StatelessWidget {
   final IconData selectedIcon;
   final String label;
   final bool selected;
+  final bool isTablet;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final color = selected ? AppColors.accent : AppColors.secondary;
     return InkWell(
-      borderRadius: BorderRadius.circular(32),
+      borderRadius: BorderRadius.circular(isTablet ? 30 : 32),
       onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(selected ? selectedIcon : icon, color: color, size: 24),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        margin: isTablet
+            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 6)
+            : EdgeInsets.zero,
+        decoration: BoxDecoration(
+          color: isTablet && selected
+              ? AppColors.accent.withValues(alpha: 0.12)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(30),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              selected ? selectedIcon : icon,
               color: color,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              size: isTablet ? 26 : 24,
             ),
-          ),
-        ],
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: isTablet ? 13 : 12,
+                color: color,
+                fontWeight: selected
+                    ? FontWeight.w600
+                    : isTablet
+                    ? FontWeight.w500
+                    : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
