@@ -85,6 +85,16 @@ class _FakeRepository implements VideoRepository {
       fetchDetail(source, ref);
 }
 
+class _TreeCategoryRepository extends _FakeRepository {
+  @override
+  Future<List<VideoCategory>> fetchCategories(VodSource source) async => const [
+    VideoCategory(id: 1, name: '电影片'),
+    VideoCategory(id: 6, name: '动作片', parentId: 1),
+    VideoCategory(id: 7, name: '喜剧片', parentId: 1),
+    VideoCategory(id: 36, name: '体育'),
+  ];
+}
+
 final _testOverrides = [
   videoRepositoryProvider.overrideWithValue(_FakeRepository()),
   vodSourceRegistryProvider.overrideWith(
@@ -289,6 +299,69 @@ void main() {
     await tester.pump(const Duration(milliseconds: 601));
     await tester.pump();
     expect(find.text('没有找到结果，换个关键词或来源试试'), findsOneWidget);
+  });
+
+  testWidgets('home uses two-level category navigation', (tester) async {
+    final container = ProviderContainer(
+      overrides: [
+        videoRepositoryProvider.overrideWithValue(_TreeCategoryRepository()),
+        vodSourceRegistryProvider.overrideWith(
+          (ref) async => VodSourceRegistry([
+            VodSource(
+              id: 'tree',
+              name: '树形源',
+              baseUri: Uri.parse(
+                'https://tree.example.com/api.php/provide/vod',
+              ),
+              adapterType: 'mac_cms_v10',
+            ),
+          ], {}),
+        ),
+        downloadTasksProvider.overrideWith(
+          (ref) => Stream.value(const <DownloadTask>[]),
+        ),
+      ],
+    );
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const JiveApp()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    // 初始只展示顶级分类 tab，子分类不展示。
+    expect(find.widgetWithText(ChoiceChip, '电影片'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '体育'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '动作片'), findsNothing);
+    // 选中带子分类的顶级分类：展示子分类横滑栏并自动选中第一个子分类。
+    await tester.tap(find.widgetWithText(ChoiceChip, '电影片'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.widgetWithText(ChoiceChip, '动作片'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '喜剧片'), findsOneWidget);
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '动作片'))
+          .selected,
+      isTrue,
+    );
+    expect(find.text('测试影片'), findsOneWidget);
+    // 切换子分类。
+    await tester.tap(find.widgetWithText(ChoiceChip, '喜剧片'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '喜剧片'))
+          .selected,
+      isTrue,
+    );
+    // 选中无子级的顶级分类：直接按该分类查询，子分类栏收起。
+    await tester.tap(find.widgetWithText(ChoiceChip, '体育'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.widgetWithText(ChoiceChip, '动作片'), findsNothing);
+    expect(find.text('测试影片'), findsOneWidget);
   });
 
   testWidgets(

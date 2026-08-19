@@ -20,14 +20,23 @@ class HomePage extends ConsumerStatefulWidget {
 
 class _HomePageState extends ConsumerState<HomePage>
     with SingleTickerProviderStateMixin {
-  /// 顶部毛玻璃浮层高度：header 104 + 分类栏 56 + 分隔线 1，与网格 topPadding 保持一致。
+  /// 顶部毛玻璃浮层高度：header 104 + 顶级分类栏 56 + 分隔线 1。
+  /// 选中带子分类的顶级分类时，额外叠加子分类栏 [_subRowHeight]，
+  /// 与网格 topPadding 保持一致。
   static const _topBarHeight = 161.0;
+  static const _subRowHeight = 48.0;
 
   /// 头部（标题区）高度：向下滚动时向上折叠隐藏，分类栏保持吸顶。
   static const _headerHeight = 104.0;
 
   PagedVideoController? controller;
-  List<VideoCategory>? categories;
+
+  /// 顶级分类（tab 栏）与按父 id 分组的子分类（横滑栏）。
+  /// MacCMS 的内容只挂在叶子分类上，所以两级导航：
+  /// 选中顶级分类后展示其子分类，实际查询使用叶子分类 id。
+  List<VideoCategory>? _roots;
+  Map<int, List<VideoCategory>> _children = const {};
+  int? _selectedRootId;
   int? selectedCategoryId;
   String? categoryError;
   String? _activeSourceId;
@@ -35,6 +44,10 @@ class _HomePageState extends ConsumerState<HomePage>
   /// 头部折叠量（0 ~ [_headerHeight]），仅驱动顶栏浮层重建，避免整页 setState。
   final _headerCollapse = ValueNotifier<double>(0);
   double _lastScrollPixels = 0;
+
+  /// 本次滚动手势是否允许触发下拉刷新：手势开始时头部已完全展开才置真。
+  /// 防止"下拉展开头部"的手势因速度过快，剩余 overscroll 直接冲过刷新阈值。
+  bool _refreshArmed = true;
 
   /// 网格滚动控制器与"返回顶部"悬浮按钮的可见性（滚动超过一屏左右时出现）。
   final _scrollController = ScrollController();
@@ -92,8 +105,10 @@ class _HomePageState extends ConsumerState<HomePage>
     controller = PagedVideoController(ref.read(videoRepositoryProvider), source)
       ..addListener(_changed);
     _activeSourceId = source.id;
+    _roots = null;
+    _children = const {};
+    _selectedRootId = null;
     selectedCategoryId = null;
-    categories = null;
     categoryError = null;
     controller!.loadInitial();
     _loadCategories(source);
@@ -107,22 +122,49 @@ class _HomePageState extends ConsumerState<HomePage>
           .read(videoRepositoryProvider)
           .fetchCategories(source);
       if (!isActive()) return;
+      final byId = {for (final item in all) item.id: item};
+      // 部分源不返回 type_pid，此时所有分类都视为顶级、没有子分类。
+      bool isRoot(VideoCategory item) =>
+          item.parentId == 0 || !byId.containsKey(item.parentId);
+      var roots = all.where(isRoot).toList();
+      final children = <int, List<VideoCategory>>{};
+      for (final item in all) {
+        if (!isRoot(item)) {
+          children.putIfAbsent(item.parentId, () => []).add(item);
+        }
+      }
       final featured = source.featuredCategoryIds;
-      final roots = featured.isEmpty
-          ? all.where((item) => item.parentId == 0).toList()
-          : all
-                .where(
-                  (item) => item.parentId == 0 && featured.contains(item.id),
-                )
-                .toList();
+      if (featured.isNotEmpty) {
+        final filtered = roots
+            .where((item) => featured.contains(item.id))
+            .toList();
+        if (filtered.isNotEmpty) roots = filtered;
+      }
       if (!isActive()) return;
-      setState(() => categories = roots.isEmpty ? all : roots);
+      setState(() {
+        _roots = roots;
+        _children = children;
+      });
     } catch (e) {
       if (isActive()) setState(() => categoryError = e.toString());
     }
   }
 
-  Future<void> _select(VodSource source, int? categoryId) async {
+  /// 选中顶级分类：有子分类时展示子分类栏并自动选中第一个子分类；
+  /// 无子分类时直接按该分类查询。rootId 为 null 表示"最新"。
+  Future<void> _selectRoot(VodSource source, int? rootId) async {
+    final children = _children[rootId] ?? const <VideoCategory>[];
+    final queryId = rootId == null
+        ? null
+        : (children.isEmpty ? rootId : children.first.id);
+    setState(() {
+      _selectedRootId = rootId;
+      selectedCategoryId = queryId;
+    });
+    await controller?.loadInitial(category: queryId);
+  }
+
+  Future<void> _selectLeaf(int categoryId) async {
     setState(() => selectedCategoryId = categoryId);
     await controller?.loadInitial(category: categoryId);
   }
@@ -130,6 +172,12 @@ class _HomePageState extends ConsumerState<HomePage>
   void _open(Video video) => Navigator.of(
     context,
   ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
+
+  List<VideoCategory> get _selectedRootChildren =>
+      _children[_selectedRootId] ?? const [];
+
+  double get _gridTopPadding =>
+      _topBarHeight + (_selectedRootChildren.isEmpty ? 0 : _subRowHeight);
 
   @override
   Widget build(BuildContext context) {
@@ -201,6 +249,22 @@ class _HomePageState extends ConsumerState<HomePage>
     ),
   );
 
+  static ChipThemeData get _chipTheme => ChipThemeData(
+    backgroundColor: AppColors.elevated.withValues(alpha: 0.6),
+    selectedColor: AppColors.accent,
+    disabledColor: AppColors.surface,
+    side: const BorderSide(color: AppColors.divider),
+    shape: const StadiumBorder(),
+    labelStyle: const TextStyle(color: AppColors.text, fontSize: 14),
+    secondaryLabelStyle: const TextStyle(
+      color: AppColors.onAccent,
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
+    ),
+    checkmarkColor: AppColors.onAccent,
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+  );
+
   /// 悬浮毛玻璃顶栏：网格内容从其下方滚过时透出模糊影像。
   Widget _frostedTopBar(VodSource source) => ClipRect(
     child: BackdropFilter(
@@ -257,27 +321,7 @@ class _HomePageState extends ConsumerState<HomePage>
             SizedBox(
               height: 56,
               child: ChipTheme(
-                data: ChipThemeData(
-                  backgroundColor: AppColors.elevated.withValues(alpha: 0.6),
-                  selectedColor: AppColors.accent,
-                  disabledColor: AppColors.surface,
-                  side: const BorderSide(color: AppColors.divider),
-                  shape: const StadiumBorder(),
-                  labelStyle: const TextStyle(
-                    color: AppColors.text,
-                    fontSize: 14,
-                  ),
-                  secondaryLabelStyle: const TextStyle(
-                    color: AppColors.onAccent,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  checkmarkColor: AppColors.onAccent,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                ),
+                data: _chipTheme,
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                   scrollDirection: Axis.horizontal,
@@ -286,19 +330,19 @@ class _HomePageState extends ConsumerState<HomePage>
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
                         label: const Text('最新'),
-                        selected: selectedCategoryId == null,
+                        selected: _selectedRootId == null,
                         showCheckmark: false,
-                        onSelected: (_) => _select(source, null),
+                        onSelected: (_) => _selectRoot(source, null),
                       ),
                     ),
-                    ...?categories?.map(
+                    ...?_roots?.map(
                       (item) => Padding(
                         padding: const EdgeInsets.only(right: 8),
                         child: ChoiceChip(
                           label: Text(item.name),
-                          selected: selectedCategoryId == item.id,
+                          selected: _selectedRootId == item.id,
                           showCheckmark: false,
-                          onSelected: (_) => _select(source, item.id),
+                          onSelected: (_) => _selectRoot(source, item.id),
                         ),
                       ),
                     ),
@@ -311,6 +355,45 @@ class _HomePageState extends ConsumerState<HomePage>
                 ),
               ),
             ),
+            if (_selectedRootChildren.isNotEmpty)
+              SizedBox(
+                height: _subRowHeight,
+                child: ChipTheme(
+                  data: _chipTheme.copyWith(
+                    backgroundColor: AppColors.elevated.withValues(alpha: 0.45),
+                    labelStyle: const TextStyle(
+                      color: AppColors.secondary,
+                      fontSize: 13,
+                    ),
+                    secondaryLabelStyle: const TextStyle(
+                      color: AppColors.onAccent,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                  ),
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+                    scrollDirection: Axis.horizontal,
+                    children: _selectedRootChildren
+                        .map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: ChoiceChip(
+                              label: Text(item.name),
+                              selected: selectedCategoryId == item.id,
+                              showCheckmark: false,
+                              onSelected: (_) => _selectLeaf(item.id),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+              ),
             Container(
               height: 1,
               color: AppColors.divider.withValues(alpha: 0.6),
@@ -336,7 +419,11 @@ class _HomePageState extends ConsumerState<HomePage>
     if (c.items.isEmpty) return const AppEmptyView(message: '暂时没有内容');
     return NotificationListener<ScrollNotification>(
       onNotification: (event) {
-        if (event is ScrollUpdateNotification) {
+        if (event is ScrollStartNotification) {
+          // 手势起点决定本次是否可触发刷新：开始时头部未展开的，
+          // 这次拉动只用于展开头部，想刷新需松手后再拉一次。
+          _refreshArmed = _headerCollapse.value == 0;
+        } else if (event is ScrollUpdateNotification) {
           // 手势滚动优先：打断进行中的吸附动画，折叠量实时跟随。
           if (_snap.isAnimating) _snap.stop();
           final pixels = event.metrics.pixels;
@@ -345,6 +432,17 @@ class _HomePageState extends ConsumerState<HomePage>
               .toDouble();
           _lastScrollPixels = pixels;
           if (next != _headerCollapse.value) _headerCollapse.value = next;
+        } else if (event is OverscrollNotification) {
+          // 列表已到顶后的下拉（overscroll）优先用于展开头部；
+          // 头部完全展开后 RefreshIndicator 才允许接管触发刷新。
+          if (event.overscroll < 0 &&
+              event.metrics.extentBefore <= 0 &&
+              _headerCollapse.value > 0) {
+            if (_snap.isAnimating) _snap.stop();
+            _headerCollapse.value = (_headerCollapse.value + event.overscroll)
+                .clamp(0.0, _headerHeight)
+                .toDouble();
+          }
         } else if (event is ScrollEndNotification) {
           _snapHeader();
         }
@@ -355,11 +453,17 @@ class _HomePageState extends ConsumerState<HomePage>
         return false;
       },
       child: RefreshIndicator(
+        // 双重门槛：本次手势开始时头部已展开（[_refreshArmed]），
+        // 且当前头部保持完全展开，才允许触发下拉刷新。
+        notificationPredicate: (notification) =>
+            notification.depth == 0 &&
+            _refreshArmed &&
+            _headerCollapse.value == 0,
         onRefresh: c.refresh,
         child: VideoGrid(
           videos: c.items,
           onTap: _open,
-          topPadding: _topBarHeight,
+          topPadding: _gridTopPadding,
           bottomPadding: 96,
           controller: _scrollController,
           footer: c.loading
