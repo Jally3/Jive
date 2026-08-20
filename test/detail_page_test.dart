@@ -172,6 +172,28 @@ void main() {
     expect(find.text('暴风 正片'), findsOneWidget);
   });
 
+  testWidgets('download button label stays on one line on narrow screens', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final container = _container(_FakeDetailRepository());
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+
+    final label = tester.widget<Text>(find.text('下载'));
+    expect(label.maxLines, 1);
+    expect(label.softWrap, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('error view can finish switching to a detected source', (
     tester,
   ) async {

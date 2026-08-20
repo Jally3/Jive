@@ -1536,8 +1536,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               child: Align(
                 alignment: Alignment.topLeft,
                 child: SafeArea(
+                  top: false,
+                  left: false,
+                  right: false,
+                  bottom: false,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1568,9 +1572,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           alignment: Alignment.bottomCenter,
           child: SafeArea(
             top: false,
-            left: landscapeLayout,
-            right: landscapeLayout,
-            bottom: landscapeLayout,
+            left: false,
+            right: false,
+            bottom: false,
             child: AnimatedOpacity(
               opacity: controlsVisible ? 1 : 0,
               duration: const Duration(milliseconds: 200),
@@ -1597,31 +1601,36 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                         builder: (_, _) => Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            PlaybackScrubber(
-                              position:
-                                  previewPosition.value ??
-                                  current.value.position,
-                              duration: current.value.duration,
-                              buffered: continuousBufferedEnd(
-                                current.value.buffered.map(
-                                  (range) =>
-                                      (start: range.start, end: range.end),
-                                ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
                               ),
-                              enabled:
-                                  !failed &&
-                                  current.value.isInitialized &&
-                                  current.value.duration > Duration.zero &&
-                                  !seekCommitting.value,
-                              committing: seekCommitting.value,
-                              showTime: false,
-                              onSeekStart: _seekStart,
-                              onSeekUpdate: _seekUpdate,
-                              onSeekEnd: _seekEnd,
-                              onSeekCancel: _seekCancel,
+                              child: PlaybackScrubber(
+                                position:
+                                    previewPosition.value ??
+                                    current.value.position,
+                                duration: current.value.duration,
+                                buffered: continuousBufferedEnd(
+                                  current.value.buffered.map(
+                                    (range) =>
+                                        (start: range.start, end: range.end),
+                                  ),
+                                ),
+                                enabled:
+                                    !failed &&
+                                    current.value.isInitialized &&
+                                    current.value.duration > Duration.zero &&
+                                    !seekCommitting.value,
+                                committing: seekCommitting.value,
+                                showTime: false,
+                                onSeekStart: _seekStart,
+                                onSeekUpdate: _seekUpdate,
+                                onSeekEnd: _seekEnd,
+                                onSeekCancel: _seekCancel,
+                              ),
                             ),
                             Padding(
-                              padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
                               child: Row(
                                 children: [
                                   IconButton(

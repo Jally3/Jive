@@ -577,14 +577,21 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           ? null
           : _chooseDownloads,
       // 次操作用普通文字色，把琥珀色留给播放主按钮。
-      style: OutlinedButton.styleFrom(foregroundColor: AppColors.text),
+      // 窄屏下按钮仅约 78px，收紧横向留白并让标签缩放，避免“下载”折行。
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppColors.text,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
       icon: downloadResolving
           ? const SizedBox.square(
               dimension: 18,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : const Icon(Icons.download_outlined),
-      label: const Text('下载'),
+      label: const FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text('下载', maxLines: 1, softWrap: false),
+      ),
     ),
   );
 
