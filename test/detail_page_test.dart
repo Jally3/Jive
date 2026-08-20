@@ -234,4 +234,57 @@ void main() {
     await tester.pump();
     expect(chipLabel(0).data, '第1集');
   });
+
+  testWidgets('episodes over 100 are grouped and collapsible', (tester) async {
+    final container = _container(_FakeDetailRepository(activeEpisodes: 250));
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+
+    await tester.ensureVisible(find.text('第 1–100 集'));
+    await tester.pumpAndSettle();
+    expect(find.text('第 101–200 集'), findsOneWidget);
+    expect(find.text('第 201–250 集'), findsOneWidget);
+    // 默认只展开第一组。
+    expect(find.text('第1集'), findsOneWidget);
+    expect(find.text('第101集'), findsNothing);
+
+    // 展开第二组。
+    await tester.ensureVisible(find.text('第 101–200 集'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('第 101–200 集'));
+    await tester.pump();
+    expect(find.text('第101集'), findsOneWidget);
+
+    // 收起第一组。
+    await tester.ensureVisible(find.text('第 1–100 集'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('第 1–100 集'));
+    await tester.pump();
+    expect(find.text('第1集'), findsNothing);
+  });
+
+  testWidgets('reversing grouped episodes keeps selected group expanded', (
+    tester,
+  ) async {
+    final container = _container(_FakeDetailRepository(activeEpisodes: 250));
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+
+    await tester.ensureVisible(find.text('倒序'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('倒序'));
+    await tester.pump();
+
+    // 选中第1集,倒序后位于最后一组并保持展开。
+    expect(find.text('第 151–250 集'), findsOneWidget);
+    expect(find.text('第 1–50 集'), findsOneWidget);
+    expect(find.text('第1集'), findsOneWidget);
+    expect(find.text('第250集'), findsNothing);
+  });
 }

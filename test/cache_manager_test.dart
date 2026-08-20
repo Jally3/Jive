@@ -280,6 +280,28 @@ void main() {
       },
     );
 
+    test('deletePlaybackEntry skips download-origin entries', () async {
+      final manager = CacheManager(store: store, diskSpace: disk);
+      await manager.initialize();
+      final playback = await manager.upsertEntry(entry('play'));
+      final download = await manager.upsertEntry(entry('dl'));
+      await manager.markDownloadOrigin(download.key);
+
+      expect(
+        await manager.deletePlaybackEntry(download.key),
+        DeleteResult.blocked,
+      );
+      expect(
+        await manager.deletePlaybackEntry(playback.key),
+        DeleteResult.deleted,
+      );
+      expect(
+        await manager.deletePlaybackEntry('missing'),
+        DeleteResult.notFound,
+      );
+      expect((await manager.stats()).entryCount, 1);
+    });
+
     test('clearAll skips active entries and reports counts', () async {
       final manager = CacheManager(store: store, diskSpace: disk);
       await manager.initialize();

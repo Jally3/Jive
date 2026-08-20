@@ -20,12 +20,10 @@ String _formatBytes(int bytes) {
 }
 
 String _ttlLabel(CacheTtlOption option) => switch (option) {
-  CacheTtlOption.off => '关闭',
-  CacheTtlOption.days1 => '1 天',
-  CacheTtlOption.days3 => '3 天',
-  CacheTtlOption.days5 => '5 天',
-  CacheTtlOption.days7 => '7 天',
-  CacheTtlOption.days30 => '30 天',
+  CacheTtlOption.onExit => '退出播放时清理',
+  CacheTtlOption.hours1 => '1 小时后',
+  CacheTtlOption.hours5 => '5 小时后',
+  CacheTtlOption.days1 => '1 天后',
 };
 
 Future<void> _selectTtl(
@@ -77,7 +75,7 @@ class MoreSettingsPage extends ConsumerWidget {
                   title: const Text('预加载'),
                   subtitle: Text(
                     enabled
-                        ? '播放时提前缓存后续分片（Wi-Fi $prefetchWindowWifi 片 / 蜂窝 $prefetchWindowCellular 片）'
+                        ? '播放时提前缓存后续内容（Wi-Fi ${prefetchAheadWifi.inMinutes} 分钟 / 蜂窝 ${prefetchAheadCellular.inMinutes} 分钟）'
                         : '已关闭，播放时只缓存当前观看的分片',
                     style: const TextStyle(fontSize: 13),
                   ),
@@ -97,7 +95,7 @@ class MoreSettingsPage extends ConsumerWidget {
             Consumer(
               builder: (context, ref, _) {
                 final option =
-                    ref.watch(cacheTtlProvider).value ?? CacheTtlOption.days3;
+                    ref.watch(cacheTtlProvider).value ?? CacheTtlOption.onExit;
                 return ListTile(
                   leading: const Icon(Icons.auto_delete_outlined),
                   title: const Text('自动清理缓存'),

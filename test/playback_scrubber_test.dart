@@ -1,8 +1,45 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/shared/playback_scrubber.dart';
 
 void main() {
+  group('continuousBufferedEnd', () {
+    test('merges unordered overlapping and adjacent ranges from zero', () {
+      expect(
+        continuousBufferedEnd(const [
+          (start: Duration(seconds: 8), end: Duration(seconds: 15)),
+          (start: Duration.zero, end: Duration(seconds: 5)),
+          (start: Duration(seconds: 4), end: Duration(seconds: 10)),
+          (start: Duration(seconds: 15), end: Duration(seconds: 20)),
+        ]),
+        const Duration(seconds: 20),
+      );
+    });
+
+    test('stops at the first gap and ignores later buffered ranges', () {
+      expect(
+        continuousBufferedEnd(const [
+          (start: Duration(seconds: 25), end: Duration(seconds: 30)),
+          (start: Duration.zero, end: Duration(seconds: 10)),
+          (start: Duration(seconds: 12), end: Duration(seconds: 20)),
+        ]),
+        const Duration(seconds: 10),
+      );
+    });
+
+    test('returns zero without a valid range that starts at zero', () {
+      expect(
+        continuousBufferedEnd(const [
+          (start: Duration(seconds: 2), end: Duration(seconds: 4)),
+          (start: Duration(seconds: 8), end: Duration(seconds: 3)),
+        ]),
+        Duration.zero,
+      );
+    });
+  });
+
   test('formats time and clamps positions', () {
     expect(formatPlaybackTime(const Duration(seconds: 5)), '0:05');
     expect(
@@ -185,5 +222,48 @@ void main() {
       isNull,
     );
     expect(called, isFalse);
+  });
+
+  testWidgets('semantics increase and decrease each commit exactly once', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final starts = <Duration>[];
+    final updates = <Duration>[];
+    final commits = <Duration>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlaybackScrubber(
+          position: const Duration(minutes: 2),
+          duration: const Duration(minutes: 10),
+          buffered: const Duration(minutes: 3),
+          enabled: true,
+          onSeekStart: starts.add,
+          onSeekUpdate: updates.add,
+          onSeekEnd: commits.add,
+          onSeekCancel: () {},
+        ),
+      ),
+    );
+
+    final node = tester.getSemantics(find.byType(PlaybackScrubber));
+    final data = node.getSemanticsData();
+    expect(data.flagsCollection.isSlider, isTrue);
+    expect(data.hasAction(SemanticsAction.increase), isTrue);
+    expect(data.hasAction(SemanticsAction.decrease), isTrue);
+
+    final progress = find.semantics.byLabel('播放进度');
+    tester.semantics.increase(progress);
+    await tester.pump();
+    tester.semantics.decrease(progress);
+    await tester.pump();
+
+    expect(starts, const [
+      Duration(minutes: 2, seconds: 10),
+      Duration(minutes: 1, seconds: 50),
+    ]);
+    expect(commits, starts);
+    expect(updates, isEmpty);
+    semantics.dispose();
   });
 }

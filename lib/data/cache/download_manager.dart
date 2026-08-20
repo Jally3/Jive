@@ -7,19 +7,19 @@ class SegmentPrefetcher {
     required this.fetcher,
     required this.segments,
     this.concurrency = 5,
-    int Function()? windowSize,
+    Duration Function()? windowSize,
     this.maxAttempts = 3,
     this.baseBackoff = const Duration(milliseconds: 500),
     this.maxBackoff = const Duration(seconds: 8),
-  }) : windowSize = windowSize ?? (() => 30);
+  }) : windowSize = windowSize ?? (() => const Duration(minutes: 5));
 
   final ResourceFetcher fetcher;
   final List<HlsSegment> segments;
   final int concurrency;
 
-  /// 当前预取窗口大小（片数），每次调度时读取以支持随网络/设置动态变化；
-  /// 返回 0 表示暂停预取（如蜂窝网络下用户关闭了预加载）。
-  final int Function() windowSize;
+  /// 当前预取目标（领先播放位置的时长），每次调度时读取以支持随网络/设置
+  /// 动态变化；返回 Duration.zero 表示暂停预取（如用户关闭了预加载）。
+  final Duration Function() windowSize;
   final int maxAttempts;
   final Duration baseBackoff;
   final Duration maxBackoff;
@@ -51,8 +51,8 @@ class SegmentPrefetcher {
   }
 
   /// 预取一个窗口。可通过 [fromPosition] 指定起点（起播/恢复）；
-  /// [lookahead] 为测试用的显式窗口覆盖，缺省读 [windowSize]。
-  Future<void> prefetch({int? lookahead, Duration? fromPosition}) async {
+  /// [lookahead] 为测试用的显式窗口覆盖（时长），缺省读 [windowSize]。
+  Future<void> prefetch({Duration? lookahead, Duration? fromPosition}) async {
     if (fromPosition != null) _pendingPosition = fromPosition;
     if (_cancelled || segments.isEmpty || _running) return;
     _running = true;
@@ -67,9 +67,16 @@ class SegmentPrefetcher {
           // 完成一个窗口后没有新指令：退出，等待下次调度。
           break;
         }
-        final window = lookahead ?? windowSize();
-        if (window <= 0) break;
-        final end = min(_nextIndex + window, segments.length);
+        final ahead = lookahead ?? windowSize();
+        if (ahead <= Duration.zero) break;
+        // 按时间开窗：累计分片时长达到目标为止，自动适配不同源站
+        // 0.5s~10s 不等的分片时长。
+        var end = _nextIndex;
+        var accumulated = Duration.zero;
+        while (end < segments.length && accumulated < ahead) {
+          accumulated += _durationOf(segments[end]);
+          end++;
+        }
         while (_nextIndex < end &&
             !_cancelled &&
             !_paused &&
@@ -105,7 +112,9 @@ class SegmentPrefetcher {
           return;
         }
       }
-      await _fetchWithRetry(segment, resourceId, 0);
+      final result = await _fetchWithRetry(segment, resourceId, 0);
+      // 让行（播放路径在拉）或重试耗尽：不标 done，留给下一轮调度补抓。
+      if (result == null || result.skipped) return;
       _done.add(resourceId);
     } catch (_) {
     } finally {
@@ -113,7 +122,7 @@ class SegmentPrefetcher {
     }
   }
 
-  Future<void> _fetchWithRetry(
+  Future<CacheFetchResult?> _fetchWithRetry(
     HlsSegment segment,
     String resourceId,
     int attempt,
@@ -123,17 +132,24 @@ class SegmentPrefetcher {
         origin: segment.uri,
         resourceId: resourceId,
         ext: HlsParser.extFor(segment.uri),
+        background: true,
       );
+      if (result.skipped) return result;
       if (result.statusCode >= 400 && result.statusCode < 500) {
         await result.body.drain<void>();
-        return;
+        return result;
       }
       await result.body.drain<void>();
+      return result;
     } catch (_) {
       if (attempt + 1 < maxAttempts && !_cancelled) {
         await Future<void>.delayed(_backoff(attempt));
-        await _fetchWithRetry(segment, resourceId, attempt + 1);
+        return _fetchWithRetry(segment, resourceId, attempt + 1);
       }
+      return null;
+    } finally {
+      // 覆盖 body 消费全程的后台在途标记在此解除；重试会在 fetch 里重新登记。
+      fetcher.endBackground(resourceId);
     }
   }
 
@@ -146,13 +162,15 @@ class SegmentPrefetcher {
     return Duration(milliseconds: exponential + jitter);
   }
 
+  static Duration _durationOf(HlsSegment segment) => segment.duration == null
+      ? const Duration(seconds: 4)
+      : Duration(milliseconds: (segment.duration! * 1000).round());
+
   int _indexAt(Duration position) {
     if (position <= Duration.zero) return 0;
     var acc = Duration.zero;
     for (var i = 0; i < segments.length; i++) {
-      final duration = segments[i].duration == null
-          ? const Duration(seconds: 4)
-          : Duration(milliseconds: (segments[i].duration! * 1000).round());
+      final duration = _durationOf(segments[i]);
       if (position < acc + duration) return i;
       acc += duration;
     }

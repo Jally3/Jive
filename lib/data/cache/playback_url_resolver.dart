@@ -20,6 +20,12 @@ class PlaybackUrlResolver {
   final int maxHtmlBytes;
   final Map<String, ({PlaybackSource source, DateTime at})> _cache = {};
 
+  /// Removes the cached resolution for one original playback URL.
+  void clearCacheFor(Uri url) => _cache.remove(url.toString());
+
+  /// Removes every cached playback URL resolution held by this resolver.
+  void clearCache() => _cache.clear();
+
   Future<PlaybackSelection> resolveSelection(
     PlaybackSelection selection,
   ) async {
@@ -49,9 +55,18 @@ class PlaybackUrlResolver {
         DateTime.now().difference(cached.at) < const Duration(minutes: 10)) {
       return cached.source;
     }
-    final resolved = await _resolveUnknown(source);
-    _cache[source.url.toString()] = (source: resolved, at: DateTime.now());
-    return resolved;
+    try {
+      final resolved = await _resolveUnknown(source);
+      _cache[source.url.toString()] = (source: resolved, at: DateTime.now());
+      return resolved;
+    } on PlaybackUrlResolutionException {
+      rethrow;
+    } catch (_) {
+      // http can surface transport failures as TimeoutException,
+      // ClientException, SocketException, or platform-specific exceptions.
+      // Keep that implementation detail out of the player state machine.
+      throw const PlaybackUrlResolutionException('播放地址请求失败，请检查网络后重试');
+    }
   }
 
   Future<PlaybackSource> _resolveUnknown(PlaybackSource source) async {

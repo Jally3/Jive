@@ -8,6 +8,14 @@ class HistoryRepository {
   Future<void> _writeQueue = Future<void>.value();
 
   Future<List<WatchRecord>> load() async {
+    // A page can start reloading immediately after the player route pops.
+    // Wait for any save already queued by the player's pop/dispose callbacks
+    // so callers never observe the previous progress snapshot.
+    await _writeQueue;
+    return _readSnapshot();
+  }
+
+  Future<List<WatchRecord>> _readSnapshot() async {
     final raw = (await SharedPreferences.getInstance()).getString(_key);
     if (raw == null || raw.isEmpty) return <WatchRecord>[];
     try {
@@ -29,8 +37,8 @@ class HistoryRepository {
   }
 
   Future<void> save(WatchRecord record) async {
-    _writeQueue = _writeQueue.then((_) async {
-      final records = await load();
+    final operation = _writeQueue.then<void>((_) async {
+      final records = await _readSnapshot();
       records.removeWhere(
         (item) => item.video.globalId == record.video.globalId,
       );
@@ -41,14 +49,22 @@ class HistoryRepository {
         jsonEncode(records.map((item) => item.toJson()).toList()),
       );
     });
-    await _writeQueue;
+    _writeQueue = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    await operation;
   }
 
   Future<void> clear() async {
-    _writeQueue = _writeQueue.then(
+    final operation = _writeQueue.then<void>(
       (_) async => (await SharedPreferences.getInstance()).remove(_key),
     );
-    await _writeQueue;
+    _writeQueue = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    await operation;
   }
 }
 

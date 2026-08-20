@@ -326,7 +326,7 @@ class PlaybackSession {
 
   SegmentPrefetcher? get prefetcher => _prefetcher;
 
-  SegmentPrefetcher? buildPrefetcher({int Function()? windowSize}) {
+  SegmentPrefetcher? buildPrefetcher({Duration Function()? windowSize}) {
     final existing = _prefetcher;
     if (existing != null) return existing;
     final fetcher = route.fetcher;

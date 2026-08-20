@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/data/history_repository.dart';
 import 'package:jive/domain/video.dart';
@@ -58,6 +60,29 @@ void main() {
       ]);
       final records = await repository.load();
       expect(records.map((item) => item.video.id), containsAll(['1', '2']));
+    },
+  );
+
+  test(
+    'load waits for an unawaited player save already in the queue',
+    () async {
+      final repository = HistoryRepository();
+      unawaited(
+        repository.save(
+          WatchRecord(
+            video: const Video(id: '1', title: '影片'),
+            episodeId: '1',
+            episodeName: '正片',
+            positionMs: 5000,
+            durationMs: 10000,
+            updatedAt: DateTime(2026, 8, 20),
+          ),
+        ),
+      );
+
+      final records = await repository.load();
+
+      expect(records.single.positionMs, 5000);
     },
   );
 

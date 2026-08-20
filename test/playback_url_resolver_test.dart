@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -72,5 +75,77 @@ void main() {
       ),
       throwsA(isA<PlaybackUrlResolutionException>()),
     );
+  });
+
+  test('wraps transport failures in PlaybackUrlResolutionException', () async {
+    final failures = <Object>[
+      TimeoutException('timed out'),
+      const SocketException('failed host lookup'),
+      http.ClientException('connection closed'),
+    ];
+
+    for (final failure in failures) {
+      final resolver = PlaybackUrlResolver(
+        client: MockClient((_) async => throw failure),
+      );
+
+      await expectLater(
+        resolver.resolve(
+          PlaybackSource(url: Uri.parse('https://v.example.com/play/token')),
+        ),
+        throwsA(
+          isA<PlaybackUrlResolutionException>().having(
+            (error) => error.message,
+            'message',
+            '播放地址请求失败，请检查网络后重试',
+          ),
+        ),
+      );
+    }
+  });
+
+  test('clears one cached URL or all cached URLs', () async {
+    final pageRequests = <String, int>{};
+    final client = MockClient((request) async {
+      if (request.method == 'HEAD') {
+        return http.Response(
+          '',
+          200,
+          headers: {'content-type': 'application/vnd.apple.mpegurl'},
+        );
+      }
+      final key = request.url.pathSegments.last;
+      final requestCount = (pageRequests[key] ?? 0) + 1;
+      pageRequests[key] = requestCount;
+      return http.Response(
+        '''<html><script>const vid = '/media/$key-$requestCount.m3u8';</script></html>''',
+        200,
+        headers: {'content-type': 'text/html'},
+      );
+    });
+    final resolver = PlaybackUrlResolver(client: client);
+    final sourceA = PlaybackSource(
+      url: Uri.parse('https://v.example.com/play/a'),
+    );
+    final sourceB = PlaybackSource(
+      url: Uri.parse('https://v.example.com/play/b'),
+    );
+
+    expect((await resolver.resolve(sourceA)).url.path, '/media/a-1.m3u8');
+    expect((await resolver.resolve(sourceB)).url.path, '/media/b-1.m3u8');
+    await resolver.resolve(sourceA);
+    await resolver.resolve(sourceB);
+    expect(pageRequests, {'a': 1, 'b': 1});
+
+    resolver.clearCacheFor(sourceA.url);
+    expect((await resolver.resolve(sourceA)).url.path, '/media/a-2.m3u8');
+    await resolver.resolve(sourceB);
+    expect(pageRequests, {'a': 2, 'b': 1});
+
+    resolver.clearCache();
+    await resolver.resolve(sourceA);
+    await resolver.resolve(sourceB);
+    expect(pageRequests, {'a': 3, 'b': 2});
+    client.close();
   });
 }

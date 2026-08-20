@@ -2,6 +2,36 @@ import 'package:flutter/material.dart';
 
 import '../app/theme.dart';
 
+typedef PlaybackBufferedRange = ({Duration start, Duration end});
+
+/// Returns the end of the buffered region that can be played continuously
+/// from the beginning of the video.
+///
+/// Buffered ranges may be unordered, overlapping, or separated by gaps after
+/// a seek. A gap stops the continuous region, so later ranges are ignored.
+Duration continuousBufferedEnd(Iterable<PlaybackBufferedRange> ranges) {
+  final sorted =
+      ranges
+          .where(
+            (range) => range.end > Duration.zero && range.end >= range.start,
+          )
+          .map(
+            (range) => (
+              start: range.start < Duration.zero ? Duration.zero : range.start,
+              end: range.end,
+            ),
+          )
+          .toList()
+        ..sort((a, b) => a.start.compareTo(b.start));
+
+  var continuousEnd = Duration.zero;
+  for (final range in sorted) {
+    if (range.start > continuousEnd) break;
+    if (range.end > continuousEnd) continuousEnd = range.end;
+  }
+  return continuousEnd;
+}
+
 Duration positionFromFraction(double fraction, Duration duration) {
   if (duration <= Duration.zero) return Duration.zero;
   return Duration(
@@ -109,6 +139,27 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
     widget.onSeekEnd(target);
   }
 
+  Duration _semanticTarget(Duration position, {required bool increase}) {
+    final durationMs = widget.duration.inMilliseconds;
+    if (durationMs <= 0) return Duration.zero;
+    final proportionalStep = durationMs ~/ 10;
+    final stepMs = proportionalStep.clamp(1000, 10000);
+    final delta = increase ? stepMs : -stepMs;
+    return Duration(
+      milliseconds: (position.inMilliseconds + delta).clamp(0, durationMs),
+    );
+  }
+
+  void _semanticSeek({required bool increase}) {
+    if (!_interactive) return;
+    final target = _semanticTarget(
+      _dragPosition ?? widget.position,
+      increase: increase,
+    );
+    widget.onSeekStart(target);
+    widget.onSeekEnd(target);
+  }
+
   @override
   Widget build(BuildContext context) {
     final displayPosition = _dragPosition ?? widget.position;
@@ -118,12 +169,23 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
     final played = (displayPosition.inMilliseconds / maximum).clamp(0.0, 1.0);
     final loaded = (widget.buffered.inMilliseconds / maximum).clamp(0.0, 1.0);
     final active = _dragging || widget.committing;
+    final increasedPosition = _semanticTarget(displayPosition, increase: true);
+    final decreasedPosition = _semanticTarget(displayPosition, increase: false);
 
     return Semantics(
+      container: true,
+      excludeSemantics: true,
+      slider: true,
       label: '播放进度',
       value:
           '${formatPlaybackTime(displayPosition)} / ${formatPlaybackTime(widget.duration)}',
+      increasedValue:
+          '${formatPlaybackTime(increasedPosition)} / ${formatPlaybackTime(widget.duration)}',
+      decreasedValue:
+          '${formatPlaybackTime(decreasedPosition)} / ${formatPlaybackTime(widget.duration)}',
       enabled: _interactive,
+      onIncrease: _interactive ? () => _semanticSeek(increase: true) : null,
+      onDecrease: _interactive ? () => _semanticSeek(increase: false) : null,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,

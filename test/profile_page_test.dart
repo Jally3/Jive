@@ -97,15 +97,15 @@ void main() {
     expect(find.text('缓存管理'), findsOneWidget);
     expect(find.textContaining('已用 1.0 KB / 配额 2.0 KB'), findsOneWidget);
     expect(find.text('自动清理缓存'), findsOneWidget);
-    expect(find.text('3 天'), findsOneWidget);
+    expect(find.text('1 小时后'), findsOneWidget);
     await tester.tap(find.text('自动清理缓存'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('关闭'));
+    await tester.tap(find.text('退出播放时清理'));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(Switch));
     await tester.pump();
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('prefetch_mode'), 'off');
-    expect(prefs.getString('cache_ttl_option'), 'off');
+    expect(prefs.getString('cache_ttl_option'), 'onExit');
   });
 }

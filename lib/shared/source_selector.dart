@@ -4,7 +4,7 @@ import '../app/theme.dart';
 import '../data/vod_source_preferences.dart';
 import '../data/vod_source_registry.dart';
 
-class SourceSelectorSheet extends ConsumerWidget {
+class SourceSelectorSheet extends ConsumerStatefulWidget {
   const SourceSelectorSheet({super.key, this.selectedId});
 
   final String? selectedId;
@@ -17,7 +17,40 @@ class SourceSelectorSheet extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SourceSelectorSheet> createState() =>
+      _SourceSelectorSheetState();
+}
+
+class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
+  /// 固定行高，保证初始滚动定位精确。
+  static const double _itemExtent = 72;
+
+  final ScrollController _scrollController = ScrollController();
+  bool _didInitialScroll = false;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToSelected(int selectedIndex) {
+    if (_didInitialScroll || selectedIndex < 0) return;
+    _didInitialScroll = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final target =
+          selectedIndex * _itemExtent -
+          (position.viewportDimension - _itemExtent) / 2;
+      _scrollController.jumpTo(
+        target.clamp(0.0, position.maxScrollExtent).toDouble(),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final registry = ref
         .watch(vodSourceRegistryProvider)
         .maybeWhen(data: (r) => r, orElse: () => null);
@@ -29,10 +62,11 @@ class SourceSelectorSheet extends ConsumerWidget {
     }
     final sources = registry.enabledSources;
     final currentId =
-        selectedId ??
+        widget.selectedId ??
         ref
             .watch(selectedVodSourceProvider)
             .maybeWhen(data: (s) => s.id, orElse: () => null);
+    _scrollToSelected(sources.indexWhere((s) => s.id == currentId));
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -61,7 +95,9 @@ class SourceSelectorSheet extends ConsumerWidget {
             const Divider(height: 1),
             Flexible(
               child: ListView.builder(
+                controller: _scrollController,
                 shrinkWrap: true,
+                itemExtent: _itemExtent,
                 itemCount: sources.length,
                 itemBuilder: (_, index) {
                   final source = sources[index];

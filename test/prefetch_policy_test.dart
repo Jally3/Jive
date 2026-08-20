@@ -7,42 +7,45 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('prefetchWindowFor', () {
-    test('wifi yields the full window', () {
+  group('prefetchAheadFor', () {
+    test('wifi yields the full ahead target', () {
       expect(
-        prefetchWindowFor(PrefetchMode.auto, [ConnectivityResult.wifi]),
-        prefetchWindowWifi,
+        prefetchAheadFor(PrefetchMode.auto, [ConnectivityResult.wifi]),
+        prefetchAheadWifi,
       );
     });
 
-    test('ethernet yields the full window', () {
+    test('ethernet yields the full ahead target', () {
       expect(
-        prefetchWindowFor(PrefetchMode.auto, [ConnectivityResult.ethernet]),
-        prefetchWindowWifi,
+        prefetchAheadFor(PrefetchMode.auto, [ConnectivityResult.ethernet]),
+        prefetchAheadWifi,
       );
     });
 
-    test('cellular yields the reduced window', () {
+    test('cellular yields the reduced ahead target', () {
       expect(
-        prefetchWindowFor(PrefetchMode.auto, [ConnectivityResult.mobile]),
-        prefetchWindowCellular,
+        prefetchAheadFor(PrefetchMode.auto, [ConnectivityResult.mobile]),
+        prefetchAheadCellular,
       );
     });
 
     test('unknown connectivity disables prefetching', () {
-      expect(prefetchWindowFor(PrefetchMode.auto, null), 0);
-      expect(prefetchWindowFor(PrefetchMode.auto, const []), 0);
+      expect(prefetchAheadFor(PrefetchMode.auto, null), Duration.zero);
+      expect(prefetchAheadFor(PrefetchMode.auto, const []), Duration.zero);
     });
 
     test('no network disables prefetching', () {
       expect(
-        prefetchWindowFor(PrefetchMode.auto, [ConnectivityResult.none]),
-        0,
+        prefetchAheadFor(PrefetchMode.auto, [ConnectivityResult.none]),
+        Duration.zero,
       );
     });
 
     test('off mode disables prefetching even on wifi', () {
-      expect(prefetchWindowFor(PrefetchMode.off, [ConnectivityResult.wifi]), 0);
+      expect(
+        prefetchAheadFor(PrefetchMode.off, [ConnectivityResult.wifi]),
+        Duration.zero,
+      );
     });
   });
 

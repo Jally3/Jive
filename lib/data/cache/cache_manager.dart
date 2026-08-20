@@ -709,6 +709,17 @@ class CacheManager {
         return _removeEntry(entry);
       });
 
+  /// 退出播放器时清理播放产生的缓存条目；用户主动下载的条目
+  /// （downloadOrigin）不删，仍按显式下载的语义保留。
+  Future<DeleteResult> deletePlaybackEntry(String entryKey) =>
+      _lock.synchronize(() async {
+        final entry = _entries[entryKey];
+        if (entry == null) return DeleteResult.notFound;
+        if (entry.downloadOrigin) return DeleteResult.blocked;
+        if ((_refs[entryKey] ?? 0) > 0) return DeleteResult.blocked;
+        return _removeEntry(entry);
+      });
+
   Future<ClearAllResult> clearAll() => _lock.synchronize(() async {
     final result = ClearAllResult();
     for (final entry in _entries.values.toList()) {

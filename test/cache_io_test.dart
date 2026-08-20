@@ -456,6 +456,119 @@ void main() {
       expect((await manager.stats()).entryCount, 0);
     },
   );
+
+  test('background fetch skips when the player fetch is in flight', () async {
+    final gate = Completer<void>();
+    var originHits = 0;
+    final client = MockClient((request) async {
+      originHits++;
+      await gate.future;
+      return http.Response('Gsegment', 200);
+    });
+    final created = await manager.upsertEntry(entry('1'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+    );
+    const id =
+        'sha256:${'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}';
+
+    // 播放路径先在途（singleFlight 持有）。
+    final playerFetch = fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/a.bin'),
+      resourceId: id,
+      ext: 'bin',
+    );
+    await _until(() => originHits == 1);
+
+    // 预取让行：不 join、不重复回源。
+    final bg = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/a.bin'),
+      resourceId: id,
+      ext: 'bin',
+      background: true,
+    );
+    expect(bg.skipped, isTrue);
+    expect(originHits, 1);
+
+    gate.complete();
+    final playerResult = await playerFetch;
+    expect(await _collect(playerResult.body), 'Gsegment');
+    final record = await manager.resourceRecord(created.key, id);
+    expect(record?.complete, isTrue);
+  });
+
+  test('player fetch bypasses an in-flight background prefetch', () async {
+    final gate = Completer<void>();
+    var originHits = 0;
+    final client = MockClient((request) async {
+      originHits++;
+      await gate.future;
+      return http.Response('Gsegment', 200);
+    });
+    final created = await manager.upsertEntry(entry('1'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+    );
+    const id =
+        'sha256:${'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}';
+
+    // 预取先在途。
+    final bgFetch = fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/b.bin'),
+      resourceId: id,
+      ext: 'bin',
+      background: true,
+    );
+    await _until(() => originHits == 1);
+
+    // 播放器不 join 预取的单订阅流，独立回源拿到独占 body。
+    final playerFetch = fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/b.bin'),
+      resourceId: id,
+      ext: 'bin',
+    );
+    await _until(() => originHits == 2);
+    gate.complete();
+    final playerResult = await playerFetch;
+    expect(playerResult.statusCode, 200);
+    expect(await _collect(playerResult.body), 'Gsegment');
+    final bgResult = await bgFetch;
+    await bgResult.body.drain<void>();
+    fetcher.endBackground(id);
+
+    expect(originHits, 2);
+    expect(fetcher.backgroundFetches, isEmpty);
+    final record = await manager.resourceRecord(created.key, id);
+    expect(record?.complete, isTrue);
+
+    // 双写收敛后第三次请求命中本地缓存。
+    final cached = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/b.bin'),
+      resourceId: id,
+      ext: 'bin',
+    );
+    expect(cached.fromCache, isTrue);
+    expect(originHits, 2);
+  });
+}
+
+Future<void> _until(bool Function() condition) async {
+  for (var i = 0; i < 100 && !condition(); i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  expect(condition(), isTrue);
 }
 
 Future<String> _collect(Stream<List<int>> stream) async {

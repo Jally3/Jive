@@ -11,6 +11,8 @@ class VideoGrid extends StatelessWidget {
     this.bottomPadding = 24,
     this.controller,
     this.footer,
+    this.headerSlivers = const [],
+    this.physics,
   });
   final List<Video> videos;
   final ValueChanged<Video> onTap;
@@ -18,6 +20,8 @@ class VideoGrid extends StatelessWidget {
   final double bottomPadding;
   final ScrollController? controller;
   final Widget? footer;
+  final List<Widget> headerSlivers;
+  final ScrollPhysics? physics;
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
@@ -28,7 +32,9 @@ class VideoGrid extends StatelessWidget {
     final cardWidth = (width - 32 - 12 * (crossAxisCount - 1)) / crossAxisCount;
     return CustomScrollView(
       controller: controller,
+      physics: physics,
       slivers: [
+        ...headerSlivers,
         SliverPadding(
           padding: EdgeInsets.fromLTRB(
             16,

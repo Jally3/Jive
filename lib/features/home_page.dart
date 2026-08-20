@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/theme.dart';
@@ -18,17 +19,7 @@ class HomePage extends ConsumerStatefulWidget {
   ConsumerState<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends ConsumerState<HomePage>
-    with SingleTickerProviderStateMixin {
-  /// 顶部毛玻璃浮层高度：header 104 + 顶级分类栏 56 + 分隔线 1。
-  /// 选中带子分类的顶级分类时，额外叠加子分类栏 [_subRowHeight]，
-  /// 与网格 topPadding 保持一致。
-  static const _topBarHeight = 161.0;
-  static const _subRowHeight = 48.0;
-
-  /// 头部（标题区）高度：向下滚动时向上折叠隐藏，分类栏保持吸顶。
-  static const _headerHeight = 104.0;
-
+class _HomePageState extends ConsumerState<HomePage> {
   PagedVideoController? controller;
 
   /// 顶级分类（tab 栏）与按父 id 分组的子分类（横滑栏）。
@@ -41,65 +32,47 @@ class _HomePageState extends ConsumerState<HomePage>
   String? categoryError;
   String? _activeSourceId;
 
-  /// 头部折叠量（0 ~ [_headerHeight]），仅驱动顶栏浮层重建，避免整页 setState。
-  final _headerCollapse = ValueNotifier<double>(0);
-  double _lastScrollPixels = 0;
-
-  /// 本次滚动手势是否允许触发下拉刷新：手势开始时头部已完全展开才置真。
-  /// 防止"下拉展开头部"的手势因速度过快，剩余 overscroll 直接冲过刷新阈值。
-  bool _refreshArmed = true;
-
   /// 网格滚动控制器与"返回顶部"悬浮按钮的可见性（滚动超过一屏左右时出现）。
-  final _scrollController = ScrollController();
+  /// 不保存 PageStorage offset，切换分类或来源后始终从新列表顶部开始。
+  final _scrollController = ScrollController(keepScrollOffset: false);
   final _showBackToTop = ValueNotifier<bool>(false);
-
-  /// 滚动停止后的吸附动画：折叠量只跟随滚动手势，松手后吸附到全展/全收，
-  /// 避免标题停留在被裁切一半的中间态。控制器整个生命周期复用一个，
-  /// 每次吸附仅替换 Tween 并重放（SingleTickerProvider 只允许一个 Ticker）。
-  late final AnimationController _snap;
-  Animation<double>? _snapAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _snap =
-        AnimationController(
-          vsync: this,
-          duration: const Duration(milliseconds: 180),
-        )..addListener(() {
-          final anim = _snapAnimation;
-          if (anim != null) _headerCollapse.value = anim.value;
-        });
-  }
 
   @override
   void dispose() {
     controller?.removeListener(_changed);
     controller?.dispose();
-    _headerCollapse.dispose();
-    _snap.dispose();
     _scrollController.dispose();
     _showBackToTop.dispose();
     super.dispose();
-  }
-
-  void _snapHeader() {
-    final from = _headerCollapse.value;
-    final target = from * 2 < _headerHeight ? 0.0 : _headerHeight;
-    if (from == target) return;
-    _snapAnimation = Tween(
-      begin: from,
-      end: target,
-    ).animate(CurvedAnimation(parent: _snap, curve: Curves.easeOutCubic));
-    _snap.forward(from: 0);
   }
 
   void _changed() {
     if (mounted) setState(() {});
   }
 
+  void _resetScrollPosition() {
+    _showBackToTop.value = false;
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  void _resetScrollPositionAfterBuild() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _resetScrollPosition();
+    });
+  }
+
+  void _scrollToTop() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   void _ensureController(VodSource source) {
     if (controller != null && _activeSourceId == source.id) return;
+    _resetScrollPositionAfterBuild();
     controller?.removeListener(_changed);
     controller?.dispose();
     controller = PagedVideoController(ref.read(videoRepositoryProvider), source)
@@ -157,6 +130,7 @@ class _HomePageState extends ConsumerState<HomePage>
     final queryId = rootId == null
         ? null
         : (children.isEmpty ? rootId : children.first.id);
+    _resetScrollPosition();
     setState(() {
       _selectedRootId = rootId;
       selectedCategoryId = queryId;
@@ -165,6 +139,7 @@ class _HomePageState extends ConsumerState<HomePage>
   }
 
   Future<void> _selectLeaf(int categoryId) async {
+    _resetScrollPosition();
     setState(() => selectedCategoryId = categoryId);
     await controller?.loadInitial(category: categoryId);
   }
@@ -175,9 +150,6 @@ class _HomePageState extends ConsumerState<HomePage>
 
   List<VideoCategory> get _selectedRootChildren =>
       _children[_selectedRootId] ?? const [];
-
-  double get _gridTopPadding =>
-      _topBarHeight + (_selectedRootChildren.isEmpty ? 0 : _subRowHeight);
 
   @override
   Widget build(BuildContext context) {
@@ -202,8 +174,7 @@ class _HomePageState extends ConsumerState<HomePage>
 
   Widget _buildContent(VodSource source) => Stack(
     children: [
-      Positioned.fill(child: _body()),
-      Positioned(top: 0, left: 0, right: 0, child: _frostedTopBar(source)),
+      Positioned.fill(child: _body(source)),
       Positioned(right: 16, bottom: 88, child: _backToTopButton()),
     ],
   );
@@ -227,11 +198,7 @@ class _HomePageState extends ConsumerState<HomePage>
               ),
               child: InkWell(
                 customBorder: const CircleBorder(),
-                onTap: () => _scrollController.animateTo(
-                  0,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOutCubic,
-                ),
+                onTap: _scrollToTop,
                 child: const SizedBox(
                   width: 44,
                   height: 44,
@@ -265,64 +232,84 @@ class _HomePageState extends ConsumerState<HomePage>
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
   );
 
-  /// 悬浮毛玻璃顶栏：网格内容从其下方滚过时透出模糊影像。
-  Widget _frostedTopBar(VodSource source) => ClipRect(
+  double _mainCategoryRowHeight(BuildContext context) =>
+      math.max(56, MediaQuery.textScalerOf(context).scale(14) + 28);
+
+  double _subCategoryRowHeight(BuildContext context) =>
+      math.max(48, MediaQuery.textScalerOf(context).scale(13) + 24);
+
+  List<Widget> _homeHeaderSlivers(VodSource source) {
+    final mainRowHeight = _mainCategoryRowHeight(context);
+    final subRowHeight = _subCategoryRowHeight(context);
+    final hasSubcategories = _selectedRootChildren.isNotEmpty;
+    final pinnedHeight =
+        mainRowHeight + (hasSubcategories ? subRowHeight : 0) + 1;
+    return [
+      SliverToBoxAdapter(child: _introHeader()),
+      SliverPersistentHeader(
+        pinned: true,
+        delegate: _PinnedHeaderDelegate(
+          height: pinnedHeight,
+          child: _categoryHeader(
+            source,
+            mainRowHeight: mainRowHeight,
+            subRowHeight: subRowHeight,
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _introHeader() => Container(
+    constraints: const BoxConstraints(minHeight: 104),
+    color: AppColors.background.withValues(alpha: 0.55),
+    padding: const EdgeInsets.fromLTRB(16, 24, 8, 12),
+    child: Row(
+      children: [
+        const Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Jive',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+              ),
+              SizedBox(height: 4),
+              Text(
+                '今晚，看点好内容',
+                style: TextStyle(color: AppColors.secondary, fontSize: 15),
+              ),
+            ],
+          ),
+        ),
+        SourceIndicatorButton(),
+      ],
+    ),
+  );
+
+  /// 分类栏由 Sliver 系统与网格共享同一滚动位置，不再单独动画或填充顶部间距。
+  Widget _categoryHeader(
+    VodSource source, {
+    required double mainRowHeight,
+    required double subRowHeight,
+  }) => ClipRect(
+    key: const ValueKey('home-category-header'),
     child: BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-      child: Container(
-        color: AppColors.background.withValues(alpha: 0.55),
+      child: ColoredBox(
+        color: AppColors.background.withValues(alpha: 0.72),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ValueListenableBuilder<double>(
-              valueListenable: _headerCollapse,
-              builder: (context, collapse, child) => ClipRect(
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  heightFactor: 1 - collapse / _headerHeight,
-                  child: child,
-                ),
-              ),
-              child: SizedBox(
-                height: _headerHeight,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 24, 8, 12),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Jive',
-                              style: TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              '今晚，看点好内容',
-                              style: TextStyle(
-                                color: AppColors.secondary,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SourceIndicatorButton(),
-                    ],
-                  ),
-                ),
-              ),
-            ),
             SizedBox(
-              height: 56,
+              height: mainRowHeight,
               child: ChipTheme(
                 data: _chipTheme,
                 child: ListView(
+                  key: PageStorageKey<String>(
+                    'home-root-category-tabs-${source.id}',
+                  ),
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                   scrollDirection: Axis.horizontal,
                   children: [
@@ -357,7 +344,7 @@ class _HomePageState extends ConsumerState<HomePage>
             ),
             if (_selectedRootChildren.isNotEmpty)
               SizedBox(
-                height: _subRowHeight,
+                height: subRowHeight,
                 child: ChipTheme(
                   data: _chipTheme.copyWith(
                     backgroundColor: AppColors.elevated.withValues(alpha: 0.45),
@@ -376,6 +363,10 @@ class _HomePageState extends ConsumerState<HomePage>
                     ),
                   ),
                   child: ListView(
+                    key: PageStorageKey<String>(
+                      'home-leaf-category-tabs-${source.id}-'
+                      '${_selectedRootId ?? 'none'}',
+                    ),
                     padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
                     scrollDirection: Axis.horizontal,
                     children: _selectedRootChildren
@@ -404,47 +395,33 @@ class _HomePageState extends ConsumerState<HomePage>
     ),
   );
 
-  Widget _body() {
+  Widget _body(VodSource source) {
     final c = controller;
-    if (c == null) return const AppLoadingView();
-    if (c.items.isEmpty && c.loading) return const AppLoadingView();
+    if (c == null) {
+      return _stateScrollView(source, const AppLoadingView());
+    }
+    if (c.items.isEmpty && c.loading) {
+      return _stateScrollView(source, const AppLoadingView());
+    }
     if (c.items.isEmpty && c.error != null) {
-      return AppErrorView(
-        message: c.error!,
-        onRetry: c.refresh,
-        secondaryLabel: '切换来源',
-        secondaryAction: () => SourceSelectorSheet.show(context),
+      return _stateScrollView(
+        source,
+        AppErrorView(
+          message: c.error!,
+          onRetry: c.refresh,
+          secondaryLabel: '切换来源',
+          secondaryAction: () => SourceSelectorSheet.show(context),
+        ),
       );
     }
-    if (c.items.isEmpty) return const AppEmptyView(message: '暂时没有内容');
+    if (c.items.isEmpty) {
+      return _stateScrollView(source, const AppEmptyView(message: '暂时没有内容'));
+    }
     return NotificationListener<ScrollNotification>(
       onNotification: (event) {
-        if (event is ScrollStartNotification) {
-          // 手势起点决定本次是否可触发刷新：开始时头部未展开的，
-          // 这次拉动只用于展开头部，想刷新需松手后再拉一次。
-          _refreshArmed = _headerCollapse.value == 0;
-        } else if (event is ScrollUpdateNotification) {
-          // 手势滚动优先：打断进行中的吸附动画，折叠量实时跟随。
-          if (_snap.isAnimating) _snap.stop();
-          final pixels = event.metrics.pixels;
-          final next = (_headerCollapse.value + pixels - _lastScrollPixels)
-              .clamp(0.0, _headerHeight)
-              .toDouble();
-          _lastScrollPixels = pixels;
-          if (next != _headerCollapse.value) _headerCollapse.value = next;
-        } else if (event is OverscrollNotification) {
-          // 列表已到顶后的下拉（overscroll）优先用于展开头部；
-          // 头部完全展开后 RefreshIndicator 才允许接管触发刷新。
-          if (event.overscroll < 0 &&
-              event.metrics.extentBefore <= 0 &&
-              _headerCollapse.value > 0) {
-            if (_snap.isAnimating) _snap.stop();
-            _headerCollapse.value = (_headerCollapse.value + event.overscroll)
-                .clamp(0.0, _headerHeight)
-                .toDouble();
-          }
-        } else if (event is ScrollEndNotification) {
-          _snapHeader();
+        // 分类栏内的横向 ListView 也会上报滚动通知，只处理主网格。
+        if (event.depth != 0 || event.metrics.axis != Axis.vertical) {
+          return false;
         }
         // 滚动超过约一屏后显示"返回顶部"悬浮按钮。
         final showTop = event.metrics.pixels > 600;
@@ -453,19 +430,15 @@ class _HomePageState extends ConsumerState<HomePage>
         return false;
       },
       child: RefreshIndicator(
-        // 双重门槛：本次手势开始时头部已展开（[_refreshArmed]），
-        // 且当前头部保持完全展开，才允许触发下拉刷新。
-        notificationPredicate: (notification) =>
-            notification.depth == 0 &&
-            _refreshArmed &&
-            _headerCollapse.value == 0,
         onRefresh: c.refresh,
         child: VideoGrid(
           videos: c.items,
           onTap: _open,
-          topPadding: _gridTopPadding,
+          topPadding: 0,
           bottomPadding: 96,
           controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          headerSlivers: _homeHeaderSlivers(source),
           footer: c.loading
               ? const Padding(
                   padding: EdgeInsets.symmetric(vertical: 20),
@@ -491,4 +464,37 @@ class _HomePageState extends ConsumerState<HomePage>
       ),
     );
   }
+
+  Widget _stateScrollView(VodSource source, Widget state) => CustomScrollView(
+    controller: _scrollController,
+    physics: const AlwaysScrollableScrollPhysics(),
+    slivers: [
+      ..._homeHeaderSlivers(source),
+      SliverFillRemaining(hasScrollBody: false, child: state),
+    ],
+  );
+}
+
+class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _PinnedHeaderDelegate({required this.height, required this.child});
+
+  final double height;
+  final Widget child;
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) => SizedBox.expand(child: child);
+
+  @override
+  bool shouldRebuild(_PinnedHeaderDelegate oldDelegate) =>
+      height != oldDelegate.height || child != oldDelegate.child;
 }

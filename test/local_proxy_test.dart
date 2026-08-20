@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -27,6 +30,42 @@ void main() {
 
   tearDown(() async {
     await proxy.close();
+  });
+
+  test('close during bind closes the server once bind completes', () async {
+    await proxy.close();
+    final bindEntered = Completer<void>();
+    final releaseBind = Completer<void>();
+    var latePort = 0;
+    proxy = LocalProxyServer(
+      bindServer: () async {
+        bindEntered.complete();
+        await releaseBind.future;
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        latePort = server.port;
+        return server;
+      },
+    );
+
+    final start = proxy.start();
+    await bindEntered.future;
+    final close = proxy.close();
+    releaseBind.complete();
+    await Future.wait([start, close]);
+
+    expect(latePort, isPositive);
+    expect(proxy.isRunning, isFalse);
+    expect(proxy.port, 0);
+
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
+    addTearDown(() => client.close(force: true));
+    await expectLater(() async {
+      final request = await client.getUrl(
+        Uri.parse('http://127.0.0.1:$latePort/'),
+      );
+      final response = await request.close();
+      await response.drain<void>();
+    }, throwsA(anything));
   });
 
   test('serves the proxy manifest with hls content type', () async {

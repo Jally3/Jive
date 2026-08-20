@@ -30,6 +30,8 @@ class SingleFlight<T> {
     return future;
   }
 
+  bool contains(String key) => _inFlight.containsKey(key);
+
   bool get isIdle => _inFlight.isEmpty;
 
   void clear() => _inFlight.clear();

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -25,6 +27,9 @@ class VideoDetailPage extends ConsumerStatefulWidget {
 }
 
 class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
+  /// 剧集超过该数量时按每组 100 集折叠展示。
+  static const int _epsGroupSize = 100;
+
   Video? detail;
   String? error;
   bool loading = true, resolving = false, expanded = false;
@@ -32,6 +37,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   int selected = 0;
   DetailSourceController? sc;
   bool downloadResolving = false;
+  final Set<int> _expandedEpsGroups = {0};
 
   @override
   void dispose() {
@@ -976,7 +982,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             ),
             if (v.episodes.length > 1)
               TextButton.icon(
-                onPressed: () => setState(() => reversed = !reversed),
+                onPressed: () => _toggleReversed(v),
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.secondary,
                 ),
@@ -991,25 +997,113 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             padding: EdgeInsets.symmetric(vertical: 32),
             child: AppEmptyView(message: '暂时没有可用剧集'),
           )
+        else if (v.episodes.length <= _epsGroupSize)
+          _epsWrap(v, 0, v.episodes.length)
         else
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: List.generate(v.episodes.length, (i) {
-              final idx = reversed ? v.episodes.length - 1 - i : i;
-              final episode = v.episodes[idx];
-              return ChoiceChip(
-                label: Text(episode.name),
-                selected: selected == idx,
-                showCheckmark: false,
-                onSelected: (_) {
-                  setState(() => selected = idx);
-                  _play(episodeIndex: idx);
-                },
-              );
-            }),
-          ),
+          _epsGroups(v),
       ],
+    );
+  }
+
+  void _toggleReversed(Video v) {
+    setState(() {
+      reversed = !reversed;
+      final total = v.episodes.length;
+      if (total > _epsGroupSize) {
+        // 倒序后保持选中集所在分组展开。
+        final displayIdx = reversed
+            ? total - 1 - selected.clamp(0, total - 1)
+            : selected.clamp(0, total - 1);
+        _expandedEpsGroups
+          ..clear()
+          ..add(displayIdx ~/ _epsGroupSize);
+      }
+    });
+  }
+
+  /// 超过 100 集时按 100 集一组折叠展示，默认只展开选中集所在分组。
+  Widget _epsGroups(Video v) {
+    final total = v.episodes.length;
+    final groupCount = (total + _epsGroupSize - 1) ~/ _epsGroupSize;
+    return Column(
+      children: [
+        for (var g = 0; g < groupCount; g++) ...[
+          _epsGroupHeader(total, g),
+          if (_expandedEpsGroups.contains(g))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _epsWrap(
+                v,
+                g * _epsGroupSize,
+                math.min((g + 1) * _epsGroupSize, total),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _epsGroupHeader(int total, int group) {
+    final start = group * _epsGroupSize;
+    final end = math.min(start + _epsGroupSize, total);
+    // 显示顺序对应的实际集号范围（倒序时组内集号从大到小）。
+    final first = reversed ? total - start : start + 1;
+    final last = reversed ? total - end + 1 : end;
+    final lo = math.min(first, last);
+    final hi = math.max(first, last);
+    final isExpanded = _expandedEpsGroups.contains(group);
+    return InkWell(
+      onTap: () => setState(() {
+        if (isExpanded) {
+          _expandedEpsGroups.remove(group);
+        } else {
+          _expandedEpsGroups.add(group);
+        }
+      }),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '第 $lo–$hi 集',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.secondary,
+                ),
+              ),
+            ),
+            Icon(
+              isExpanded ? Icons.expand_less : Icons.expand_more,
+              size: 20,
+              color: AppColors.secondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 渲染显示顺序区间 [start, end) 内的剧集按钮。
+  Widget _epsWrap(Video v, int start, int end) {
+    final total = v.episodes.length;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: List.generate(end - start, (i) {
+        final idx = reversed ? total - 1 - (start + i) : start + i;
+        final episode = v.episodes[idx];
+        return ChoiceChip(
+          label: Text(episode.name),
+          selected: selected == idx,
+          showCheckmark: false,
+          onSelected: (_) {
+            setState(() => selected = idx);
+            _play(episodeIndex: idx);
+          },
+        );
+      }),
     );
   }
 }

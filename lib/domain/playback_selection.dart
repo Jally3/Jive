@@ -78,6 +78,80 @@ PlaybackSelection? selectionFor(Video video, Episode episode) {
   );
 }
 
+/// Rebuilds a playback selection from freshly resolved video data.
+///
+/// When [previousSelection] is present, matching is strictly limited to its
+/// playback line. A missing line or episode returns `null` instead of silently
+/// crossing to another line. When there is no previous selection, the fresh
+/// video's preferred line is used for the legacy episode-only flow.
+PlaybackSelection? refreshSelectionFor({
+  required Video freshVideo,
+  required Episode priorEpisode,
+  PlaybackSelection? previousSelection,
+}) {
+  final PlaybackLine? line;
+  if (previousSelection != null) {
+    line = _lineByIdentity(
+      freshVideo.playbackLines,
+      previousSelection.playbackLineIdentity,
+    );
+    if (line == null) return null;
+  } else {
+    line = preferredPlaybackLine(freshVideo);
+  }
+  if (line == null || line.identity.isEmpty) return null;
+
+  final episodeIdentity =
+      previousSelection?.episodeIdentity ?? priorEpisode.identity;
+  final episodeForFallback = previousSelection?.episode ?? priorEpisode;
+  final episode = _episodeInLine(
+    line,
+    identity: episodeIdentity,
+    fallback: episodeForFallback,
+  );
+  if (episode == null || episode.identity.isEmpty) return null;
+
+  return PlaybackSelection(
+    sourceId: freshVideo.sourceId,
+    sourceVideoId: freshVideo.sourceVideoId,
+    title: freshVideo.title,
+    playbackLineIdentity: line.identity,
+    episodeIdentity: episode.identity,
+    episode: episode,
+    playbackSource: PlaybackSource(
+      url: Uri.tryParse(episode.url) ?? Uri(),
+      format: inferPlaybackFormat(episode.url),
+      headers: previousSelection?.playbackSource.headers ?? const {},
+    ),
+  );
+}
+
+PlaybackLine? _lineByIdentity(List<PlaybackLine> lines, String identity) {
+  if (identity.isEmpty) return null;
+  for (final line in lines) {
+    if (line.identity == identity) return line;
+  }
+  return null;
+}
+
+Episode? _episodeInLine(
+  PlaybackLine line, {
+  required String identity,
+  required Episode fallback,
+}) {
+  if (identity.isNotEmpty) {
+    for (final episode in line.episodes) {
+      if (episode.identity == identity) return episode;
+    }
+  }
+  for (final episode in line.episodes) {
+    final sameName = fallback.name.isNotEmpty && episode.name == fallback.name;
+    final sameId = fallback.id.isNotEmpty && episode.id == fallback.id;
+    if (sameName || sameId) return episode;
+  }
+  return null;
+}
+
 PlaybackLine? preferredPlaybackLine(Video video) {
   PlaybackLine? best;
   var bestScore = -1;

@@ -7,11 +7,12 @@ enum PrefetchMode { auto, off }
 
 const _prefetchModeKey = 'prefetch_mode';
 
-/// Wi-Fi 下的预取窗口（片数）。
-const int prefetchWindowWifi = 30;
+/// Wi-Fi 下的预取目标：领先播放位置的时长。按时间而非片数开窗，
+/// 自动适配不同源站 0.5s~10s 不等的分片时长。
+const Duration prefetchAheadWifi = Duration(seconds: 300);
 
-/// 蜂窝网络下的预取窗口（片数）。
-const int prefetchWindowCellular = 5;
+/// 蜂窝网络下的预取目标：领先播放位置的时长。
+const Duration prefetchAheadCellular = Duration(seconds: 120);
 
 /// 当前网络类型；抽出为 provider 便于测试覆盖。
 final connectivityResultsProvider = StreamProvider<List<ConnectivityResult>>(
@@ -38,25 +39,28 @@ class PrefetchModeNotifier extends AsyncNotifier<PrefetchMode> {
   }
 }
 
-/// 计算当前预取窗口：模式关闭、蜂窝网络或网络类型未知时返回 0（不预取）。
-int prefetchWindowFor(PrefetchMode mode, List<ConnectivityResult>? results) {
-  if (mode != PrefetchMode.auto) return 0;
-  if (results == null || results.isEmpty) return 0;
+/// 计算当前预取目标时长：模式关闭或网络类型未知时返回 0（不预取）。
+Duration prefetchAheadFor(
+  PrefetchMode mode,
+  List<ConnectivityResult>? results,
+) {
+  if (mode != PrefetchMode.auto) return Duration.zero;
+  if (results == null || results.isEmpty) return Duration.zero;
   if (results.contains(ConnectivityResult.wifi) ||
       results.contains(ConnectivityResult.ethernet)) {
-    return prefetchWindowWifi;
+    return prefetchAheadWifi;
   }
   if (results.contains(ConnectivityResult.mobile)) {
-    return prefetchWindowCellular;
+    return prefetchAheadCellular;
   }
-  return 0;
+  return Duration.zero;
 }
 
-/// 当前预取窗口大小（片数）。0 表示不预取：模式关闭、蜂窝网络、
-/// 或网络类型未知（保守起见不偷跑流量）。
-final prefetchWindowProvider = Provider<int>((ref) {
+/// 当前预取目标（领先播放位置的时长）。Duration.zero 表示不预取：
+/// 模式关闭、无网络，或网络类型未知（保守起见不偷跑流量）。
+final prefetchAheadProvider = Provider<Duration>((ref) {
   final mode = ref.watch(prefetchModeProvider).value;
-  if (mode == null) return 0;
+  if (mode == null) return Duration.zero;
   final results = ref.watch(connectivityResultsProvider).value;
-  return prefetchWindowFor(mode, results);
+  return prefetchAheadFor(mode, results);
 });

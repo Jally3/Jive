@@ -180,6 +180,234 @@ void main() {
     expect(selection!.episodeIdentity, 'ep:1');
     expect(selection.episode.url, 'https://cdn.example.com/old/1.m3u8');
   });
+
+  test('refreshSelectionFor keeps the current line and uses its fresh URL', () {
+    const previousEpisode = Episode(
+      id: '1',
+      name: '第1集',
+      url: 'https://old.example.com/b/1.m3u8',
+      identity: 'ep:1',
+    );
+    final previous = PlaybackSelection(
+      sourceId: 'storm',
+      sourceVideoId: '7',
+      title: '测试片',
+      playbackLineIdentity: 'line:b',
+      episodeIdentity: previousEpisode.identity,
+      episode: previousEpisode,
+      playbackSource: PlaybackSource(
+        url: Uri.parse(previousEpisode.url),
+        format: PlaybackFormat.hls,
+      ),
+    );
+    const freshEpisode = Episode(
+      id: '1',
+      name: '第1集',
+      url: 'https://fresh.example.com/b/1.m3u8',
+      identity: 'ep:1',
+    );
+    final fresh = Video(
+      id: '7',
+      title: '测试片',
+      sourceId: 'storm',
+      playbackLines: const [
+        PlaybackLine(
+          id: '0',
+          name: 'm3u8',
+          identity: 'line:a',
+          episodes: [
+            Episode(
+              id: '1',
+              name: '第1集',
+              url: 'https://fresh.example.com/a/1.m3u8',
+              identity: 'ep:1',
+            ),
+          ],
+        ),
+        PlaybackLine(
+          id: '1',
+          name: '备用线路',
+          identity: 'line:b',
+          episodes: [freshEpisode],
+        ),
+      ],
+    );
+
+    final refreshed = refreshSelectionFor(
+      freshVideo: fresh,
+      priorEpisode: previousEpisode,
+      previousSelection: previous,
+    );
+
+    expect(refreshed, isNotNull);
+    expect(refreshed!.playbackLineIdentity, 'line:b');
+    expect(refreshed.episode, same(freshEpisode));
+    expect(
+      refreshed.playbackSource.url,
+      Uri.parse('https://fresh.example.com/b/1.m3u8'),
+    );
+  });
+
+  test(
+    'refreshSelectionFor falls back by name only within the current line',
+    () {
+      const previousEpisode = Episode(
+        id: 'old-id',
+        name: '第2集',
+        url: 'https://old.example.com/2.m3u8',
+        identity: 'old-identity',
+      );
+      final previous = PlaybackSelection(
+        sourceId: 'storm',
+        sourceVideoId: '7',
+        title: '测试片',
+        playbackLineIdentity: 'line:b',
+        episodeIdentity: previousEpisode.identity,
+        episode: previousEpisode,
+        playbackSource: PlaybackSource(
+          url: Uri.parse(previousEpisode.url),
+          format: PlaybackFormat.hls,
+        ),
+      );
+      const freshMatch = Episode(
+        id: 'new-id',
+        name: '第2集',
+        url: 'https://fresh.example.com/b/2.m3u8',
+        identity: 'new-identity',
+      );
+      final fresh = Video(
+        id: '7',
+        title: '测试片',
+        sourceId: 'storm',
+        playbackLines: const [
+          PlaybackLine(
+            id: '0',
+            name: '默认线路',
+            identity: 'line:a',
+            episodes: [
+              Episode(
+                id: 'old-id',
+                name: '第2集',
+                url: 'https://fresh.example.com/a/2.m3u8',
+                identity: 'cross-line-identity',
+              ),
+            ],
+          ),
+          PlaybackLine(
+            id: '1',
+            name: '当前线路',
+            identity: 'line:b',
+            episodes: [freshMatch],
+          ),
+        ],
+      );
+
+      final refreshed = refreshSelectionFor(
+        freshVideo: fresh,
+        priorEpisode: previousEpisode,
+        previousSelection: previous,
+      );
+
+      expect(refreshed, isNotNull);
+      expect(refreshed!.playbackLineIdentity, 'line:b');
+      expect(refreshed.episodeIdentity, 'new-identity');
+      expect(refreshed.episode.url, 'https://fresh.example.com/b/2.m3u8');
+    },
+  );
+
+  test(
+    'refreshSelectionFor returns null when the previous line disappears',
+    () {
+      const previousEpisode = Episode(
+        id: '1',
+        name: '第1集',
+        url: 'https://old.example.com/b/1.m3u8',
+        identity: 'ep:1',
+      );
+      final previous = PlaybackSelection(
+        sourceId: 'storm',
+        sourceVideoId: '7',
+        title: '测试片',
+        playbackLineIdentity: 'line:b',
+        episodeIdentity: previousEpisode.identity,
+        episode: previousEpisode,
+        playbackSource: PlaybackSource(
+          url: Uri.parse(previousEpisode.url),
+          format: PlaybackFormat.hls,
+        ),
+      );
+      final fresh = Video(
+        id: '7',
+        title: '测试片',
+        sourceId: 'storm',
+        playbackLines: const [
+          PlaybackLine(
+            id: '0',
+            name: '默认线路',
+            identity: 'line:a',
+            episodes: [
+              Episode(
+                id: '1',
+                name: '第1集',
+                url: 'https://fresh.example.com/a/1.m3u8',
+                identity: 'ep:1',
+              ),
+            ],
+          ),
+        ],
+      );
+
+      expect(
+        refreshSelectionFor(
+          freshVideo: fresh,
+          priorEpisode: previousEpisode,
+          previousSelection: previous,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'refreshSelectionFor uses the fresh default line without a selection',
+    () {
+      const priorEpisode = Episode(
+        id: '2',
+        name: '第2集',
+        url: 'https://old.example.com/2.m3u8',
+        identity: 'old-identity',
+      );
+      const freshEpisode = Episode(
+        id: '2',
+        name: '第2集',
+        url: 'https://fresh.example.com/2.m3u8',
+        identity: 'fresh-identity',
+      );
+      final fresh = Video(
+        id: '7',
+        title: '测试片',
+        sourceId: 'storm',
+        playbackLines: const [
+          PlaybackLine(
+            id: '0',
+            name: '默认 m3u8',
+            identity: 'line:default',
+            episodes: [freshEpisode],
+          ),
+        ],
+      );
+
+      final refreshed = refreshSelectionFor(
+        freshVideo: fresh,
+        priorEpisode: priorEpisode,
+      );
+
+      expect(refreshed, isNotNull);
+      expect(refreshed!.playbackLineIdentity, 'line:default');
+      expect(refreshed.episode, same(freshEpisode));
+      expect(refreshed.playbackSource.url, Uri.parse(freshEpisode.url));
+    },
+  );
 }
 
 final _source = VodSource(

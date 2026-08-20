@@ -10,6 +10,7 @@ import '../app/theme.dart';
 import '../data/cache/ad_filter.dart';
 import '../data/cache/cache_manager.dart';
 import '../data/cache/cache_providers.dart';
+import '../data/cache/cache_ttl_policy.dart';
 import '../data/cache/content_type_sniffer.dart';
 import '../data/cache/download_providers.dart';
 import '../data/cache/download_task_manager.dart';
@@ -46,7 +47,8 @@ class PlayerPage extends ConsumerStatefulWidget {
   ConsumerState<PlayerPage> createState() => _PlayerPageState();
 }
 
-class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObserver {
+class _PlayerPageState extends ConsumerState<PlayerPage>
+    with WidgetsBindingObserver {
   late final HistoryRepository historyRepository;
   VideoPlayerController? controller;
   late Episode episode;
@@ -62,6 +64,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   bool failed = false, fullScreen = false, initializing = true;
   bool fillScreen = false;
   bool controlsVisible = true;
+  bool _isAppForeground = true;
+  bool _playbackDesired = true;
+  bool _completionHandled = false;
+  bool _fullScreenTransitionInFlight = false;
+  bool _fullScreenToggleQueued = false;
+  bool _savedBeforePop = false;
+  Future<void> _systemUiTransition = Future.value();
+  int _lifecycleGeneration = 0;
   PlaybackStatus playbackStatus = const PlaybackStatus.preparing();
   bool playbackToggleInFlight = false;
   bool isSeeking = false;
@@ -74,21 +84,35 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   double screenSeekStartX = 0;
   bool screenLongPressOnRight = false;
   double playbackSpeed = 1;
+  double playbackVolume = 1;
   double volumeBeforeMute = 1;
   bool volumeSliderVisible = false;
   double screenBrightness = 0.5;
+  bool screenBrightnessLoaded = false;
+  bool verticalDragHasUpdated = false;
+  double? _pendingVolume;
+  double? _pendingBrightness;
+  bool _applyingVolume = false;
+  bool _applyingBrightness = false;
+  Future<void> _brightnessChangeTask = Future.value();
   double verticalDragStartY = 0;
   double verticalDragStartValue = 0;
   int verticalDragGeneration = 0;
-  final ValueNotifier<({bool isVolume, double value})?> verticalDrag = ValueNotifier(null);
+  final ValueNotifier<({bool isVolume, double value})?> verticalDrag =
+      ValueNotifier(null);
   Future<void> longPressSpeedChange = Future.value();
   bool wasPlayingBeforeSeek = false;
   Future<void> seekPause = Future.value();
   int seekGeneration = 0;
   String errorMessage = '视频加载失败，请检查网络后重试';
 
-  /// 当前预取窗口（片数），由 prefetchWindowProvider 驱动（网络类型/开关变化）。
-  int _prefetchWindow = 0;
+  /// 当前预取目标（领先播放位置的时长），由 prefetchAheadProvider 驱动
+  /// （网络类型/开关变化）。
+  Duration _prefetchAhead = Duration.zero;
+
+  /// 退出播放器时是否立即清理本次播放的缓存条目（自动清理设置驱动）。
+  /// 设置未加载完成前保守起见不清理（默认项是 1 小时后，不退出即清）。
+  bool _cleanCacheOnExit = false;
 
   @override
   void initState() {
@@ -96,18 +120,29 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     // Cache provider-backed dependencies while the ConsumerState is mounted.
     // dispose() must not access ref because its BuildContext is deactivated.
     historyRepository = ref.read(historyRepositoryProvider);
-    _prefetchWindow = ref.read(prefetchWindowProvider);
-    // 网络类型或开关变化时更新窗口；窗口从 0 变为可用时按当前位置重锚定。
-    ref.listenManual(prefetchWindowProvider, (previous, next) {
-      _prefetchWindow = next;
-      if (next > 0 && previous != next) {
-        _activeSession?.prefetcher?.updatePosition(controller?.value.position ?? Duration.zero);
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    _isAppForeground =
+        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
+    _prefetchAhead = ref.read(prefetchAheadProvider);
+    // 网络类型或开关变化时更新预取目标；从 0 变为可用时按当前位置重锚定。
+    ref.listenManual(prefetchAheadProvider, (previous, next) {
+      _prefetchAhead = next;
+      if (next > Duration.zero && previous != next) {
+        _activeSession?.prefetcher?.updatePosition(
+          controller?.value.position ?? Duration.zero,
+        );
       }
+    });
+    _cleanCacheOnExit = ref.read(cacheTtlProvider).value?.cleanOnExit ?? false;
+    ref.listenManual(cacheTtlProvider, (_, next) {
+      final option = next.value;
+      if (option != null) _cleanCacheOnExit = option.cleanOnExit;
     });
     WidgetsBinding.instance.addObserver(this);
     episode = widget.episode;
     _selection = widget.selection ?? selectionFor(widget.video, widget.episode);
-    _setup(widget.resumePosition);
+    unawaited(_loadInitialScreenBrightness());
+    unawaited(_setup(widget.resumePosition));
   }
 
   Future<void> _setup(Duration resume) async {
@@ -120,136 +155,193 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         playbackStatus = const PlaybackStatus.preparing();
       });
     }
-    var target = _selection;
-    PlaybackSession? session;
-    PlaybackStatus? preparedStatus;
-    if (target != null) {
-      try {
-        // Try the cache before resolving an unknown URL through the network.
-        // Downloaded HLS endpoints are often extensionless and cannot be
-        // reconstructed from the persisted URL alone.
-        if (target.playbackSource.format == PlaybackFormat.unknown && target.hasStableIdentity) {
-          final offlinePreparation = await _prepareSession(target, generation);
-          if (offlinePreparation.status.mode == PlaybackMode.cachePlayback && offlinePreparation.session != null) {
-            session = offlinePreparation.session;
-            target = target.copyWith(playbackSource: target.playbackSource.copyWith(format: PlaybackFormat.hls));
-            preparedStatus = offlinePreparation.status;
-          }
-        }
-        if (session == null) {
-          final client = _sessionClient ??= http.Client();
-          target = await (_urlResolver ??= PlaybackUrlResolver(client: client)).resolveSelection(target);
-          if (!mounted || generation != setupGeneration) return;
-          _selection = target;
-          episode = target.episode;
-        }
-      } on PlaybackUrlResolutionException catch (error) {
-        if (mounted && generation == setupGeneration) {
-          setState(() {
-            failed = true;
-            initializing = false;
-            errorMessage = error.message;
-          });
-          unawaited(WakelockPlus.disable());
-        }
-        return;
-      }
-    }
-    final directUrl = target?.episode.url ?? episode.url;
-    var status = const PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.stableIdentityMissing);
-    if (target == null || !target.hasStableIdentity) {
-      status = const PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.stableIdentityMissing);
-    } else if (preparedStatus != null) {
-      status = preparedStatus;
-    } else if (target.playbackSource.format != PlaybackFormat.hls) {
-      if (target.playbackSource.format == PlaybackFormat.unknown) {
-        final sniffed = await ContentTypeSniffer().sniff(target.playbackSource.url.toString());
-        if (sniffed == PlaybackFormat.hls) {
-          _selection = target = PlaybackSelection(
-            sourceId: target.sourceId,
-            sourceVideoId: target.sourceVideoId,
-            title: target.title,
-            playbackLineIdentity: target.playbackLineIdentity,
-            episodeIdentity: target.episodeIdentity,
-            episode: target.episode,
-            playbackSource: target.playbackSource.copyWith(format: sniffed),
-          );
-          final preparation = await _prepareSession(target, generation);
-          session = preparation.session;
-          status = preparation.status;
-          if (!mounted || generation != setupGeneration) {
-            if (session != null) await _closeSession(session);
-            return;
-          }
-        } else {
-          status = const PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.unsupportedFormat);
-        }
-      } else {
-        status = const PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.unsupportedFormat);
-      }
-    } else {
-      final preparation = await _prepareSession(target, generation);
-      session = preparation.session;
-      status = preparation.status;
-    }
-    if (!mounted || generation != setupGeneration) {
-      if (session != null) await _closeSession(session);
-      return;
-    }
-    setState(() => playbackStatus = status);
-    final proxyUrl = session?.proxyManifestUrl;
-    final isHls = target?.playbackSource.format == PlaybackFormat.hls;
-    var next = VideoPlayerController.networkUrl(
-      Uri.parse(proxyUrl ?? directUrl),
-      formatHint: (proxyUrl != null || isHls || directUrl.toLowerCase().contains('.m3u8')) ? VideoFormat.hls : null,
-    );
     try {
-      await next.initialize().timeout(const Duration(seconds: 20));
-      if (!mounted || generation != setupGeneration) {
-        await next.dispose();
-        if (session != null) await _closeSession(session);
-        return;
-      }
-      await _installController(next, session, resume, generation);
-    } catch (_) {
-      await next.dispose();
-      if (session != null) {
-        await _closeSession(session);
-        session = null;
-        _setPlaybackStatus(
-          const PlaybackStatus(
-            mode: PlaybackMode.direct,
-            reason: PlaybackFallbackReason.proxyControllerInitializationFailed,
-          ),
-          generation: generation,
-        );
-        next = VideoPlayerController.networkUrl(
-          Uri.parse(directUrl),
-          formatHint: (isHls || directUrl.toLowerCase().contains('.m3u8')) ? VideoFormat.hls : null,
-        );
+      var target = _selection;
+      PlaybackSession? session;
+      PlaybackStatus? preparedStatus;
+      if (target != null) {
         try {
-          await next.initialize().timeout(const Duration(seconds: 20));
-          if (!mounted || generation != setupGeneration) {
-            await next.dispose();
-            return;
+          // Try the cache before resolving an unknown URL through the network.
+          // Downloaded HLS endpoints are often extensionless and cannot be
+          // reconstructed from the persisted URL alone.
+          if (target.playbackSource.format == PlaybackFormat.unknown &&
+              target.hasStableIdentity) {
+            final offlinePreparation = await _prepareSession(
+              target,
+              generation,
+            );
+            if (offlinePreparation.status.mode == PlaybackMode.cachePlayback &&
+                offlinePreparation.session != null) {
+              session = offlinePreparation.session;
+              target = target.copyWith(
+                playbackSource: target.playbackSource.copyWith(
+                  format: PlaybackFormat.hls,
+                ),
+              );
+              preparedStatus = offlinePreparation.status;
+            }
           }
-          await _installController(next, null, resume, generation);
-        } catch (_) {
-          await next.dispose();
-          if (mounted) {
+          if (session == null) {
+            final client = _sessionClient ??= http.Client();
+            target = await (_urlResolver ??= PlaybackUrlResolver(
+              client: client,
+            )).resolveSelection(target);
+            if (!mounted || generation != setupGeneration) return;
+            _selection = target;
+            episode = target.episode;
+          }
+        } on PlaybackUrlResolutionException catch (error) {
+          if (mounted && generation == setupGeneration) {
             setState(() {
               failed = true;
               initializing = false;
-              errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
+              errorMessage = error.message;
             });
             unawaited(WakelockPlus.disable());
           }
+          return;
         }
-      } else if (mounted) {
+      }
+      final directUrl = target?.episode.url ?? episode.url;
+      var status = const PlaybackStatus(
+        mode: PlaybackMode.direct,
+        reason: PlaybackFallbackReason.stableIdentityMissing,
+      );
+      if (target == null || !target.hasStableIdentity) {
+        status = const PlaybackStatus(
+          mode: PlaybackMode.direct,
+          reason: PlaybackFallbackReason.stableIdentityMissing,
+        );
+      } else if (preparedStatus != null) {
+        status = preparedStatus;
+      } else if (target.playbackSource.format != PlaybackFormat.hls) {
+        if (target.playbackSource.format == PlaybackFormat.unknown) {
+          final sniffed = await ContentTypeSniffer().sniff(
+            target.playbackSource.url.toString(),
+          );
+          if (sniffed == PlaybackFormat.hls) {
+            _selection = target = PlaybackSelection(
+              sourceId: target.sourceId,
+              sourceVideoId: target.sourceVideoId,
+              title: target.title,
+              playbackLineIdentity: target.playbackLineIdentity,
+              episodeIdentity: target.episodeIdentity,
+              episode: target.episode,
+              playbackSource: target.playbackSource.copyWith(format: sniffed),
+            );
+            final preparation = await _prepareSession(target, generation);
+            session = preparation.session;
+            status = preparation.status;
+            if (!mounted || generation != setupGeneration) {
+              if (session != null) await _closeSession(session);
+              return;
+            }
+          } else {
+            status = const PlaybackStatus(
+              mode: PlaybackMode.direct,
+              reason: PlaybackFallbackReason.unsupportedFormat,
+            );
+          }
+        } else {
+          status = const PlaybackStatus(
+            mode: PlaybackMode.direct,
+            reason: PlaybackFallbackReason.unsupportedFormat,
+          );
+        }
+      } else {
+        final preparation = await _prepareSession(target, generation);
+        session = preparation.session;
+        status = preparation.status;
+      }
+      if (!mounted || generation != setupGeneration) {
+        if (session != null) await _closeSession(session);
+        return;
+      }
+      setState(() => playbackStatus = status);
+      final proxyUrl = session?.proxyManifestUrl;
+      final isHls = target?.playbackSource.format == PlaybackFormat.hls;
+      final requestHeaders =
+          target?.playbackSource.headers ?? const <String, String>{};
+      var next = VideoPlayerController.networkUrl(
+        Uri.parse(proxyUrl ?? directUrl),
+        formatHint:
+            (proxyUrl != null ||
+                isHls ||
+                directUrl.toLowerCase().contains('.m3u8'))
+            ? VideoFormat.hls
+            : null,
+        httpHeaders: proxyUrl == null
+            ? filterSessionHeaders(requestHeaders)
+            : const {},
+      );
+      try {
+        await next.initialize().timeout(const Duration(seconds: 20));
+        if (!mounted || generation != setupGeneration) {
+          await next.dispose();
+          if (session != null) await _closeSession(session);
+          return;
+        }
+        await _installController(next, session, resume, generation);
+      } catch (_) {
+        await next.dispose();
+        if (!mounted || generation != setupGeneration) {
+          if (session != null) await _closeSession(session);
+          return;
+        }
+        if (session != null) {
+          await _closeSession(session);
+          session = null;
+          if (!mounted || generation != setupGeneration) return;
+          _setPlaybackStatus(
+            const PlaybackStatus(
+              mode: PlaybackMode.direct,
+              reason:
+                  PlaybackFallbackReason.proxyControllerInitializationFailed,
+            ),
+            generation: generation,
+          );
+          next = VideoPlayerController.networkUrl(
+            Uri.parse(directUrl),
+            formatHint: (isHls || directUrl.toLowerCase().contains('.m3u8'))
+                ? VideoFormat.hls
+                : null,
+            httpHeaders: filterSessionHeaders(requestHeaders),
+          );
+          try {
+            await next.initialize().timeout(const Duration(seconds: 20));
+            if (!mounted || generation != setupGeneration) {
+              await next.dispose();
+              return;
+            }
+            await _installController(next, null, resume, generation);
+          } catch (_) {
+            await next.dispose();
+            if (mounted && generation == setupGeneration) {
+              setState(() {
+                failed = true;
+                initializing = false;
+                errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
+              });
+              unawaited(WakelockPlus.disable());
+            }
+          }
+        } else if (mounted && generation == setupGeneration) {
+          setState(() {
+            failed = true;
+            initializing = false;
+            errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
+          });
+          unawaited(WakelockPlus.disable());
+        }
+      }
+    } catch (error) {
+      if (mounted && generation == setupGeneration) {
         setState(() {
           failed = true;
           initializing = false;
-          errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
+          errorMessage = error is PlaybackUrlResolutionException
+              ? error.message
+              : '视频加载失败，请检查网络后重试';
         });
         unawaited(WakelockPlus.disable());
       }
@@ -282,33 +374,49 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (session != null) await _closeSession(session);
       return;
     }
-    await next.play();
+    await next.setVolume(playbackVolume);
     if (!mounted || generation != setupGeneration) {
       await next.dispose();
       if (session != null) await _closeSession(session);
       return;
     }
+    if (_isAppForeground && _playbackDesired) {
+      await next.play();
+      if (!mounted || generation != setupGeneration) {
+        await next.dispose();
+        if (session != null) await _closeSession(session);
+        return;
+      }
+    }
     _activeSession = session;
     controller = next;
+    _completionHandled = false;
     next.addListener(_handlePlayerValueChanged);
-    saveTimer?.cancel();
-    saveTimer = Timer.periodic(const Duration(seconds: 5), (_) => _onPlaybackTick());
     setState(() => initializing = false);
-    _scheduleControlsHide();
+    if (next.value.isPlaying) {
+      _startPlaybackTimer();
+      _scheduleControlsHide();
+    }
     unawaited(_save());
     await _syncWakelock();
-    _startWakelockHeartbeat();
+    if (next.value.isPlaying) _startWakelockHeartbeat();
     if (session != null) {
       try {
-        final prefetcher = session.buildPrefetcher(windowSize: () => _prefetchWindow);
+        final prefetcher = session.buildPrefetcher(
+          windowSize: () => _prefetchAhead,
+        );
         if (prefetcher != null) {
-          unawaited(prefetcher.prefetch(fromPosition: resume));
+          if (!_isAppForeground) prefetcher.pause();
+          unawaited(prefetcher.prefetch(fromPosition: target));
         }
       } catch (_) {}
     }
   }
 
-  Future<PlaybackSessionPreparation> _prepareSession(PlaybackSelection target, int generation) async {
+  Future<PlaybackSessionPreparation> _prepareSession(
+    PlaybackSelection target,
+    int generation,
+  ) async {
     try {
       final proxy = _proxy ??= LocalProxyServer();
       await proxy.start();
@@ -330,7 +438,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         store: cacheManager?.store,
         onCacheBypass: (reason) {
           _setPlaybackStatus(
-            PlaybackStatus(mode: PlaybackMode.proxyWithoutCaching, reason: reason),
+            PlaybackStatus(
+              mode: PlaybackMode.proxyWithoutCaching,
+              reason: reason,
+            ),
             generation: generation,
           );
         },
@@ -338,7 +449,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     } catch (_) {
       return const PlaybackSessionPreparation(
         session: null,
-        status: PlaybackStatus(mode: PlaybackMode.direct, reason: PlaybackFallbackReason.proxyStartFailed),
+        status: PlaybackStatus(
+          mode: PlaybackMode.direct,
+          reason: PlaybackFallbackReason.proxyStartFailed,
+        ),
       );
     }
   }
@@ -350,16 +464,40 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     setState(() => playbackStatus = status);
   }
 
-  Future<void> _closeActiveSession() async {
-    final proxy = _proxy;
-    final session = _activeSession;
-    _activeSession = null;
-    if (session != null && proxy != null) await _closeSession(session);
-  }
-
   Future<void> _closeSession(PlaybackSession session) async {
     final proxy = _proxy;
     if (proxy != null) await session.close(proxy);
+  }
+
+  ({VideoPlayerController? controller, PlaybackSession? session})
+  _detachPlayback() {
+    saveTimer?.cancel();
+    saveTimer = null;
+    wakelockTimer?.cancel();
+    wakelockTimer = null;
+    final current = controller;
+    final session = _activeSession;
+    controller = null;
+    _activeSession = null;
+    current?.removeListener(_handlePlayerValueChanged);
+    _pendingVolume = null;
+    return (controller: current, session: session);
+  }
+
+  Future<void> _disposeDetachedPlayback(
+    ({VideoPlayerController? controller, PlaybackSession? session}) playback,
+  ) async {
+    final current = playback.controller;
+    if (current != null) {
+      try {
+        await current.pause();
+      } catch (_) {}
+      try {
+        await current.dispose();
+      } catch (_) {}
+    }
+    final session = playback.session;
+    if (session != null) await _closeSession(session);
   }
 
   Future<void> _downloadCurrentEpisode() async {
@@ -393,43 +531,60 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     // 在关闭会话前，把当前过滤时间轴位置换算成原始时间轴，供重试恢复使用。
     final position = controller?.value.position ?? Duration.zero;
     final mapping = _activeSession?.timelineMapping;
-    final oldPosition = mapping == null ? position : mapping.filteredToSource(position);
-    setupGeneration++;
-    await _closeActiveSession();
+    final oldPosition = mapping == null
+        ? position
+        : mapping.filteredToSource(position);
+    final generation = ++setupGeneration;
+    final previousSelection = _selection;
+    final previousEpisode = episode;
+    final save = _save();
+    final detached = _detachPlayback();
     _resetSeekState();
+    _playbackDesired = true;
+    _completionHandled = false;
+    if (!mounted) return;
     setState(() {
       failed = false;
       initializing = true;
       playbackStatus = const PlaybackStatus.preparing();
     });
     try {
+      await Future.wait<void>([
+        save.catchError((_) {}),
+        _disposeDetachedPlayback(detached),
+      ]);
+      if (!mounted || generation != setupGeneration) return;
       final source = ref
           .read(vodSourceRegistryProvider)
-          .maybeWhen(data: (r) => r.findById(widget.video.sourceId), orElse: () => null);
+          .maybeWhen(
+            data: (r) => r.findById(widget.video.sourceId),
+            orElse: () => null,
+          );
       if (source == null) throw const VideoDataException('未知来源');
-      final fresh = await ref.read(videoRepositoryProvider).resolvePlayback(source, widget.video.ref);
-      // 优先在稳定线路内按 episodeIdentity 匹配，再退回线路内 name/id，不跨线路。
-      final line = fresh.playbackLines
-          .where((l) => _selection != null && l.identity == _selection!.playbackLineIdentity)
-          .toList();
-      final candidates = line.isNotEmpty ? line.first.episodes : fresh.episodes;
-      Episode? match;
-      if (_selection != null && _selection!.episodeIdentity.isNotEmpty) {
-        final byIdentity = candidates.where((item) => item.identity == _selection!.episodeIdentity);
-        if (byIdentity.isNotEmpty) match = byIdentity.first;
-      }
-      match ??= candidates.where((item) => item.name == episode.name || item.id == episode.id).firstOrNull;
-      if (match == null) {
+      final fresh = await ref
+          .read(videoRepositoryProvider)
+          .resolvePlayback(source, widget.video.ref);
+      if (!mounted || generation != setupGeneration) return;
+      final refreshed = refreshSelectionFor(
+        freshVideo: fresh,
+        priorEpisode: previousEpisode,
+        previousSelection: previousSelection,
+      );
+      if (refreshed == null) {
         throw const VideoDataException('该剧集的播放地址已经失效');
       }
-      controller?.removeListener(_handlePlayerValueChanged);
-      await controller?.dispose();
-      controller = null;
-      episode = match;
-      _selection = widget.selection ?? selectionFor(widget.video, episode);
+      final resolver = _urlResolver;
+      if (resolver != null) {
+        if (previousSelection != null) {
+          resolver.clearCacheFor(previousSelection.playbackSource.url);
+        }
+        resolver.clearCacheFor(refreshed.playbackSource.url);
+      }
+      episode = refreshed.episode;
+      _selection = refreshed;
       await _setup(oldPosition);
     } catch (e) {
-      if (mounted) {
+      if (mounted && generation == setupGeneration) {
         setState(() {
           failed = true;
           initializing = false;
@@ -446,7 +601,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 播放期定时任务：保存观看进度，并按当前播放位置重锚定预取窗口，
   /// 让预取始终维持在播放点前方一个窗口（seek 后也会在下一拍跟上）。
+  void _startPlaybackTimer() {
+    saveTimer?.cancel();
+    if (!_isAppForeground || controller?.value.isPlaying != true) return;
+    saveTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _onPlaybackTick(),
+    );
+  }
+
   void _onPlaybackTick() {
+    if (!_isAppForeground || controller?.value.isPlaying != true) return;
     unawaited(_save());
     final current = controller;
     if (current != null && current.value.isInitialized) {
@@ -461,8 +626,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final positionMs = mapping == null
         ? current.value.position.inMilliseconds
         : mapping.filteredToSource(current.value.position).inMilliseconds;
-    final durationMs = _activeSession?.originalDurationMs ?? current.value.duration.inMilliseconds;
-    final progress = PlaybackProgress.normalize(positionMs: positionMs, durationMs: durationMs);
+    final durationMs =
+        _activeSession?.originalDurationMs ??
+        current.value.duration.inMilliseconds;
+    final progress = PlaybackProgress.normalize(
+      positionMs: positionMs,
+      durationMs: durationMs,
+    );
     final record = WatchRecord(
       video: widget.video.copyWith(episodes: const []),
       episodeId: episode.id,
@@ -482,36 +652,95 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _handlePlayerValueChanged() {
     final current = controller;
-    if (current == null || !current.value.hasError || failed || !mounted) {
+    if (current == null || !mounted) return;
+    final value = current.value;
+    if (value.hasError && !failed) {
+      saveTimer?.cancel();
+      saveTimer = null;
+      controlsTimer?.cancel();
+      wakelockTimer?.cancel();
+      wakelockTimer = null;
+      _activeSession?.prefetcher?.pause();
+      setState(() {
+        failed = true;
+        initializing = false;
+        errorMessage = '播放已中断，请重新获取播放地址后重试';
+      });
+      unawaited(_syncWakelock());
       return;
     }
-    saveTimer?.cancel();
-    controlsTimer?.cancel();
-    wakelockTimer?.cancel();
-    setState(() {
-      failed = true;
-      initializing = false;
-      errorMessage = '播放已中断，请重新获取播放地址后重试';
-    });
-    unawaited(WakelockPlus.disable());
+    if (value.isCompleted && !_completionHandled) {
+      _completionHandled = true;
+      _playbackDesired = false;
+      saveTimer?.cancel();
+      saveTimer = null;
+      controlsTimer?.cancel();
+      wakelockTimer?.cancel();
+      wakelockTimer = null;
+      _activeSession?.prefetcher?.pause();
+      setState(() {
+        controlsVisible = true;
+        volumeSliderVisible = false;
+      });
+      unawaited(_save());
+      unawaited(_syncWakelock());
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
+      _isAppForeground = false;
+      final generation = ++_lifecycleGeneration;
       final current = controller;
+      _stopSpeedBoost(current);
+      saveTimer?.cancel();
+      saveTimer = null;
+      controlsTimer?.cancel();
+      _activeSession?.prefetcher?.pause();
       if (current?.value.isPlaying == true) {
-        unawaited(current!.pause().then((_) => _syncWakelock()));
+        unawaited(() async {
+          try {
+            await current!.pause();
+          } catch (_) {}
+          if (!mounted) return;
+          if (generation != _lifecycleGeneration &&
+              _isAppForeground &&
+              _playbackDesired) {
+            await _resumePlayback(current);
+          } else {
+            await _syncWakelock();
+          }
+        }());
       } else {
         unawaited(_syncWakelock());
       }
       wakelockTimer?.cancel();
+      wakelockTimer = null;
       unawaited(_save());
     } else if (state == AppLifecycleState.resumed) {
-      // The OS can release a wakelock while the app is inactive.
-      unawaited(_syncWakelock());
+      _isAppForeground = true;
+      _lifecycleGeneration++;
+      final prefetcher = _activeSession?.prefetcher;
+      final current = controller;
+      if (_playbackDesired && prefetcher != null && current != null) {
+        prefetcher.resume();
+        unawaited(prefetcher.updatePosition(current.value.position));
+      } else {
+        prefetcher?.pause();
+      }
+      if (_playbackDesired &&
+          current != null &&
+          current.value.isInitialized &&
+          !current.value.isCompleted) {
+        unawaited(_resumePlayback(current));
+      } else {
+        // The OS can release a wakelock while the app is inactive.
+        unawaited(_syncWakelock());
+      }
     }
   }
 
@@ -519,7 +748,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// Wakelocks may be released by the OS, so this is called at playback and
   /// lifecycle transitions instead of only during setup.
   Future<void> _syncWakelock() async {
-    final shouldKeepAwake = mounted && !failed && controller?.value.isPlaying == true;
+    final shouldKeepAwake =
+        mounted &&
+        _isAppForeground &&
+        !failed &&
+        controller?.value.isPlaying == true;
     try {
       await WakelockPlus.toggle(enable: shouldKeepAwake);
     } catch (_) {
@@ -533,6 +766,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (!mounted || failed || controller?.value.isPlaying != true) {
         wakelockTimer?.cancel();
         wakelockTimer = null;
+        unawaited(_syncWakelock());
         return;
       }
       unawaited(_syncWakelock());
@@ -554,26 +788,43 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             children: [
               Text(
                 '当前播放模式',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 16),
               Row(
                 children: [
-                  PlaybackStatusIndicator.iconFor(status.mode, color: PlaybackStatusIndicator.colorFor(status.mode)),
+                  PlaybackStatusIndicator.iconFor(
+                    status.mode,
+                    color: PlaybackStatusIndicator.colorFor(status.mode),
+                  ),
                   const SizedBox(width: 10),
                   Text(
                     status.label,
-                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 10),
-              Text(status.description, style: const TextStyle(color: Colors.white70, height: 1.45)),
+              Text(
+                status.description,
+                style: const TextStyle(color: Colors.white70, height: 1.45),
+              ),
               if (status.reasonText != null) ...[
                 const SizedBox(height: 8),
-                Text('原因：${status.reasonText}', style: const TextStyle(color: Colors.orangeAccent, height: 1.45)),
+                Text(
+                  '原因：${status.reasonText}',
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    height: 1.45,
+                  ),
+                ),
               ],
             ],
           ),
@@ -583,27 +834,111 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   Future<void> _toggleFullScreen() async {
-    fullScreen = !fullScreen;
-    await SystemChrome.setEnabledSystemUIMode(fullScreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge);
+    if (!mounted) return;
+    if (_fullScreenTransitionInFlight) {
+      _fullScreenToggleQueued = !_fullScreenToggleQueued;
+      return;
+    }
+    final previous = fullScreen;
+    final target = !previous;
+    _fullScreenTransitionInFlight = true;
+    setState(() => fullScreen = target);
+    final transition = _applyFullScreenSystemUi(target);
+    _systemUiTransition = transition;
+    try {
+      await transition;
+    } catch (_) {
+      if (mounted) {
+        setState(() => fullScreen = previous);
+        try {
+          final rollback = _applyFullScreenSystemUi(previous);
+          _systemUiTransition = rollback;
+          await rollback;
+        } catch (_) {}
+      }
+    } finally {
+      _fullScreenTransitionInFlight = false;
+      if (_fullScreenToggleQueued && mounted) {
+        _fullScreenToggleQueued = false;
+        unawaited(_toggleFullScreen());
+      }
+    }
+  }
+
+  Future<void> _applyFullScreenSystemUi(bool enabled) async {
     await SystemChrome.setPreferredOrientations(
-      fullScreen ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight] : [DeviceOrientation.portraitUp],
+      enabled
+          ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+          : DeviceOrientation.values,
     );
-    if (mounted) setState(() {});
+    await SystemChrome.setEnabledSystemUIMode(
+      enabled ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+    );
   }
 
   Future<void> _switchEpisode(Episode next) async {
-    if (next.id == episode.id) return;
-    setupGeneration++;
+    final sameEpisode = next.identity.isNotEmpty && episode.identity.isNotEmpty
+        ? next.identity == episode.identity
+        : next.id == episode.id;
+    if (sameEpisode) return;
+    final nextSelection = _selectionForEpisodeInCurrentLine(next);
+    if (_selection != null && nextSelection == null) {
+      if (mounted) showAppToast(context, '当前线路没有该剧集');
+      return;
+    }
+    final generation = ++setupGeneration;
     controlsTimer?.cancel();
-    // 先保存进度（此时会话时间轴映射仍可用），再关闭旧会话。
-    await _save();
-    await _closeActiveSession();
-    controller?.removeListener(_handlePlayerValueChanged);
-    await controller?.dispose();
-    controller = null;
-    setState(() => episode = next);
-    _selection = selectionFor(widget.video, next) ?? _selection;
+    final save = _save();
+    final detached = _detachPlayback();
+    _resetSeekState();
+    _playbackDesired = true;
+    _completionHandled = false;
+    episode = nextSelection?.episode ?? next;
+    _selection = nextSelection ?? selectionFor(widget.video, next);
+    if (!mounted) return;
+    setState(() {
+      failed = false;
+      initializing = true;
+      playbackStatus = const PlaybackStatus.preparing();
+    });
+    await Future.wait<void>([
+      save.catchError((_) {}),
+      _disposeDetachedPlayback(detached),
+    ]);
+    if (!mounted || generation != setupGeneration) return;
     await _setup(Duration.zero);
+  }
+
+  PlaybackSelection? _selectionForEpisodeInCurrentLine(Episode next) {
+    final currentSelection = _selection;
+    if (currentSelection == null) return selectionFor(widget.video, next);
+    final line = widget.video.playbackLines
+        .where((item) => item.identity == currentSelection.playbackLineIdentity)
+        .firstOrNull;
+    if (line == null || line.identity.isEmpty) return null;
+    Episode? matched;
+    if (next.identity.isNotEmpty) {
+      matched = line.episodes
+          .where((item) => item.identity == next.identity)
+          .firstOrNull;
+    }
+    matched ??= line.episodes
+        .where((item) => item.name == next.name || item.id == next.id)
+        .firstOrNull;
+    if (matched == null || matched.identity.isEmpty) return null;
+    return PlaybackSelection(
+      sourceId: widget.video.sourceId,
+      sourceVideoId: widget.video.sourceVideoId,
+      title: widget.video.title,
+      playbackLineIdentity: line.identity,
+      episodeIdentity: matched.identity,
+      episode: matched,
+      playbackSource: PlaybackSource(
+        url: Uri.tryParse(matched.url) ?? Uri(),
+        format: inferPlaybackFormat(matched.url),
+        headers: currentSelection.playbackSource.headers,
+      ),
+    );
   }
 
   void _showControls() {
@@ -641,14 +976,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       await _resumePlayback(current);
       return;
     }
+    _playbackDesired = false;
     playbackToggleInFlight = true;
     try {
       await current.pause();
+      if (!mounted || !identical(controller, current)) return;
       await _syncWakelock();
       wakelockTimer?.cancel();
+      wakelockTimer = null;
+      saveTimer?.cancel();
+      saveTimer = null;
       controlsTimer?.cancel();
+      _activeSession?.prefetcher?.pause();
       unawaited(_save());
       if (mounted) setState(() => controlsVisible = true);
+    } catch (_) {
+      _playbackDesired = true;
+      if (mounted) showAppToast(context, '暂停失败，请稍后重试');
     } finally {
       playbackToggleInFlight = false;
     }
@@ -656,14 +1000,29 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   Future<void> _resumePlayback([VideoPlayerController? target]) async {
     final current = target ?? controller;
-    if (current == null || playbackToggleInFlight) return;
+    if (current == null) return;
+    _playbackDesired = true;
+    if (!_isAppForeground || playbackToggleInFlight) return;
     playbackToggleInFlight = true;
     try {
+      if (current.value.isCompleted) {
+        await current.seekTo(Duration.zero);
+        if (!mounted || !identical(controller, current)) return;
+        _completionHandled = false;
+      }
       await current.play();
+      if (!mounted || !identical(controller, current)) return;
+      _activeSession?.prefetcher?.resume();
+      unawaited(
+        _activeSession?.prefetcher?.updatePosition(current.value.position),
+      );
+      _startPlaybackTimer();
       await _syncWakelock();
       _startWakelockHeartbeat();
       _scheduleControlsHide();
       if (mounted) setState(() => controlsVisible = true);
+    } catch (_) {
+      if (mounted) showAppToast(context, '继续播放失败，请稍后重试');
     } finally {
       playbackToggleInFlight = false;
     }
@@ -672,46 +1031,95 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Future<void> _toggleMute() async {
     final current = controller;
     if (current == null || !current.value.isInitialized) return;
-    if (current.value.volume > 0) {
-      volumeBeforeMute = current.value.volume;
-      await current.setVolume(0);
+    if (playbackVolume > 0) {
+      volumeBeforeMute = playbackVolume;
+      _queueVolumeChange(0);
     } else {
-      await current.setVolume(volumeBeforeMute);
+      _queueVolumeChange(volumeBeforeMute);
     }
     _showControls();
+  }
+
+  void _queueVolumeChange(double value) {
+    playbackVolume = value.clamp(0.0, 1.0);
+    _pendingVolume = playbackVolume;
+    if (!_applyingVolume) unawaited(_drainVolumeChanges());
+  }
+
+  Future<void> _drainVolumeChanges() async {
+    _applyingVolume = true;
+    try {
+      while (_pendingVolume != null) {
+        final value = _pendingVolume!;
+        _pendingVolume = null;
+        final current = controller;
+        if (current == null || !current.value.isInitialized) continue;
+        try {
+          await current.setVolume(value);
+        } catch (_) {}
+      }
+    } finally {
+      _applyingVolume = false;
+      if (_pendingVolume != null) unawaited(_drainVolumeChanges());
+    }
   }
 
   Future<void> _setPlaybackSpeed(double speed) async {
     final current = controller;
     if (current == null || !current.value.isInitialized) return;
-    await current.setPlaybackSpeed(speed);
-    if (mounted) {
-      setState(() => playbackSpeed = speed);
-      _showControls();
+    try {
+      await current.setPlaybackSpeed(speed);
+      if (mounted && identical(controller, current)) {
+        setState(() => playbackSpeed = speed);
+        _showControls();
+      }
+    } catch (_) {
+      if (mounted) showAppToast(context, '倍速切换失败，请稍后重试');
     }
   }
 
   @override
   void dispose() {
     setupGeneration++;
+    _lifecycleGeneration++;
+    _isAppForeground = false;
+    _playbackDesired = false;
     WidgetsBinding.instance.removeObserver(this);
     saveTimer?.cancel();
     controlsTimer?.cancel();
     wakelockTimer?.cancel();
-    unawaited(_save());
+    final save = _save();
+    final detached = _detachPlayback();
     final proxy = _proxy;
-    // 先关闭会话（等待活跃读取结束并释放缓存引用），之后才关闭代理。
-    unawaited(_closeActiveSession().whenComplete(() => proxy?.close()));
-    controller?.removeListener(_handlePlayerValueChanged);
-    controller?.dispose();
-    _sessionClient?.close();
+    final client = _sessionClient;
+    // 退出清理需要在 close 之前取 entryKey（close 会释放 cacheRef）。
+    final sessionEntryKey = detached.session?.cacheRef?.entryKey;
+    final sessionCacheManager = detached.session?.cacheManager;
+    unawaited(() async {
+      await save.catchError((_) {});
+      await _disposeDetachedPlayback(detached);
+      if (_cleanCacheOnExit &&
+          sessionEntryKey != null &&
+          sessionCacheManager != null) {
+        try {
+          await sessionCacheManager.deletePlaybackEntry(sessionEntryKey);
+        } catch (_) {}
+      }
+      await proxy?.close();
+      client?.close();
+    }());
     previewPosition.dispose();
     seekCommitting.dispose();
     screenSeeking.dispose();
     speedBoosting.dispose();
     verticalDrag.dispose();
-    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
-    unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+    unawaited(() async {
+      try {
+        await _systemUiTransition;
+      } catch (_) {}
+      await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }());
     unawaited(_resetScreenBrightness());
     unawaited(WakelockPlus.disable());
     super.dispose();
@@ -721,14 +1129,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Widget build(BuildContext context) {
     // 退出全屏时屏幕旋转动画有几帧延迟，期间 MediaQuery 仍是横屏尺寸；
     // 布局按实际方向选择，避免竖屏 Column 布局在横屏尺寸下溢出。
-    final landscape = fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape;
+    final landscape =
+        fullScreen ||
+        MediaQuery.orientationOf(context) == Orientation.landscape;
     return PopScope(
       canPop: !fullScreen,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && fullScreen) {
           unawaited(_toggleFullScreen());
-        } else {
+        } else if (!_savedBeforePop) {
           unawaited(_save());
+        } else {
+          _savedBeforePop = false;
         }
       },
       child: Scaffold(
@@ -736,36 +1148,99 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         appBar: landscape
             ? null
             : AppBar(
+                leading: IconButton(
+                  tooltip: '返回',
+                  onPressed: () => unawaited(_saveAndPop()),
+                  icon: const Icon(Icons.arrow_back),
+                ),
+                toolbarHeight:
+                    56 +
+                    12 *
+                        (MediaQuery.textScalerOf(context).scale(1) - 1).clamp(
+                          0.0,
+                          1.0,
+                        ),
                 title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(widget.video.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    Text(episode.name, style: const TextStyle(fontSize: 12, color: AppColors.secondary)),
+                    Text(
+                      widget.video.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      episode.name,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.secondary,
+                      ),
+                    ),
                   ],
                 ),
                 backgroundColor: Colors.black,
               ),
         body: landscape
-            ? Center(
-                child: failed
-                    ? _error()
-                    : initializing
-                    ? const CircularProgressIndicator()
-                    : _player(),
-              )
+            ? _landscapeBody()
             : Column(
                 children: [
                   _portraitPlayer(),
                   Expanded(
-                    child: PlayerInfoPanel(
-                      video: widget.video,
-                      current: episode,
-                      onEpisodeTap: (e) => unawaited(_switchEpisode(e)),
+                    child: SafeArea(
+                      top: false,
+                      child: PlayerInfoPanel(
+                        video: widget.video,
+                        current: episode,
+                        onEpisodeTap: (e) => unawaited(_switchEpisode(e)),
+                      ),
                     ),
                   ),
                 ],
               ),
       ),
+    );
+  }
+
+  Future<void> _saveAndPop() async {
+    if (_savedBeforePop) return;
+    _savedBeforePop = true;
+    try {
+      await _save();
+    } catch (_) {}
+    if (!mounted) return;
+    final popped = await Navigator.maybePop(context);
+    if (!popped && mounted) _savedBeforePop = false;
+  }
+
+  Widget _landscapeBody() {
+    final showStandaloneBack = failed || initializing;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Center(
+          child: failed
+              ? SingleChildScrollView(child: _error())
+              : initializing
+              ? const CircularProgressIndicator()
+              : _player(),
+        ),
+        if (showStandaloneBack)
+          Align(
+            alignment: Alignment.topLeft,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: IconButton.filledTonal(
+                  key: const ValueKey('player-state-back'),
+                  tooltip: fullScreen ? '退出全屏' : '返回',
+                  onPressed: fullScreen
+                      ? () => unawaited(_toggleFullScreen())
+                      : () => unawaited(_saveAndPop()),
+                  icon: const Icon(Icons.arrow_back),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -783,7 +1258,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         child: Center(child: CircularProgressIndicator()),
       );
     }
-    return _player();
+    return _player(portrait: true);
   }
 
   Widget _error() => Padding(
@@ -795,12 +1270,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         const SizedBox(height: 12),
         Text(errorMessage, textAlign: TextAlign.center),
         const SizedBox(height: 16),
-        FilledButton.icon(onPressed: _retry, icon: const Icon(Icons.refresh), label: const Text('重新获取并重试')),
+        FilledButton.icon(
+          onPressed: _retry,
+          icon: const Icon(Icons.refresh),
+          label: const Text('重新获取并重试'),
+        ),
       ],
     ),
   );
 
-  Widget _player() {
+  Widget _player({bool portrait = false}) {
     final current = controller!;
     final downloadTasks = ref.watch(downloadTasksProvider).value ?? const [];
     final currentDownload = downloadTasks
@@ -813,10 +1292,19 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
               task.episodeIdentity == _selection!.episodeIdentity,
         )
         .firstOrNull;
-    final aspectRatio = current.value.aspectRatio == 0 ? 16 / 9 : current.value.aspectRatio;
+    final aspectRatio = current.value.aspectRatio == 0
+        ? 16 / 9
+        : current.value.aspectRatio;
     // 铺满（cover）只在横屏布局生效：视频等比放大覆盖整个区域，超出部分
     // 裁剪，不改变画面比例；竖屏与适应（contain）模式保持完整画面。
-    final cover = fillScreen && (fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape);
+    final landscapeLayout =
+        fullScreen ||
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final cover = fillScreen && landscapeLayout;
+    final compactControls =
+        !landscapeLayout &&
+        (MediaQuery.sizeOf(context).width < 430 ||
+            MediaQuery.textScalerOf(context).scale(1) > 1.2);
     final stack = Stack(
       alignment: Alignment.center,
       children: [
@@ -825,26 +1313,45 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             child: FittedBox(
               fit: BoxFit.cover,
               clipBehavior: Clip.hardEdge,
-              child: SizedBox(width: aspectRatio * 100, height: 100, child: VideoPlayer(current)),
+              child: SizedBox(
+                width: aspectRatio * 100,
+                height: 100,
+                child: VideoPlayer(current),
+              ),
             ),
           )
         else
-          VideoPlayer(current),
-        Positioned.fill(
+          Positioned.fill(
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: aspectRatio,
+                child: VideoPlayer(current),
+              ),
+            ),
+          ),
+        Positioned(
+          left: 24,
+          top: 0,
+          right: 0,
+          bottom: 0,
           child: LayoutBuilder(
             builder: (_, constraints) => GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _toggleControls,
               onDoubleTap: _togglePlayback,
               onHorizontalDragStart: _screenHorizontalDragStart,
-              onHorizontalDragUpdate: (details) => _screenHorizontalDragUpdate(details, constraints.maxWidth),
+              onHorizontalDragUpdate: (details) =>
+                  _screenHorizontalDragUpdate(details, constraints.maxWidth),
               onHorizontalDragEnd: (_) => _screenHorizontalDragEnd(),
               onHorizontalDragCancel: _screenHorizontalDragCancel,
-              onLongPressStart: (details) => _screenLongPressStart(details, constraints.maxWidth),
+              onLongPressStart: (details) =>
+                  _screenLongPressStart(details, constraints.maxWidth),
               onLongPressEnd: (_) => _screenLongPressEnd(),
               onLongPressCancel: _screenLongPressCancel,
-              onVerticalDragStart: (details) => _screenVerticalDragStart(details, constraints.maxWidth),
-              onVerticalDragUpdate: (details) => _screenVerticalDragUpdate(details, constraints.maxHeight),
+              onVerticalDragStart: (details) =>
+                  _screenVerticalDragStart(details, constraints.maxWidth),
+              onVerticalDragUpdate: (details) =>
+                  _screenVerticalDragUpdate(details, constraints.maxHeight),
               onVerticalDragEnd: (_) => _screenVerticalDragEnd(),
               onVerticalDragCancel: _screenVerticalDragEnd,
               child: const ColoredBox(color: Colors.transparent),
@@ -852,7 +1359,42 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           ),
         ),
         AnimatedBuilder(
-          animation: Listenable.merge([previewPosition, seekCommitting, screenSeeking, speedBoosting, verticalDrag]),
+          animation: Listenable.merge([current, screenSeeking, seekCommitting]),
+          builder: (_, _) {
+            if (!current.value.isBuffering ||
+                screenSeeking.value ||
+                seekCommitting.value) {
+              return const SizedBox.shrink();
+            }
+            return IgnorePointer(
+              child: DecoratedBox(
+                key: const ValueKey('player-buffering-indicator'),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  shape: BoxShape.circle,
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox.square(
+                    dimension: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        AnimatedBuilder(
+          animation: Listenable.merge([
+            previewPosition,
+            seekCommitting,
+            screenSeeking,
+            speedBoosting,
+            verticalDrag,
+          ]),
           builder: (_, _) {
             final drag = verticalDrag.value;
             if (drag != null) {
@@ -864,7 +1406,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -881,7 +1426,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                         const SizedBox(width: 8),
                         Text(
                           '${(drag.value * 100).round()}%',
-                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ],
                     ),
@@ -906,7 +1455,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                         SizedBox(width: 8),
                         Text(
                           '2× 播放中',
-                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ],
                     ),
@@ -928,24 +1481,41 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 22,
+                    vertical: 14,
+                  ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       seekCommitting.value
                           ? const SizedBox.square(
                               dimension: 26,
-                              child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                color: Colors.white,
+                              ),
                             )
-                          : Icon(forward ? Icons.fast_forward : Icons.fast_rewind, color: Colors.white, size: 30),
+                          : Icon(
+                              forward ? Icons.fast_forward : Icons.fast_rewind,
+                              color: Colors.white,
+                              size: 30,
+                            ),
                       const SizedBox(height: 4),
                       Text(
                         formatPlaybackTime(target),
-                        style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       Text(
                         '/ ${formatPlaybackTime(current.value.duration)}',
-                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                        ),
                       ),
                     ],
                   ),
@@ -956,7 +1526,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         ),
         // 横屏布局没有 AppBar（含 iPad 横屏但未全屏的情况），
         // 统一由播放器内顶栏提供返回和标题。
-        if (fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape)
+        if (fullScreen ||
+            MediaQuery.orientationOf(context) == Orientation.landscape)
           AnimatedOpacity(
             opacity: controlsVisible ? 1 : 0,
             duration: const Duration(milliseconds: 200),
@@ -972,7 +1543,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                       children: [
                         IconButton(
                           key: const ValueKey('fullscreen-back'),
-                          onPressed: fullScreen ? _toggleFullScreen : () => unawaited(Navigator.maybePop(context)),
+                          onPressed: fullScreen
+                              ? _toggleFullScreen
+                              : () => unawaited(_saveAndPop()),
                           tooltip: fullScreen ? '退出全屏' : '返回',
                           icon: const Icon(Icons.arrow_back),
                         ),
@@ -993,149 +1566,250 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           ),
         Align(
           alignment: Alignment.bottomCenter,
-          child: AnimatedOpacity(
-            opacity: controlsVisible ? 1 : 0,
-            duration: const Duration(milliseconds: 200),
-            child: IgnorePointer(
-              ignoring: !controlsVisible,
-              child: Listener(
-                onPointerDown: (_) => _showControls(),
-                child: DecoratedBox(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Color(0xCC000000)],
+          child: SafeArea(
+            top: false,
+            left: landscapeLayout,
+            right: landscapeLayout,
+            bottom: landscapeLayout,
+            child: AnimatedOpacity(
+              opacity: controlsVisible ? 1 : 0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: !controlsVisible,
+                child: Listener(
+                  onPointerDown: (_) => _showControls(),
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Color(0xCC000000)],
+                      ),
                     ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 24),
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge([current, previewPosition, seekCommitting]),
-                      builder: (_, _) => Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          PlaybackScrubber(
-                            position: previewPosition.value ?? current.value.position,
-                            duration: current.value.duration,
-                            buffered: current.value.buffered.isEmpty ? Duration.zero : current.value.buffered.last.end,
-                            enabled:
-                                !failed &&
-                                current.value.isInitialized &&
-                                current.value.duration > Duration.zero &&
-                                !seekCommitting.value,
-                            committing: seekCommitting.value,
-                            showTime: false,
-                            onSeekStart: _seekStart,
-                            onSeekUpdate: _seekUpdate,
-                            onSeekEnd: _seekEnd,
-                            onSeekCancel: _seekCancel,
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
-                            child: Row(
-                              children: [
-                                IconButton(
-                                  onPressed: _togglePlayback,
-                                  iconSize: 30,
-                                  icon: Icon(current.value.isPlaying ? Icons.pause : Icons.play_arrow),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 24),
+                      child: AnimatedBuilder(
+                        animation: Listenable.merge([
+                          current,
+                          previewPosition,
+                          seekCommitting,
+                        ]),
+                        builder: (_, _) => Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            PlaybackScrubber(
+                              position:
+                                  previewPosition.value ??
+                                  current.value.position,
+                              duration: current.value.duration,
+                              buffered: continuousBufferedEnd(
+                                current.value.buffered.map(
+                                  (range) =>
+                                      (start: range.start, end: range.end),
                                 ),
-                                IconButton(
-                                  onPressed: () {
-                                    _showControls();
-                                    setState(() => volumeSliderVisible = !volumeSliderVisible);
-                                  },
-                                  onLongPress: () => unawaited(_toggleMute()),
-                                  tooltip: '音量（长按静音）',
-                                  icon: Icon(
-                                    current.value.volume > 0.5
-                                        ? Icons.volume_up
-                                        : current.value.volume > 0
-                                        ? Icons.volume_down
-                                        : Icons.volume_off,
-                                  ),
-                                ),
-                                Text(
-                                  '${formatPlaybackTime(previewPosition.value ?? current.value.position)} / ${formatPlaybackTime(current.value.duration)}',
-                                  style: const TextStyle(fontSize: 12, color: Colors.white70),
-                                ),
-                                const SizedBox(width: 6),
-                                PlaybackStatusIndicator(
-                                  key: const ValueKey('playback-status-indicator'),
-                                  status: playbackStatus,
-                                  onLongPress: _showPlaybackStatusDetails,
-                                ),
-                                if (!fullScreen)
+                              ),
+                              enabled:
+                                  !failed &&
+                                  current.value.isInitialized &&
+                                  current.value.duration > Duration.zero &&
+                                  !seekCommitting.value,
+                              committing: seekCommitting.value,
+                              showTime: false,
+                              onSeekStart: _seekStart,
+                              onSeekUpdate: _seekUpdate,
+                              onSeekEnd: _seekEnd,
+                              onSeekCancel: _seekCancel,
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                              child: Row(
+                                children: [
                                   IconButton(
-                                    key: const ValueKey('player-download-button'),
-                                    tooltip: currentDownload?.status == DownloadTaskStatus.completed ? '已下载' : '下载本集',
-                                    onPressed: currentDownload?.status == DownloadTaskStatus.completed
-                                        ? null
-                                        : _downloadCurrentEpisode,
-                                    icon: Icon(switch (currentDownload?.status) {
-                                      DownloadTaskStatus.completed => Icons.download_done,
-                                      DownloadTaskStatus.downloading => Icons.downloading,
-                                      DownloadTaskStatus.queued => Icons.schedule,
-                                      DownloadTaskStatus.paused => Icons.pause_circle_outline,
-                                      DownloadTaskStatus.failed => Icons.refresh,
-                                      DownloadTaskStatus.cancelled || null => Icons.download_outlined,
-                                    }),
-                                  ),
-                                const Spacer(),
-                                PopupMenuButton<double>(
-                                  key: const ValueKey('playback-speed-menu'),
-                                  tooltip: '播放速度',
-                                  initialValue: playbackSpeed,
-                                  onSelected: (speed) => unawaited(_setPlaybackSpeed(speed)),
-                                  itemBuilder: (_) => const [
-                                    PopupMenuItem(value: 0.5, child: Text('0.5×')),
-                                    PopupMenuItem(value: 0.75, child: Text('0.75×')),
-                                    PopupMenuItem(value: 1.0, child: Text('正常')),
-                                    PopupMenuItem(value: 1.25, child: Text('1.25×')),
-                                    PopupMenuItem(value: 1.5, child: Text('1.5×')),
-                                    PopupMenuItem(value: 2.0, child: Text('2×')),
-                                  ],
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.speed, size: 21),
-                                        const SizedBox(width: 3),
-                                        Text(
-                                          '${playbackSpeed.toStringAsFixed(playbackSpeed % 1 == 0 ? 0 : 2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}×',
-                                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                                        ),
-                                      ],
+                                    onPressed: _togglePlayback,
+                                    tooltip: current.value.isPlaying
+                                        ? '暂停'
+                                        : current.value.isCompleted
+                                        ? '重新播放'
+                                        : '播放',
+                                    iconSize: 30,
+                                    icon: Icon(
+                                      current.value.isPlaying
+                                          ? Icons.pause
+                                          : Icons.play_arrow,
                                     ),
                                   ),
-                                ),
-                                if (fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape)
-                                  IconButton(
-                                    onPressed: () {
-                                      _showControls();
-                                      setState(() => fillScreen = !fillScreen);
-                                      if (fillScreen) {
-                                        showAppToast(context, '已切换为铺满模式，画面边缘可能被裁剪');
-                                      }
-                                    },
-                                    tooltip: fillScreen ? '适应' : '铺满',
-                                    icon: Icon(fillScreen ? Icons.fit_screen : Icons.crop_free),
+                                  if (!compactControls)
+                                    IconButton(
+                                      onPressed: () {
+                                        _showControls();
+                                        setState(
+                                          () => volumeSliderVisible =
+                                              !volumeSliderVisible,
+                                        );
+                                      },
+                                      onLongPress: () =>
+                                          unawaited(_toggleMute()),
+                                      tooltip: '音量（长按静音）',
+                                      icon: Icon(
+                                        current.value.volume > 0.5
+                                            ? Icons.volume_up
+                                            : current.value.volume > 0
+                                            ? Icons.volume_down
+                                            : Icons.volume_off,
+                                      ),
+                                    ),
+                                  Expanded(
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: Alignment.centerLeft,
+                                      child: Text(
+                                        '${formatPlaybackTime(previewPosition.value ?? current.value.position)} / ${formatPlaybackTime(current.value.duration)}',
+                                        maxLines: 1,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                // iPad 横屏本来就是横屏布局，全屏按钮没有作用，
-                                // 只在竖屏（进入全屏）或全屏态（退出全屏）显示。
-                                if (fullScreen || MediaQuery.orientationOf(context) == Orientation.portrait)
-                                  IconButton(
-                                    onPressed: () {
-                                      _showControls();
-                                      _toggleFullScreen();
-                                    },
-                                    icon: Icon(fullScreen ? Icons.fullscreen_exit : Icons.fullscreen),
+                                  const SizedBox(width: 6),
+                                  PlaybackStatusIndicator(
+                                    key: const ValueKey(
+                                      'playback-status-indicator',
+                                    ),
+                                    status: playbackStatus,
+                                    onLongPress: _showPlaybackStatusDetails,
                                   ),
-                              ],
+                                  if (!fullScreen)
+                                    IconButton(
+                                      key: const ValueKey(
+                                        'player-download-button',
+                                      ),
+                                      tooltip:
+                                          currentDownload?.status ==
+                                              DownloadTaskStatus.completed
+                                          ? '已下载'
+                                          : '下载本集',
+                                      onPressed:
+                                          currentDownload?.status ==
+                                              DownloadTaskStatus.completed
+                                          ? null
+                                          : _downloadCurrentEpisode,
+                                      icon: Icon(
+                                        switch (currentDownload?.status) {
+                                          DownloadTaskStatus.completed =>
+                                            Icons.download_done,
+                                          DownloadTaskStatus.downloading =>
+                                            Icons.downloading,
+                                          DownloadTaskStatus.queued =>
+                                            Icons.schedule,
+                                          DownloadTaskStatus.paused =>
+                                            Icons.pause_circle_outline,
+                                          DownloadTaskStatus.failed =>
+                                            Icons.refresh,
+                                          DownloadTaskStatus.cancelled ||
+                                          null => Icons.download_outlined,
+                                        },
+                                      ),
+                                    ),
+                                  PopupMenuButton<double>(
+                                    key: const ValueKey('playback-speed-menu'),
+                                    tooltip: '播放速度',
+                                    initialValue: playbackSpeed,
+                                    onSelected: (speed) =>
+                                        unawaited(_setPlaybackSpeed(speed)),
+                                    itemBuilder: (_) => const [
+                                      PopupMenuItem(
+                                        value: 0.5,
+                                        child: Text('0.5×'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 0.75,
+                                        child: Text('0.75×'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 1.0,
+                                        child: Text('正常'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 1.25,
+                                        child: Text('1.25×'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 1.5,
+                                        child: Text('1.5×'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 2.0,
+                                        child: Text('2×'),
+                                      ),
+                                    ],
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 10,
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.speed, size: 21),
+                                          const SizedBox(width: 3),
+                                          Text(
+                                            '${playbackSpeed.toStringAsFixed(playbackSpeed % 1 == 0 ? 0 : 2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}×',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  if (fullScreen ||
+                                      MediaQuery.orientationOf(context) ==
+                                          Orientation.landscape)
+                                    IconButton(
+                                      onPressed: () {
+                                        _showControls();
+                                        setState(
+                                          () => fillScreen = !fillScreen,
+                                        );
+                                        if (fillScreen) {
+                                          showAppToast(
+                                            context,
+                                            '已切换为铺满模式，画面边缘可能被裁剪',
+                                          );
+                                        }
+                                      },
+                                      tooltip: fillScreen ? '适应' : '铺满',
+                                      icon: Icon(
+                                        fillScreen
+                                            ? Icons.fit_screen
+                                            : Icons.crop_free,
+                                      ),
+                                    ),
+                                  // iPad 横屏本来就是横屏布局，全屏按钮没有作用，
+                                  // 只在竖屏（进入全屏）或全屏态（退出全屏）显示。
+                                  if (fullScreen ||
+                                      MediaQuery.orientationOf(context) ==
+                                          Orientation.portrait)
+                                    IconButton(
+                                      tooltip: fullScreen ? '退出全屏' : '进入全屏',
+                                      onPressed: () {
+                                        _showControls();
+                                        unawaited(_toggleFullScreen());
+                                      },
+                                      icon: Icon(
+                                        fullScreen
+                                            ? Icons.fullscreen_exit
+                                            : Icons.fullscreen,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1159,6 +1833,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                   child: paused
                       ? IconButton.filled(
                           onPressed: _resumePlayback,
+                          tooltip: current.value.isCompleted ? '重新播放' : '播放',
                           iconSize: 38,
                           style: IconButton.styleFrom(
                             minimumSize: const Size.square(60),
@@ -1173,11 +1848,22 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             );
           },
         ),
-        if (volumeSliderVisible && controlsVisible)
+        if (!compactControls && volumeSliderVisible && controlsVisible)
           Align(
             alignment: Alignment.bottomLeft,
             child: Padding(
-              padding: const EdgeInsets.only(left: 46, bottom: 60),
+              padding: EdgeInsets.only(
+                left:
+                    46 +
+                    (landscapeLayout
+                        ? MediaQuery.viewPaddingOf(context).left
+                        : 0),
+                bottom:
+                    60 +
+                    (landscapeLayout
+                        ? MediaQuery.viewPaddingOf(context).bottom
+                        : 0),
+              ),
               child: Listener(
                 onPointerDown: (_) => _showControls(),
                 child: AnimatedBuilder(
@@ -1188,7 +1874,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 8,
+                      ),
                       child: SizedBox(
                         height: 140,
                         width: 48,
@@ -1198,7 +1887,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                             value: current.value.volume.clamp(0.0, 1.0),
                             onChangeStart: (_) => _showControls(),
                             onChanged: (value) {
-                              unawaited(current.setVolume(value));
+                              _queueVolumeChange(value);
                               if (value > 0) volumeBeforeMute = value;
                               _showControls();
                             },
@@ -1214,7 +1903,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       ],
     );
     if (cover) return SizedBox.expand(child: stack);
-    return AspectRatio(aspectRatio: aspectRatio, child: stack);
+    return AspectRatio(
+      aspectRatio: portrait ? 16 / 9 : aspectRatio,
+      child: stack,
+    );
   }
 
   void _seekStart(Duration target) {
@@ -1244,7 +1936,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     controlsTimer?.cancel();
     if (screenLongPressOnRight && current.value.isPlaying) {
       speedBoosting.value = true;
-      longPressSpeedChange = current.setPlaybackSpeed(2);
+      longPressSpeedChange = current.setPlaybackSpeed(2).catchError((_) {});
     }
   }
 
@@ -1317,25 +2009,43 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _screenVerticalDragStart(DragStartDetails details, double width) {
     final current = controller;
-    if (current == null || !current.value.isInitialized || isSeeking || seekCommitting.value) {
+    if (current == null ||
+        !current.value.isInitialized ||
+        isSeeking ||
+        seekCommitting.value) {
       return;
     }
     final isVolume = details.localPosition.dx >= width / 2;
     verticalDragStartY = details.localPosition.dy;
-    verticalDragStartValue = isVolume ? current.value.volume.clamp(0.0, 1.0) : screenBrightness;
+    verticalDragStartValue = isVolume ? playbackVolume : screenBrightness;
+    verticalDragHasUpdated = false;
     controlsTimer?.cancel();
     verticalDragGeneration++;
     verticalDrag.value = (isVolume: isVolume, value: verticalDragStartValue);
-    if (!isVolume) {
+    if (!isVolume && !screenBrightnessLoaded) {
       unawaited(_syncScreenBrightness(verticalDragGeneration));
     }
+  }
+
+  Future<void> _loadInitialScreenBrightness() async {
+    try {
+      final value = await ScreenBrightness().application;
+      if (!mounted || verticalDrag.value != null) return;
+      screenBrightness = value;
+      screenBrightnessLoaded = true;
+    } catch (_) {}
   }
 
   Future<void> _syncScreenBrightness(int generation) async {
     try {
       final value = await ScreenBrightness().application;
-      if (!mounted || generation != verticalDragGeneration) return;
+      if (!mounted ||
+          generation != verticalDragGeneration ||
+          verticalDragHasUpdated) {
+        return;
+      }
       screenBrightness = value;
+      screenBrightnessLoaded = true;
       verticalDragStartValue = value;
       verticalDrag.value = (isVolume: false, value: value);
     } catch (_) {}
@@ -1346,27 +2056,53 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (drag == null || height <= 0) return;
     final delta = (verticalDragStartY - details.localPosition.dy) / height;
     final value = (verticalDragStartValue + delta).clamp(0.0, 1.0);
+    verticalDragHasUpdated = true;
     verticalDrag.value = (isVolume: drag.isVolume, value: value);
     if (drag.isVolume) {
       final current = controller;
       if (current != null && current.value.isInitialized) {
-        unawaited(current.setVolume(value));
+        _queueVolumeChange(value);
         if (value > 0) volumeBeforeMute = value;
       }
     } else {
       screenBrightness = value;
-      unawaited(_setScreenBrightness(value));
+      screenBrightnessLoaded = true;
+      _queueBrightnessChange(value);
     }
   }
 
-  Future<void> _setScreenBrightness(double value) async {
+  void _queueBrightnessChange(double value) {
+    _pendingBrightness = value.clamp(0.0, 1.0);
+    if (_applyingBrightness) return;
+    final task = _drainBrightnessChanges();
+    _brightnessChangeTask = task;
+    unawaited(task);
+  }
+
+  Future<void> _drainBrightnessChanges() async {
+    _applyingBrightness = true;
     try {
-      await ScreenBrightness().setApplicationScreenBrightness(value);
-    } catch (_) {}
+      while (_pendingBrightness != null) {
+        final value = _pendingBrightness!;
+        _pendingBrightness = null;
+        try {
+          await ScreenBrightness().setApplicationScreenBrightness(value);
+        } catch (_) {}
+      }
+    } finally {
+      _applyingBrightness = false;
+      if (_pendingBrightness != null) {
+        final task = _drainBrightnessChanges();
+        _brightnessChangeTask = task;
+        unawaited(task);
+      }
+    }
   }
 
   Future<void> _resetScreenBrightness() async {
+    _pendingBrightness = null;
     try {
+      await _brightnessChangeTask;
       await ScreenBrightness().resetApplicationScreenBrightness();
     } catch (_) {}
   }
@@ -1382,9 +2118,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (!speedBoosting.value) return;
     speedBoosting.value = false;
     if (current != null) {
-      longPressSpeedChange = longPressSpeedChange.then((_) async {
+      longPressSpeedChange = longPressSpeedChange.catchError((_) {}).then((
+        _,
+      ) async {
         if (identical(controller, current)) {
-          await current.setPlaybackSpeed(playbackSpeed);
+          try {
+            await current.setPlaybackSpeed(playbackSpeed);
+          } catch (_) {}
         }
       });
     }
@@ -1405,30 +2145,44 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       return;
     }
     final generation = seekGeneration;
-    final finalTarget = _clampSeekTarget(previewPosition.value ?? target, seekController.value.duration);
+    final finalTarget = _clampSeekTarget(
+      previewPosition.value ?? target,
+      seekController.value.duration,
+    );
     isSeeking = false;
     previewPosition.value = finalTarget;
     seekCommitting.value = true;
     try {
       await seekPause;
       if (!_isCurrentSeek(seekController, generation)) return;
-      if ((finalTarget - positionBeforeSeek).abs() > const Duration(milliseconds: 250)) {
+      if ((finalTarget - positionBeforeSeek).abs() >
+          const Duration(milliseconds: 250)) {
         await seekController.seekTo(finalTarget);
       }
       if (!_isCurrentSeek(seekController, generation)) return;
-      if (wasPlayingBeforeSeek) await seekController.play();
+      if (finalTarget < seekController.value.duration) {
+        _completionHandled = false;
+      }
+      if (wasPlayingBeforeSeek && _isAppForeground && _playbackDesired) {
+        await seekController.play();
+      }
       if (!_isCurrentSeek(seekController, generation)) return;
       previewPosition.value = null;
       seekCommitting.value = false;
       await _save();
       // seek 成功后立即按新位置重排预取窗口，不等下一次定时拍。
       unawaited(_activeSession?.prefetcher?.updatePosition(finalTarget));
+      if (seekController.value.isPlaying) {
+        _startPlaybackTimer();
+        _startWakelockHeartbeat();
+      }
+      unawaited(_syncWakelock());
       _scheduleControlsHide();
     } catch (_) {
       if (!_isCurrentSeek(seekController, generation)) return;
       previewPosition.value = positionBeforeSeek;
       seekCommitting.value = false;
-      if (wasPlayingBeforeSeek) {
+      if (wasPlayingBeforeSeek && _isAppForeground && _playbackDesired) {
         try {
           await seekController.play();
         } catch (_) {}
@@ -1449,7 +2203,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     previewPosition.value = positionBeforeSeek;
     try {
       await seekPause;
-      if (_isCurrentSeek(seekController, generation) && wasPlayingBeforeSeek) {
+      if (_isCurrentSeek(seekController, generation) &&
+          wasPlayingBeforeSeek &&
+          _isAppForeground &&
+          _playbackDesired) {
         await seekController?.play();
       }
     } finally {
@@ -1488,7 +2245,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 /// 播放链路状态指示：视觉上只有一个彩色小圆点，不打断观看；
 /// 长按弹出「当前播放模式」详情底栏（含降级原因），语义标签保留完整状态文案。
 class PlaybackStatusIndicator extends StatelessWidget {
-  const PlaybackStatusIndicator({super.key, required this.status, required this.onLongPress});
+  const PlaybackStatusIndicator({
+    super.key,
+    required this.status,
+    required this.onLongPress,
+  });
 
   final PlaybackStatus status;
   final VoidCallback onLongPress;
@@ -1532,17 +2293,22 @@ class PlaybackStatusIndicator extends StatelessWidget {
       button: true,
       // 语义层保留完整状态文案（如「边下边播」），供无障碍与长按详情使用。
       label: '${status.label}，长按查看详情',
-      child: GestureDetector(
-        key: const ValueKey('playback-status-gesture'),
-        onLongPress: onLongPress,
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          // 热区保持可点，视觉元素只有一个 8px 彩色圆点（颜色含义见 colorFor）。
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      onLongPress: onLongPress,
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          key: const ValueKey('playback-status-gesture'),
+          onLongPress: onLongPress,
+          behavior: HitTestBehavior.opaque,
+          child: SizedBox.square(
+            dimension: 48,
+            child: Center(
+              // 视觉元素保持为 8px 圆点，交互热区扩大到 48px。
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+            ),
           ),
         ),
       ),
@@ -1552,7 +2318,12 @@ class PlaybackStatusIndicator extends StatelessWidget {
 
 /// 竖屏（非全屏）状态下播放器下方的信息面板：整部简介 + 选集列表。
 class PlayerInfoPanel extends StatefulWidget {
-  const PlayerInfoPanel({super.key, required this.video, required this.current, required this.onEpisodeTap});
+  const PlayerInfoPanel({
+    super.key,
+    required this.video,
+    required this.current,
+    required this.onEpisodeTap,
+  });
 
   final Video video;
   final Episode current;
@@ -1573,14 +2344,22 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
       children: [
         const Text(
           '简介',
-          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
           video.description.isEmpty ? '暂无简介' : video.description,
           maxLines: expanded ? null : 4,
           overflow: expanded ? null : TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.55),
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+            height: 1.55,
+          ),
         ),
         if (video.description.length > 100)
           Align(
@@ -1593,7 +2372,11 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
         const SizedBox(height: 16),
         Text(
           '选集（${video.episodes.length}）',
-          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
         ),
         const SizedBox(height: 12),
         Wrap(

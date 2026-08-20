@@ -28,21 +28,31 @@ class ProxySessionRoute {
 }
 
 class LocalProxyServer {
+  LocalProxyServer({Future<HttpServer> Function()? bindServer})
+    : _bindServer = bindServer ?? _defaultBindServer;
+
+  final Future<HttpServer> Function() _bindServer;
   HttpServer? _server;
   final Map<String, ProxySessionRoute> _routes = {};
   int _port = 0;
+  Future<void> _lifecycle = Future<void>.value();
 
   int get port => _port;
   bool get isRunning => _server != null;
   bool get hasSessions => _routes.isNotEmpty;
 
-  Future<void> start() async {
+  Future<void> start() => _enqueueLifecycle(() async {
     if (_server != null) return;
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final server = await _bindServer();
+    try {
+      server.listen(_handle, onError: (_) {});
+    } catch (_) {
+      await server.close(force: true);
+      rethrow;
+    }
     _server = server;
     _port = server.port;
-    server.listen(_handle, onError: (_) {});
-  }
+  });
 
   String baseUrl(String token) =>
       'http://127.0.0.1:$_port/play/$token/index.m3u8';
@@ -51,13 +61,27 @@ class LocalProxyServer {
 
   void unregister(String token) => _routes.remove(token);
 
-  Future<void> close() async {
+  Future<void> close() => _enqueueLifecycle(() async {
     final server = _server;
     _server = null;
     _port = 0;
     _routes.clear();
     if (server != null) await server.close(force: true);
+  });
+
+  Future<void> _enqueueLifecycle(Future<void> Function() operation) {
+    final result = _lifecycle.then((_) => operation());
+    // A failed bind must be reported to its caller without poisoning later
+    // start/close operations queued on the same server instance.
+    _lifecycle = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
   }
+
+  static Future<HttpServer> _defaultBindServer() =>
+      HttpServer.bind(InternetAddress.loopbackIPv4, 0);
 
   Future<void> _handle(HttpRequest request) async {
     try {

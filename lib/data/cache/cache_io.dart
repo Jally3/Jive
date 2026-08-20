@@ -26,12 +26,22 @@ class CacheFetchResult {
     required this.headers,
     required this.body,
     this.fromCache = false,
+    this.skipped = false,
   });
+
+  /// 预取让行：该片正由播放路径拉取，本次跳过（由下一轮调度补抓）。
+  factory CacheFetchResult.skipped() => CacheFetchResult(
+    statusCode: HttpStatus.noContent,
+    headers: const {},
+    body: const Stream.empty(),
+    skipped: true,
+  );
 
   final int statusCode;
   final Map<String, String> headers;
   final Stream<List<int>> body;
   final bool fromCache;
+  final bool skipped;
 }
 
 class CacheQuotaException implements Exception {
@@ -89,6 +99,12 @@ class ResourceFetcher {
   final SingleFlight<CacheFetchResult> singleFlight;
   bool _reportedCacheBypass = false;
 
+  /// 预取在途的 resourceId（覆盖响应头+body 全程，由 endBackground 解除）。
+  /// 播放路径发现同一片在预取时独立回源，不 join——缓存 body 是单订阅流，
+  /// 共享会让后到者直接失败（起播卡死的根因）。
+  final Set<String> backgroundFetches = {};
+  int _bypassSeq = 0;
+
   bool get _cacheEnabled =>
       manager != null &&
       store != null &&
@@ -102,6 +118,7 @@ class ResourceFetcher {
     required String resourceId,
     required String ext,
     Map<String, String>? downstreamHeaders,
+    bool background = false,
   }) async {
     final cached = await _serveCached(resourceId, ext, downstreamHeaders);
     if (cached != null) return cached;
@@ -114,10 +131,39 @@ class ResourceFetcher {
     if (_rangeHeader(downstreamHeaders) != null) {
       return _fetchRangeWithCache(origin, resourceId, ext, downstreamHeaders);
     }
+    if (background) {
+      // 播放路径正在拉同一片：预取让行，等下一轮调度补抓。
+      if (singleFlight.contains(resourceId) ||
+          backgroundFetches.contains(resourceId)) {
+        return CacheFetchResult.skipped();
+      }
+      backgroundFetches.add(resourceId);
+      try {
+        return await _fetchAndCache(origin, resourceId, ext);
+      } catch (_) {
+        backgroundFetches.remove(resourceId);
+        rethrow;
+      }
+    }
+    if (backgroundFetches.contains(resourceId)) {
+      // 预取正在后台拉同一片：播放器独立回源（独占流 + 独立临时文件），
+      // 短时重复下载换来起播不被预取拖累。
+      return _fetchAndCache(
+        origin,
+        resourceId,
+        ext,
+        partialTag: 'play${_bypassSeq++}',
+      );
+    }
     return singleFlight.run(
       resourceId,
       () => _fetchAndCache(origin, resourceId, ext),
     );
+  }
+
+  /// 预取 body 消费完毕（或放弃）后调用，解除该片的后台在途标记。
+  void endBackground(String resourceId) {
+    backgroundFetches.remove(resourceId);
   }
 
   /// Range 请求未命中缓存：先按完整资源写穿缓存，落盘后再从缓存切出
@@ -129,9 +175,14 @@ class ResourceFetcher {
     String ext,
     Map<String, String>? downstreamHeaders,
   ) async {
-    // 不走 singleFlight：其共享结果的 body 可能正被其他消费者（播放器或
-    // 预取器）读取，重复 drain 会抛错；并发重复回源的概率低、代价可接受。
-    final full = await _fetchAndCache(origin, resourceId, ext);
+    // 不走 singleFlight：其共享结果的 body 是单订阅流，重复订阅会直接抛错；
+    // 并发重复回源的概率低、代价可接受。独立临时文件避免与预取在途写冲突。
+    final full = await _fetchAndCache(
+      origin,
+      resourceId,
+      ext,
+      partialTag: 'range${_bypassSeq++}',
+    );
     if (full.statusCode != HttpStatus.ok) return full;
     // body 完全消费完毕时，_fetchAndCache 的提交（commitResource）已完成。
     await full.body.drain<void>();
@@ -217,8 +268,9 @@ class ResourceFetcher {
   Future<CacheFetchResult> _fetchAndCache(
     Uri origin,
     String resourceId,
-    String ext,
-  ) async {
+    String ext, {
+    String? partialTag,
+  }) async {
     final request = http.Request('GET', origin);
     request.headers.addAll(filterSessionHeaders(sessionHeaders));
     http.StreamedResponse upstream;
@@ -256,11 +308,16 @@ class ResourceFetcher {
         body: upstream.stream,
       );
     }
-    final part = store!.partialFile(
+    final defaultPart = store!.partialFile(
       contentKeyHash!,
       revisionKeyHash!,
       resourceId,
     );
+    // 旁路写入（播放器绕过预取在途、Range 写穿）使用独立临时文件，
+    // 避免与另一个在途写任务同时写同一个 .part 导致内容交错。
+    final part = partialTag == null
+        ? defaultPart
+        : File('${defaultPart.path}.$partialTag');
     // 写入前守卫：条目在 reserve 之后被删除时不再重建目录，直接旁路。
     if (!await manager!.isWritable(entryKey!)) {
       await lease.cancel();
