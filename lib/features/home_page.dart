@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/theme.dart';
 import '../core/app_states.dart';
+import '../data/content_filter_policy.dart';
 import '../data/video_repository.dart';
 import '../data/vod_source_preferences.dart';
 import '../domain/video.dart';
@@ -153,6 +154,20 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    // 内容过滤开关变化：丢弃旧控制器，由 _ensureController 用重建后的
+    // repository（含新开关状态）重新加载列表与分类。
+    // 首次从 loading 解析出默认值时不算变化，避免启动时双重加载。
+    ref.listen(contentFilterEnabledProvider, (previous, next) {
+      final before = previous?.value;
+      final after = next.value;
+      if (before == null || after == null || before == after) return;
+      _resetScrollPositionAfterBuild();
+      controller?.removeListener(_changed);
+      controller?.dispose();
+      controller = null;
+      _activeSourceId = null;
+      setState(() {});
+    });
     final sourceState = ref.watch(selectedVodSourceProvider);
     return SafeArea(
       // bottom: false —— extendBody 会把底部导航栏高度计入 MediaQuery.padding，
@@ -266,17 +281,21 @@ class _HomePageState extends ConsumerState<HomePage> {
     padding: const EdgeInsets.fromLTRB(16, 24, 8, 12),
     child: Row(
       children: [
-        const Expanded(
+        Expanded(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Jive',
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onLongPress: _confirmToggleContentFilter,
+                child: const Text(
+                  'Jive',
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+                ),
               ),
-              SizedBox(height: 4),
-              Text(
+              const SizedBox(height: 4),
+              const Text(
                 '今晚，看点好内容',
                 style: TextStyle(color: AppColors.secondary, fontSize: 15),
               ),
@@ -287,6 +306,32 @@ class _HomePageState extends ConsumerState<HomePage> {
       ],
     ),
   );
+
+  /// 长按「Jive」标题切换敏感内容过滤（默认开启），选择持久化。
+  Future<void> _confirmToggleContentFilter() async {
+    final enabled = ref.read(contentFilterEnabledProvider).value ?? true;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(enabled ? '关闭内容过滤？' : '开启内容过滤？'),
+        content: Text(
+          enabled ? '当前已隐藏伦理、擦边等敏感分类及其内容。关闭后将显示全部分类。' : '开启后将隐藏伦理、擦边等敏感分类及其内容。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(enabled ? '关闭过滤' : '开启过滤'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    await ref.read(contentFilterEnabledProvider.notifier).setEnabled(!enabled);
+  }
 
   /// 分类栏由 Sliver 系统与网格共享同一滚动位置，不再单独动画或填充顶部间距。
   Widget _categoryHeader(

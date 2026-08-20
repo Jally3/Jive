@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import '../domain/video.dart';
 import '../domain/vod_source.dart';
 import 'adapters/mac_cms_v10_adapter.dart';
+import 'category_blocklist.dart';
+import 'content_filter_policy.dart';
 import 'vod_source_adapter.dart';
 import 'vod_source_registry.dart';
 
@@ -35,9 +37,13 @@ abstract interface class VideoRepository {
 class VideoRepositoryImpl implements VideoRepository {
   VideoRepositoryImpl({
     VodSourceAdapter? Function(VodSource source)? adapterResolver,
+    this.contentFilterEnabled = true,
   }) : _adapterResolver = adapterResolver ?? _defaultAdapterResolver;
 
   final VodSourceAdapter? Function(VodSource source) _adapterResolver;
+
+  /// 敏感分类过滤开关：开启时分类列表与视频页都会过滤黑名单内容。
+  final bool contentFilterEnabled;
   final Map<String, ({Video video, DateTime fetchedAt})> _detailCache = {};
   static const _cacheDuration = Duration(minutes: 2);
 
@@ -62,13 +68,31 @@ class VideoRepositoryImpl implements VideoRepository {
     int page = 1,
     int? categoryId,
     String? keyword,
-  }) => _adapterFor(
-    source,
-  ).fetchPage(source, page: page, categoryId: categoryId, keyword: keyword);
+  }) async {
+    final result = await _adapterFor(
+      source,
+    ).fetchPage(source, page: page, categoryId: categoryId, keyword: keyword);
+    if (!contentFilterEnabled) return result;
+    final items = result.items
+        .where((item) => !isBlockedVideo(item))
+        .toList(growable: false);
+    if (items.length == result.items.length) return result;
+    return VideoPage(
+      items: items,
+      page: result.page,
+      pageCount: result.pageCount,
+      total: result.total,
+    );
+  }
 
   @override
-  Future<List<VideoCategory>> fetchCategories(VodSource source) =>
-      _adapterFor(source).fetchCategories(source);
+  Future<List<VideoCategory>> fetchCategories(VodSource source) async {
+    final categories = await _adapterFor(source).fetchCategories(source);
+    if (!contentFilterEnabled) return categories;
+    return categories
+        .where((item) => !isBlockedCategoryName(item.name))
+        .toList(growable: false);
+  }
 
   @override
   Future<Video> fetchDetail(
@@ -94,9 +118,15 @@ class VideoRepositoryImpl implements VideoRepository {
 }
 
 final videoRepositoryProvider = Provider<VideoRepository>((ref) {
+  final filterEnabled = ref.watch(contentFilterEnabledProvider).value ?? true;
   final registry = ref
       .watch(vodSourceRegistryProvider)
       .maybeWhen(data: (r) => r, orElse: () => null);
-  if (registry == null) return VideoRepositoryImpl();
-  return VideoRepositoryImpl(adapterResolver: registry.adapterFor);
+  if (registry == null) {
+    return VideoRepositoryImpl(contentFilterEnabled: filterEnabled);
+  }
+  return VideoRepositoryImpl(
+    adapterResolver: registry.adapterFor,
+    contentFilterEnabled: filterEnabled,
+  );
 });
