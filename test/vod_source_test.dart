@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:jive/data/adapters/mac_cms_v10_adapter.dart';
 import 'package:jive/data/vod_source_config.dart';
 import 'package:jive/data/vod_source_preferences.dart';
 import 'package:jive/data/vod_source_registry.dart';
@@ -68,6 +70,38 @@ void main() {
     expect(source.enabled, isTrue);
     expect(source.priority, 2);
     expect(source.featuredCategoryIds, isEmpty);
+    expect(source.notification, isEmpty);
+  });
+
+  test('VodSource round-trips notification', () {
+    final source = VodSource.fromJson({
+      'id': 'age',
+      'name': '新 AGE',
+      'baseUri': 'https://ageapi.omwjhz.com:18888',
+      'adapterType': 'age_v2',
+      'notification': 'AGE 动漫',
+    });
+    expect(source.notification, 'AGE 动漫');
+    expect(source.toJson()['notification'], 'AGE 动漫');
+    expect(source.disablesDownload, isTrue);
+  });
+
+  test('VodSource round-trips pluginConfigUri', () {
+    final source = VodSource.fromJson({
+      'id': 'dbku',
+      'name': '独播库',
+      'baseUri': 'https://www.dbku.tv',
+      'adapterType': 'syncnext_plugin',
+      'pluginConfigUri':
+          'https://raw.githubusercontent.com/example/plugin_dbku/config.json',
+      'notification': 'dbku.tv 线上看',
+    });
+    expect(source.pluginConfigUri?.host, 'raw.githubusercontent.com');
+    expect(source.disablesDownload, isTrue);
+    expect(
+      source.toJson()['pluginConfigUri'],
+      'https://raw.githubusercontent.com/example/plugin_dbku/config.json',
+    );
   });
 
   test('VodSource defaults when fields are missing', () {
@@ -111,6 +145,28 @@ void main() {
     expect(registry.defaultSource!.id, 'a');
     expect(registry.findById('c')!.enabled, isFalse);
     expect(registry.findById('z'), isNull);
+  });
+
+  test('excludingUnregistered drops unknown adapter types', () {
+    final sources = [
+      VodSource(
+        id: 'a',
+        name: 'A',
+        baseUri: Uri.parse('https://a.example.com'),
+        adapterType: 'mac_cms_v10',
+      ),
+      VodSource(
+        id: 'plugin',
+        name: '插件源',
+        baseUri: Uri.parse('https://plugin.example.com'),
+        adapterType: 'syncnext_plugin',
+      ),
+    ];
+    final registry = VodSourceRegistry.excludingUnregistered(sources, {
+      'mac_cms_v10': MacCmsV10Adapter(http.Client()),
+    });
+    expect(registry.allSources.map((s) => s.id), ['a']);
+    expect(registry.findById('plugin'), isNull);
   });
 
   test('same vod_id across sources keeps distinct global ids', () {

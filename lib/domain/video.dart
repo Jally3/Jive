@@ -116,6 +116,7 @@ class Video {
       VideoRef(sourceId: sourceId, sourceVideoId: sourceVideoId);
 
   Video copyWith({
+    String? title,
     String? posterUrl,
     String? description,
     String? updatedAt,
@@ -129,7 +130,7 @@ class Video {
     String? category,
   }) => Video(
     id: id,
-    title: title,
+    title: title ?? this.title,
     sourceId: sourceId,
     sourceVideoId: sourceVideoId,
     posterUrl: posterUrl ?? this.posterUrl,

@@ -90,7 +90,7 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
     try {
       await ref
           .read(videoRepositoryProvider)
-          .fetchCategories(source)
+          .fetchPage(source)
           .timeout(_checkTimeout);
       health = SourceHealth(
         ok: true,
@@ -209,7 +209,11 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${source.baseUri.host} · ${source.search ? '可搜索' : '不可搜索'}',
+            [
+              source.baseUri.host,
+              if (source.search) '可搜索' else '不可搜索',
+              if (source.notification.isNotEmpty) source.notification,
+            ].join(' · '),
             style: const TextStyle(fontSize: 12, color: AppColors.secondary),
           ),
           if (health != null)

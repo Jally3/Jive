@@ -74,17 +74,22 @@ class PlaybackUrlResolver {
     if (!_isAllowed(initial)) {
       throw const PlaybackUrlResolutionException('播放地址不安全或不受支持');
     }
+    // HTML 解析页（AGE jx 等）常用 chunked 传输。带 Range 在 iOS 上会一直等到超时。
+    // Range 只用于后面的媒体探测，见 _rangeGetMedia。
+    final isAgeResolver = initial.toString().contains('/m3u8/?url=');
+    final htmlHeaders = filterSessionHeaders(source.headers);
+    if (isAgeResolver) {
+      // AGE 插件拉解析页时不带 Referer/Origin，避免解析站异常等待。
+      htmlHeaders.removeWhere((key, _) {
+        final name = key.toLowerCase();
+        return name == 'referer' || name == 'origin';
+      });
+    }
     final response = await client
-        .get(
-          initial,
-          headers: {
-            ...filterSessionHeaders(source.headers),
-            'range': 'bytes=0-${maxHtmlBytes - 1}',
-          },
-        )
-        .timeout(const Duration(seconds: 8));
+        .get(initial, headers: htmlHeaders)
+        .timeout(const Duration(seconds: 20));
     if (response.statusCode < 200 || response.statusCode >= 400) {
-      throw const PlaybackUrlResolutionException('播放地址请求失败');
+      throw PlaybackUrlResolutionException('解析页请求失败（${response.statusCode}）');
     }
     final finalUri = response.request?.url ?? initial;
     final directFormat = _formatFrom(
@@ -93,7 +98,7 @@ class PlaybackUrlResolver {
       response.bodyBytes,
     );
     if (directFormat != PlaybackFormat.unknown) {
-      return source.copyWith(url: finalUri, format: directFormat);
+      return _finalSource(source, finalUri, directFormat);
     }
     if (response.bodyBytes.length > maxHtmlBytes) {
       throw const PlaybackUrlResolutionException('播放页面内容过大，无法解析');
@@ -105,21 +110,46 @@ class PlaybackUrlResolver {
     final html = utf8.decode(response.bodyBytes, allowMalformed: true);
     final candidate = _bestMediaCandidate(html, finalUri);
     if (candidate == null) {
-      throw const PlaybackUrlResolutionException('播放页面中没有可用视频地址');
+      throw const PlaybackUrlResolutionException('解析页中没有可用播放地址');
     }
     final hintedFormat = _formatFrom(candidate, '', const []);
     if (hintedFormat != PlaybackFormat.unknown) {
+      // AGE 已抽出带扩展名的 m3u8，再 HEAD 容易被 CDN 卡住；直接交给播放器。
+      if (isAgeResolver) {
+        return _finalSource(source, candidate, hintedFormat);
+      }
+      return _probeHintedMedia(source, candidate, hintedFormat);
+    }
+    return _rangeGetMedia(source, candidate, hintedFormat);
+  }
+
+  Future<PlaybackSource> _probeHintedMedia(
+    PlaybackSource source,
+    Uri candidate,
+    PlaybackFormat hintedFormat,
+  ) async {
+    try {
       final head = await client
           .head(candidate, headers: filterSessionHeaders(source.headers))
           .timeout(const Duration(seconds: 8));
-      if (head.statusCode < 200 || head.statusCode >= 400) {
-        throw const PlaybackUrlResolutionException('真实视频地址不可用');
+      if (head.statusCode >= 200 && head.statusCode < 400) {
+        return _finalSource(
+          source,
+          head.request?.url ?? candidate,
+          hintedFormat,
+        );
       }
-      return source.copyWith(
-        url: head.request?.url ?? candidate,
-        format: hintedFormat,
-      );
+    } catch (_) {
+      // HEAD 502/405/timeout: fall through to a ranged GET probe.
     }
+    return _rangeGetMedia(source, candidate, hintedFormat);
+  }
+
+  Future<PlaybackSource> _rangeGetMedia(
+    PlaybackSource source,
+    Uri candidate,
+    PlaybackFormat hintedFormat,
+  ) async {
     final media = await client
         .get(
           candidate,
@@ -129,7 +159,7 @@ class PlaybackUrlResolver {
           },
         )
         .timeout(const Duration(seconds: 8));
-    if (media.statusCode < 200 || media.statusCode >= 400) {
+    if (media.statusCode != 200 && media.statusCode != 206) {
       throw const PlaybackUrlResolutionException('真实视频地址不可用');
     }
     final mediaUri = media.request?.url ?? candidate;
@@ -138,17 +168,30 @@ class PlaybackUrlResolver {
       media.headers['content-type'] ?? '',
       media.bodyBytes,
     );
-    if (format == PlaybackFormat.unknown) {
+    final resolvedFormat = format == PlaybackFormat.unknown
+        ? hintedFormat
+        : format;
+    if (resolvedFormat == PlaybackFormat.unknown) {
       throw const PlaybackUrlResolutionException('真实视频格式无法识别');
     }
-    return source.copyWith(url: mediaUri, format: format);
+    return _finalSource(source, mediaUri, resolvedFormat);
   }
+
+  PlaybackSource _finalSource(
+    PlaybackSource source,
+    Uri url,
+    PlaybackFormat format,
+  ) => source.copyWith(
+    url: url,
+    format: format,
+    headers: Map<String, String>.from(source.headers),
+  );
 
   Uri? _bestMediaCandidate(String html, Uri baseUri) {
     final decoded = html.replaceAll('&amp;', '&');
     final patterns = <RegExp>[
       RegExp(
-        r'''(?:const|let|var)\s+(?:vid|url|videoUrl)\s*=\s*['"]([^'"]+)['"]''',
+        r'''(?:const|let|var)\s+(?:vid|url|videoUrl|Vurl)\s*=\s*['"]([^'"]+)['"]''',
         caseSensitive: false,
       ),
       RegExp(r'''(?:url|src)\s*:\s*['"]([^'"]+)['"]''', caseSensitive: false),

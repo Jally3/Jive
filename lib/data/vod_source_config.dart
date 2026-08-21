@@ -11,6 +11,11 @@ class VodSourceConfig {
   static const _remoteTimeout = Duration(seconds: 10);
   static const _remoteCacheKey = 'vod_source_config_remote_cache';
 
+  /// 为 true 时 App 启动只读内置 `config/vod_sources.json`，跳过远端和远端缓存。
+  /// 本地验收 AGE 时保持 true；测完改回 false 以恢复远端源列表。
+  /// 单测传入 [load] 的 `client` 时仍走远端路径，不受此开关影响。
+  static const forceLocalAsset = true;
+
   VodSourceConfig({SharedPreferences? preferences})
     : _preferences = preferences;
 
@@ -20,15 +25,23 @@ class VodSourceConfig {
       _preferences ?? await SharedPreferences.getInstance();
 
   /// 只允许加载启用、HTTPS 且 host 非空的内置源（http 明文源兜底过滤）。
-  static bool isLoadable(VodSource source) =>
-      source.id.isNotEmpty &&
-      source.enabled &&
-      source.isHttps &&
-      source.baseUri.host.isNotEmpty;
+  /// `syncnext_plugin` 还要求 HTTPS 的 `pluginConfigUri`。
+  static bool isLoadable(VodSource source) {
+    if (source.id.isEmpty ||
+        !source.enabled ||
+        !source.isHttps ||
+        source.baseUri.host.isEmpty) {
+      return false;
+    }
+    if (source.adapterType != 'syncnext_plugin') return true;
+    final plugin = source.pluginConfigUri;
+    return plugin != null && plugin.scheme == 'https' && plugin.host.isNotEmpty;
+  }
 
   /// 优先加载在线配置（源列表可随时更新）。远端不可用时先使用最近一次
   /// 成功的远端配置，缓存也不可用时才回退内置资产。
   Future<List<VodSource>> load({http.Client? client}) async {
+    if (forceLocalAsset && client == null) return _loadAsset();
     final remote = await _loadRemote(client);
     if (remote != null) return remote;
     final cached = await _loadCachedRemote();

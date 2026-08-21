@@ -80,15 +80,38 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           .read(videoRepositoryProvider)
           .fetchDetail(source, sc!.activeVideo.ref);
       if (!mounted) return;
+      final merged = _withListMetadata(widget.video, v);
       setState(() {
-        detail = v;
+        detail = merged;
       });
-      sc!.markActiveLoaded(v);
+      sc!.markActiveLoaded(merged);
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  /// List cards already have a title/cover; plugin adapters often only get a
+  /// URL on the detail request and would otherwise show a raw id.
+  Video _withListMetadata(Video listed, Video fetched) {
+    final fetchedTitle = fetched.title.trim();
+    final useListedTitle =
+        listed.title.trim().isNotEmpty &&
+        (fetchedTitle.isEmpty ||
+            fetchedTitle == listed.sourceVideoId ||
+            fetchedTitle.startsWith('http') ||
+            RegExp(r'^\d+$').hasMatch(fetchedTitle));
+    return fetched.copyWith(
+      title: useListedTitle ? listed.title : fetched.title,
+      posterUrl: fetched.posterUrl.isEmpty
+          ? listed.posterUrl
+          : fetched.posterUrl,
+      remarks: fetched.remarks.isEmpty ? listed.remarks : fetched.remarks,
+      description: fetched.description.isEmpty
+          ? listed.description
+          : fetched.description,
+    );
   }
 
   Future<void> _play({int? episodeIndex}) async {
@@ -178,6 +201,11 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
 
   Future<void> _chooseDownloads() async {
     if (sc == null || downloadResolving || sc!.activeVideo.episodes.isEmpty) {
+      return;
+    }
+    final source = _src(sc!.activeVideo.sourceId);
+    if (source?.disablesDownload == true) {
+      showAppToast(context, '该来源暂不支持下载');
       return;
     }
     final current = selected.clamp(0, sc!.activeVideo.episodes.length - 1);

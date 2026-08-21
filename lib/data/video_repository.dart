@@ -2,7 +2,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../domain/video.dart';
 import '../domain/vod_source.dart';
+import 'adapters/age_adapter.dart';
 import 'adapters/mac_cms_v10_adapter.dart';
+import 'adapters/olevod_adapter.dart';
+import 'adapters/syncnext_plugin_adapter.dart';
 import 'category_blocklist.dart';
 import 'content_filter_policy.dart';
 import 'vod_source_adapter.dart';
@@ -49,6 +52,9 @@ class VideoRepositoryImpl implements VideoRepository {
 
   static final Map<String, VodSourceAdapter> _defaultAdapters = {
     'mac_cms_v10': MacCmsV10Adapter(http.Client()),
+    AgeAdapter.adapterTypeName: AgeAdapter(http.Client()),
+    OlevodAdapter.adapterTypeName: OlevodAdapter(http.Client()),
+    SyncnextPluginAdapter.adapterTypeName: SyncnextPluginAdapter(http.Client()),
   };
 
   static VodSourceAdapter? _defaultAdapterResolver(VodSource source) =>

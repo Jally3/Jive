@@ -1,12 +1,32 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../domain/vod_source.dart';
+import 'adapters/age_adapter.dart';
 import 'adapters/mac_cms_v10_adapter.dart';
+import 'adapters/olevod_adapter.dart';
+import 'adapters/syncnext_plugin_adapter.dart';
 import 'vod_source_adapter.dart';
 import 'vod_source_config.dart';
 
+Map<String, VodSourceAdapter> builtInVodSourceAdapters(http.Client client) => {
+  'mac_cms_v10': MacCmsV10Adapter(client),
+  AgeAdapter.adapterTypeName: AgeAdapter(client),
+  OlevodAdapter.adapterTypeName: OlevodAdapter(client),
+  SyncnextPluginAdapter.adapterTypeName: SyncnextPluginAdapter(client),
+};
+
 class VodSourceRegistry {
   VodSourceRegistry(this._sources, this._adapters);
+
+  factory VodSourceRegistry.excludingUnregistered(
+    List<VodSource> sources,
+    Map<String, VodSourceAdapter> adapters,
+  ) => VodSourceRegistry(
+    List.unmodifiable(
+      sources.where((source) => adapters.containsKey(source.adapterType)),
+    ),
+    adapters,
+  );
 
   final List<VodSource> _sources;
   final Map<String, VodSourceAdapter> _adapters;
@@ -44,8 +64,8 @@ final vodSourceRegistryProvider = FutureProvider<VodSourceRegistry>((
   final sources = await ref.watch(vodSourceConfigProvider.future);
   final client = http.Client();
   ref.onDispose(client.close);
-  final adapters = <String, VodSourceAdapter>{
-    'mac_cms_v10': MacCmsV10Adapter(client),
-  };
-  return VodSourceRegistry(sources, adapters);
+  return VodSourceRegistry.excludingUnregistered(
+    sources,
+    builtInVodSourceAdapters(client),
+  );
 });

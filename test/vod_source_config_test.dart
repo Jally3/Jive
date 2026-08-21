@@ -103,4 +103,30 @@ void main() {
     final sources = await VodSourceConfig().load(client: client);
     expect(sources, isNotEmpty);
   });
+
+  test(
+    'forceLocalAsset without a client loads the bundled asset including age',
+    () async {
+      expect(VodSourceConfig.forceLocalAsset, isTrue);
+      final sources = await VodSourceConfig().load();
+      expect(sources.map((s) => s.id), contains('age'));
+      expect(
+        sources.map((s) => s.id),
+        containsAll([
+          'ddys',
+          'olevod',
+          'czzy',
+          'youknow',
+          'libvio',
+          'thanju',
+          'dbku',
+        ]),
+      );
+      expect(
+        sources.firstWhere((s) => s.id == 'dbku').adapterType,
+        'syncnext_plugin',
+      );
+      expect(sources.last.id, 'dbku');
+    },
+  );
 }

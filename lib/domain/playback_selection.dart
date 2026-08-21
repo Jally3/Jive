@@ -193,9 +193,11 @@ PlaybackFormat inferPlaybackFormat(String url) {
   if (uri != null) {
     for (final seg in uri.pathSegments) {
       final s = seg.toLowerCase();
-      if (s.contains('m3u8') || s.contains('hls')) return PlaybackFormat.hls;
-      if (s.contains('mp4')) return PlaybackFormat.mp4;
-      if (s.contains('mpd') || s.contains('dash')) return PlaybackFormat.dash;
+      // Bare path segments like `m3u8` or `hls` are resolver directories,
+      // not media files. Only dotted extensions count here.
+      if (s.contains('.m3u8')) return PlaybackFormat.hls;
+      if (s.contains('.mp4')) return PlaybackFormat.mp4;
+      if (s.contains('.mpd') || s.contains('.dash')) return PlaybackFormat.dash;
     }
     final query = uri.query.toLowerCase();
     if (query.contains('m3u8')) return PlaybackFormat.hls;

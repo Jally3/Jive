@@ -9,6 +9,35 @@ import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
 
 void main() {
+  test('inferPlaybackFormat treats dotted media paths as final', () {
+    expect(
+      inferPlaybackFormat('https://cdn.example.com/a/1.m3u8'),
+      PlaybackFormat.hls,
+    );
+    expect(
+      inferPlaybackFormat('https://cdn.example.com/a/1.mp4'),
+      PlaybackFormat.mp4,
+    );
+  });
+
+  test('inferPlaybackFormat does not treat /m3u8/ directories as HLS', () {
+    expect(
+      inferPlaybackFormat('https://jx.example.com:8443/m3u8/?url=age_x'),
+      PlaybackFormat.unknown,
+    );
+    expect(
+      inferPlaybackFormat('https://cdn.example.com/hls/token'),
+      PlaybackFormat.unknown,
+    );
+  });
+
+  test('inferPlaybackFormat still honors m3u8 query tokens', () {
+    expect(
+      inferPlaybackFormat('https://play.example.com/token?format=m3u8'),
+      PlaybackFormat.hls,
+    );
+  });
+
   test('adapter builds stable line and episode identities', () async {
     final adapter = MacCmsV10Adapter(
       MockClient(

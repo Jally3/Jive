@@ -21,6 +21,7 @@ void main() {
         );
       }
       expect(request.url.path, '/play/token');
+      expect(request.headers['range'], isNull);
       return http.Response(
         '''<html><script>const vid = '/play/token/index.m3u8';</script></html>''',
         200,
@@ -146,6 +147,103 @@ void main() {
     await resolver.resolve(sourceA);
     await resolver.resolve(sourceB);
     expect(pageRequests, {'a': 3, 'b': 2});
+    client.close();
+  });
+
+  test('extracts Vurl without HEAD and keeps empty headers empty', () async {
+    final methods = <String>[];
+    final client = MockClient((request) async {
+      methods.add(request.method);
+      expect(request.headers['range'], isNull);
+      expect(request.headers['referer'], isNull);
+      return http.Response(
+        '''<html><script>var Vurl = 'https://cdn.example.com/a.m3u8';</script></html>''',
+        200,
+        headers: {'content-type': 'text/html'},
+      );
+    });
+    final resolved = await PlaybackUrlResolver(client: client).resolve(
+      PlaybackSource(
+        url: Uri.parse('https://jx.example.com/m3u8/?url=age_x'),
+        headers: {
+          'User-Agent': 'AgeUA',
+          'Referer': 'https://jx.example.com/m3u8/?url=age_x',
+        },
+      ),
+    );
+    expect(methods, ['GET']);
+    expect(resolved.url, Uri.parse('https://cdn.example.com/a.m3u8'));
+    expect(resolved.format, PlaybackFormat.hls);
+    expect(resolved.headers['User-Agent'], 'AgeUA');
+    expect(
+      resolved.headers['Referer'],
+      'https://jx.example.com/m3u8/?url=age_x',
+    );
+    client.close();
+  });
+
+  test('prefers a dotted m3u8 url over Vurl without extension', () async {
+    final client = MockClient((request) async {
+      if (request.method == 'HEAD') {
+        expect(request.url.path, '/real.m3u8');
+        return http.Response('', 200);
+      }
+      return http.Response(
+        '''<html><script>
+          var url = 'https://cdn.example.com/real.m3u8';
+          var Vurl = 'https://cdn.example.com/ad';
+        </script></html>''',
+        200,
+        headers: {'content-type': 'text/html'},
+      );
+    });
+    final resolved = await PlaybackUrlResolver(client: client).resolve(
+      PlaybackSource(url: Uri.parse('https://v.example.com/play/token')),
+    );
+    expect(resolved.url.path, '/real.m3u8');
+    client.close();
+  });
+
+  test('falls back from HEAD 502 to Range GET 206', () async {
+    final methods = <String>[];
+    final client = MockClient((request) async {
+      methods.add(request.method);
+      if (!request.url.path.endsWith('.m3u8')) {
+        expect(request.headers['range'], isNull);
+      }
+      if (request.url.path.endsWith('.m3u8')) {
+        if (request.method == 'HEAD') {
+          return http.Response('', 502);
+        }
+        expect(request.headers['range'], 'bytes=0-511');
+        expect(request.headers['user-agent'], 'AgeUA');
+        expect(request.headers['referer'], 'https://v.example.com/play/token');
+        return http.Response(
+          '#EXTM3U\n',
+          206,
+          headers: {'content-type': 'application/vnd.apple.mpegurl'},
+        );
+      }
+      return http.Response(
+        '''<html><script>const vid = 'https://cdn.example.com/a.m3u8';</script></html>''',
+        200,
+        headers: {'content-type': 'text/html'},
+      );
+    });
+    final resolved = await PlaybackUrlResolver(client: client).resolve(
+      PlaybackSource(
+        url: Uri.parse('https://v.example.com/play/token'),
+        headers: {
+          'User-Agent': 'AgeUA',
+          'Referer': 'https://v.example.com/play/token',
+        },
+      ),
+    );
+    expect(methods, ['GET', 'HEAD', 'GET']);
+    expect(resolved.url, Uri.parse('https://cdn.example.com/a.m3u8'));
+    expect(resolved.format, PlaybackFormat.hls);
+    expect(resolved.headers['User-Agent'], 'AgeUA');
+    expect(resolved.headers['Referer'], 'https://v.example.com/play/token');
     client.close();
   });
 }

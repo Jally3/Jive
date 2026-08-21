@@ -163,7 +163,7 @@ lib/
 
 ```text
 lib/domain/
-├── vod_source.dart          # VodSource 模型（id/name/baseUri/adapterType/search/enabled/priority/featuredCategoryIds）
+├── vod_source.dart          # VodSource 模型（id/name/baseUri/adapterType/search/enabled/priority/notification/featuredCategoryIds/pluginConfigUri）
 ├── video.dart               # Video 含 sourceId/sourceVideoId/globalId；VideoRef；PlaybackLine；VideoPage.total
 
 lib/data/
@@ -171,7 +171,12 @@ lib/data/
 ├── vod_source_registry.dart # 内置源列表 + adapter 映射；vodSourceRegistryProvider
 ├── vod_source_adapter.dart  # VodSourceAdapter 接口
 ├── adapters/
-│   └── mac_cms_v10_adapter.dart  # Mac CMS V10 解析实现
+│   ├── mac_cms_v10_adapter.dart  # Mac CMS V10 解析实现
+│   ├── age_adapter.dart          # AGE JSON API（age_v2）；剧集 URL 为 resolver 句柄
+│   ├── olevod_adapter.dart       # 欧乐 JSON API（olevod_v1）；_vv 签名 + 直链 HLS
+│   ├── syncnext_plugin_adapter.dart  # Syncnext JS 插件（syncnext_plugin）
+│   ├── syncnext_plugin_models.dart
+│   └── syncnext_plugin_runtime.dart  # flutter_js + $http/$next 桥
 ├── vod_source_preferences.dart   # selectedVodSourceProvider（持久化全局源）
 └── video_repository.dart    # VideoRepositoryImpl 统一入口，按 source/ref 请求
 
@@ -186,7 +191,7 @@ lib/features/
 
 ```text
 vodSourceConfigProvider        FutureProvider<List<VodSource>>      从 assets JSON 加载
-vodSourceRegistryProvider      FutureProvider<VodSourceRegistry>    内置源 + adapter 映射
+vodSourceRegistryProvider      FutureProvider<VodSourceRegistry>    内置源 + adapter 映射（丢弃未注册 adapterType）
 selectedVodSourceProvider      NotifierProvider<AsyncValue<VodSource>>  全局浏览源（持久化）
 videoRepositoryProvider        Provider<VideoRepository>            统一访问入口
 ```
@@ -272,7 +277,7 @@ Adapter 职责：
 
 ```text
 VodSource          VOD 源配置（id/name/baseUri/adapterType/...）
-VodSourceAdapter   源协议解析实现（Mac CMS V10 等）
+VodSourceAdapter   源协议解析实现（Mac CMS V10、age_v2、syncnext_plugin）
 Video             App 业务模型
 WatchRecord       本地观看记录模型
 ```

@@ -19,8 +19,10 @@ import '../data/cache/local_proxy.dart';
 import '../data/cache/playback_session.dart';
 import '../data/cache/playback_url_resolver.dart';
 import '../data/cache/prefetch_policy.dart';
+import '../data/adapters/age_adapter.dart';
 import '../data/history_repository.dart';
 import '../data/video_repository.dart';
+import '../data/vod_source_adapter.dart';
 import '../data/vod_source_registry.dart';
 import '../domain/playback_progress.dart';
 import '../domain/playback_selection.dart';
@@ -148,6 +150,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   Future<void> _setup(Duration resume) async {
     _resetSeekState();
     final generation = ++setupGeneration;
+    _selection = _bindPlaybackHeaders(_selection);
     if (mounted) {
       setState(() {
         failed = false;
@@ -165,7 +168,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           // Downloaded HLS endpoints are often extensionless and cannot be
           // reconstructed from the persisted URL alone.
           if (target.playbackSource.format == PlaybackFormat.unknown &&
-              target.hasStableIdentity) {
+              target.hasStableIdentity &&
+              !target.playbackSource.url.toString().contains('/m3u8/?url=')) {
             final offlinePreparation = await _prepareSession(
               target,
               generation,
@@ -182,10 +186,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             }
           }
           if (session == null) {
-            final client = _sessionClient ??= http.Client();
-            target = await (_urlResolver ??= PlaybackUrlResolver(
-              client: client,
-            )).resolveSelection(target);
+            target = await _resolvePlaybackSource(target);
             if (!mounted || generation != setupGeneration) return;
             _selection = target;
             episode = target.episode;
@@ -894,7 +895,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     _playbackDesired = true;
     _completionHandled = false;
     episode = nextSelection?.episode ?? next;
-    _selection = nextSelection ?? selectionFor(widget.video, next);
+    _selection = _bindPlaybackHeaders(
+      nextSelection ?? selectionFor(widget.video, next),
+    );
     if (!mounted) return;
     setState(() {
       failed = false;
@@ -907,6 +910,104 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     ]);
     if (!mounted || generation != setupGeneration) return;
     await _setup(Duration.zero);
+  }
+
+  Future<PlaybackSelection> _resolvePlaybackSource(
+    PlaybackSelection start,
+  ) async {
+    final client = _sessionClient ??= http.Client();
+    final resolver = _urlResolver ??= PlaybackUrlResolver(client: client);
+    final tried = <String>{};
+    var current = start;
+    final registry = ref
+        .read(vodSourceRegistryProvider)
+        .maybeWhen(data: (value) => value, orElse: () => null);
+    final source = registry?.findById(current.sourceId);
+    final adapter = source == null ? null : registry?.adapterFor(source);
+    while (true) {
+      tried.add(current.playbackLineIdentity);
+      try {
+        if (adapter is EpisodePlaybackResolver && source != null) {
+          final playable = await adapter.resolveEpisodePlayback(
+            source,
+            current.episode.url,
+          );
+          var resolved = current.copyWith(
+            episode: Episode(
+              id: current.episode.id,
+              name: current.episode.name,
+              url: playable.url.toString(),
+              identity: current.episode.identity,
+            ),
+            playbackSource: playable,
+          );
+          if (playable.format == PlaybackFormat.unknown) {
+            resolved = await resolver.resolveSelection(resolved);
+          }
+          return resolved;
+        }
+        return await resolver.resolveSelection(current);
+      } on VideoDataException catch (error) {
+        final next = _selectionOnNextLine(current, tried);
+        if (next == null) {
+          throw PlaybackUrlResolutionException(error.message);
+        }
+        current = next;
+      } on PlaybackUrlResolutionException {
+        final next = _selectionOnNextLine(current, tried);
+        if (next == null) rethrow;
+        current = next;
+      }
+    }
+  }
+
+  PlaybackSelection? _selectionOnNextLine(
+    PlaybackSelection current,
+    Set<String> tried,
+  ) {
+    for (final line in widget.video.playbackLines) {
+      if (line.identity.isEmpty || tried.contains(line.identity)) continue;
+      Episode? matched;
+      if (current.episodeIdentity.isNotEmpty) {
+        matched = line.episodes
+            .where((item) => item.identity == current.episodeIdentity)
+            .firstOrNull;
+      }
+      matched ??= line.episodes
+          .where((item) => item.name == current.episode.name)
+          .firstOrNull;
+      if (matched == null || matched.identity.isEmpty || matched.url.isEmpty) {
+        continue;
+      }
+      return _bindPlaybackHeaders(
+        PlaybackSelection(
+          sourceId: current.sourceId,
+          sourceVideoId: current.sourceVideoId,
+          title: current.title,
+          playbackLineIdentity: line.identity,
+          episodeIdentity: matched.identity,
+          episode: matched,
+          playbackSource: PlaybackSource(
+            url: Uri.tryParse(matched.url) ?? Uri(),
+            format: inferPlaybackFormat(matched.url),
+          ),
+        ),
+      );
+    }
+    return null;
+  }
+
+  PlaybackSelection? _bindPlaybackHeaders(PlaybackSelection? selection) {
+    if (selection == null) return null;
+    if (selection.playbackSource.headers.isNotEmpty) return selection;
+    final url = selection.episode.url;
+    // AGE resolver pages look like /m3u8/?url=age_…; Mac CMS direct URLs do not.
+    if (!url.contains('/m3u8/?url=')) return selection;
+    return selection.copyWith(
+      playbackSource: selection.playbackSource.copyWith(
+        headers: AgeAdapter.sessionHeaders(url),
+      ),
+    );
   }
 
   PlaybackSelection? _selectionForEpisodeInCurrentLine(Episode next) {

@@ -4,7 +4,8 @@
 
 | 文档 | 状态 | 说明 |
 | --- | --- | --- |
-| `BACKEND_TECHNICAL_REQUIREMENTS.md` | 进行中 | V1.1 后端（VOD 源目录与远程配置服务）技术需求，当前唯一未实施的前瞻性工作 |
+| `BACKEND_TECHNICAL_REQUIREMENTS.md` | 进行中 | V1.1 后端（VOD 源目录与远程配置服务）技术需求 |
+| `SYNCNEXT_SOURCE_INTEGRATION_PLAN.md` | 第二期进行中 | 接入 SyncnextPlugin 源；AGE Dart Adapter + 通用 JS 插件运行时 |
 | `DESIGN_SYSTEM.md` | 持续生效 | "夜幕影院"深色主题设计规范（颜色/字号/组件 Token），UI 改动须遵守 |
 
 ## 归档（`archive/`，功能已实现，仅作历史记录与验收依据）
