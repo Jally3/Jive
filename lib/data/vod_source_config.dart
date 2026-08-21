@@ -12,9 +12,8 @@ class VodSourceConfig {
   static const _remoteCacheKey = 'vod_source_config_remote_cache';
 
   /// 为 true 时 App 启动只读内置 `config/vod_sources.json`，跳过远端和远端缓存。
-  /// 本地验收 AGE 时保持 true；测完改回 false 以恢复远端源列表。
   /// 单测传入 [load] 的 `client` 时仍走远端路径，不受此开关影响。
-  static const forceLocalAsset = true;
+  static const forceLocalAsset = false;
 
   VodSourceConfig({SharedPreferences? preferences})
     : _preferences = preferences;

@@ -104,11 +104,15 @@ void main() {
     expect(sources, isNotEmpty);
   });
 
+  test('forceLocalAsset is off so startup prefers remote config', () {
+    expect(VodSourceConfig.forceLocalAsset, isFalse);
+  });
+
   test(
-    'forceLocalAsset without a client loads the bundled asset including age',
+    'bundled asset still includes age and plugin sources as fallback',
     () async {
-      expect(VodSourceConfig.forceLocalAsset, isTrue);
-      final sources = await VodSourceConfig().load();
+      final client = MockClient((request) async => http.Response('oops', 500));
+      final sources = await VodSourceConfig().load(client: client);
       expect(sources.map((s) => s.id), contains('age'));
       expect(
         sources.map((s) => s.id),
@@ -126,7 +130,6 @@ void main() {
         sources.firstWhere((s) => s.id == 'dbku').adapterType,
         'syncnext_plugin',
       );
-      expect(sources.last.id, 'dbku');
     },
   );
 }
