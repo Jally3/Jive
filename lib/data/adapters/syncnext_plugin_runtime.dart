@@ -39,13 +39,18 @@ class SyncnextPluginBundle {
       'User-Agent': pluginUserAgent,
       'Accept': 'application/json,text/plain,*/*',
     };
-    final configResponse = await client
-        .get(configUri, headers: headers)
-        .timeout(const Duration(seconds: 15));
-    if (configResponse.statusCode != 200) {
-      throw VideoDataException('插件配置加载失败（${configResponse.statusCode}）');
+    final configResponse = await _getPluginResource(
+      client,
+      configUri,
+      headers,
+      missingMessage: (code) => '插件配置加载失败（$code）',
+    );
+    late final Object decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(configResponse.bodyBytes));
+    } catch (_) {
+      throw const VideoDataException('插件配置格式无效');
     }
-    final decoded = jsonDecode(utf8.decode(configResponse.bodyBytes));
     if (decoded is! Map) {
       throw const VideoDataException('插件配置格式无效');
     }
@@ -61,16 +66,86 @@ class SyncnextPluginBundle {
       if (fileUri.scheme != 'https') {
         throw const VideoDataException('插件脚本地址不安全');
       }
-      final fileResponse = await client
-          .get(fileUri, headers: headers)
-          .timeout(const Duration(seconds: 15));
-      if (fileResponse.statusCode != 200) {
-        throw VideoDataException('插件脚本加载失败（$file）');
-      }
+      final fileResponse = await _getPluginResource(
+        client,
+        fileUri,
+        headers,
+        missingMessage: (_) => '插件脚本加载失败（$file）',
+      );
       scripts.add((name: file, source: utf8.decode(fileResponse.bodyBytes)));
     }
     return SyncnextPluginBundle(config: config, scripts: scripts);
   }
+}
+
+/// GitHub raw is often intercepted or served with a mismatched cert on
+/// mainland / simulator networks. Keep the original URI first, then CDN mirrors.
+List<Uri> pluginResourceCandidates(Uri uri) {
+  final candidates = <Uri>[];
+  void add(Uri next) {
+    if (next.scheme != 'https' || next.host.isEmpty) return;
+    if (candidates.contains(next)) return;
+    candidates.add(next);
+  }
+
+  add(uri);
+  if (uri.host != 'raw.githubusercontent.com') return candidates;
+  final segs = uri.pathSegments.where((part) => part.isNotEmpty).toList();
+  if (segs.length < 4) return candidates;
+  final user = segs[0];
+  final repo = segs[1];
+  final ref = segs[2];
+  final path = segs.skip(3).join('/');
+  if (user.isEmpty || repo.isEmpty || ref.isEmpty || path.isEmpty) {
+    return candidates;
+  }
+  final ghPath = '/gh/$user/$repo@$ref/$path';
+  add(Uri(scheme: 'https', host: 'cdn.jsdelivr.net', path: ghPath));
+  add(Uri(scheme: 'https', host: 'cdn.jsdmirror.com', path: ghPath));
+  return candidates;
+}
+
+Future<http.Response> _getPluginResource(
+  http.Client client,
+  Uri uri,
+  Map<String, String> headers, {
+  required String Function(int statusCode) missingMessage,
+}) async {
+  Object? lastError;
+  var sawCertFailure = false;
+  var sawTimeout = false;
+  for (final candidate in pluginResourceCandidates(uri)) {
+    try {
+      final response = await client
+          .get(candidate, headers: headers)
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+        return response;
+      }
+      lastError = VideoDataException(missingMessage(response.statusCode));
+    } on TimeoutException {
+      sawTimeout = true;
+      lastError = const VideoDataException('插件资源下载超时');
+    } catch (error) {
+      if (_isCertFailure(error)) sawCertFailure = true;
+      lastError = error;
+    }
+  }
+  if (lastError is VideoDataException) throw lastError;
+  if (sawCertFailure) {
+    throw const VideoDataException('插件脚本下载失败（证书校验）');
+  }
+  if (sawTimeout) {
+    throw const VideoDataException('插件资源下载超时');
+  }
+  throw const VideoDataException('插件资源下载失败');
+}
+
+bool _isCertFailure(Object error) {
+  final text = error.toString().toLowerCase();
+  return text.contains('certificate') ||
+      text.contains('handshake') ||
+      text.contains('ssl');
 }
 
 class JsPluginSession implements SyncnextPluginSession {

@@ -29,6 +29,7 @@ ThemeData buildTheme() => ThemeData(
     backgroundColor: AppColors.background,
     foregroundColor: AppColors.text,
     elevation: 0,
+    centerTitle: false,
   ),
   navigationBarTheme: NavigationBarThemeData(
     backgroundColor: AppColors.surface,

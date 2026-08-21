@@ -15,6 +15,46 @@ final _testSource = VodSource(
   adapterType: 'mac_cms_v10',
 );
 
+class _EmptyCategoryAdapter implements VodSourceAdapter {
+  @override
+  String get adapterType => 'mac_cms_v10';
+
+  @override
+  Future<VideoPage> fetchPage(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+  }) async {
+    if (categoryId == 2) {
+      return const VideoPage(items: [], page: 1, pageCount: 1);
+    }
+    return VideoPage(
+      items: [
+        for (var i = 0; i < 3; i++)
+          Video(id: '$i', title: '影片$i', typeId: categoryId ?? 1),
+      ],
+      page: page,
+      pageCount: 1,
+    );
+  }
+
+  @override
+  Future<List<VideoCategory>> fetchCategories(VodSource source) async => const [
+    VideoCategory(id: 1, name: '电影'),
+    VideoCategory(id: 2, name: '电视剧'),
+    VideoCategory(id: 3, name: '动作片'),
+  ];
+
+  @override
+  Future<Video> fetchDetail(VodSource source, VideoRef ref) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
+      throw UnimplementedError();
+}
+
 class _FakeAdapter implements VodSourceAdapter {
   @override
   String get adapterType => 'mac_cms_v10';
@@ -74,6 +114,34 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
   }
+
+  testWidgets('empty categories are hidden after the first-page probe', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [
+        vodSourceRegistryProvider.overrideWith(
+          (ref) async => VodSourceRegistry(
+            [_testSource],
+            {'mac_cms_v10': _EmptyCategoryAdapter()},
+          ),
+        ),
+      ],
+    );
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: HomePage())),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.widgetWithText(ChoiceChip, '电影'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '动作片'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '电视剧'), findsNothing);
+  });
 
   testWidgets('sensitive categories are hidden by default', (tester) async {
     await pumpHome(tester);

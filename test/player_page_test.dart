@@ -409,6 +409,37 @@ void main() {
     expect(find.text('暂无简介'), findsOneWidget);
   });
 
+  testWidgets('portrait title sits beside the back button', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find
+          .byKey(const ValueKey('playback-status-indicator'))
+          .evaluate()
+          .isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    final appBar = tester.widget<AppBar>(find.byType(AppBar));
+    expect(appBar.centerTitle, isFalse);
+    final back = tester.getCenter(find.byTooltip('返回'));
+    final title = tester.getCenter(find.text('测试剧集'));
+    expect(title.dx, greaterThan(back.dx));
+    expect(title.dx, lessThan(tester.getSize(find.byType(AppBar)).width / 2));
+    expect((title.dy - back.dy).abs(), lessThan(16));
+
+    await _unmountPlayerPage(tester);
+  });
+
   testWidgets('PlayerPage fits a 9:16 video at 320x568 with text scale 2', (
     tester,
   ) async {

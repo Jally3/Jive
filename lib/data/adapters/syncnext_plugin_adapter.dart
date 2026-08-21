@@ -239,6 +239,12 @@ class SyncnextPluginAdapter implements EpisodePlaybackResolver {
       } catch (error) {
         _sessions.remove(source.id);
         if (error is VideoDataException) rethrow;
+        final text = error.toString().toLowerCase();
+        if (text.contains('certificate') ||
+            text.contains('handshake') ||
+            text.contains('ssl')) {
+          throw const VideoDataException('插件脚本下载失败（证书校验）');
+        }
         throw const VideoDataException('插件加载失败');
       }
     });

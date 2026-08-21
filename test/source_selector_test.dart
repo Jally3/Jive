@@ -49,14 +49,25 @@ Future<void> _pumpSheet(
   await tester.pumpAndSettle();
 }
 
+VodSource _site({
+  required String id,
+  required String name,
+  String adapterType = 'syncnext_plugin',
+}) => VodSource(
+  id: id,
+  name: name,
+  baseUri: Uri.parse('https://$id.example.com'),
+  adapterType: adapterType,
+  notification: '画质更高',
+);
+
 double _sheetPixels(WidgetTester tester) => tester
-    .stateList<ScrollableState>(
+    .state<ScrollableState>(
       find.descendant(
-        of: find.byType(SourceSelectorSheet),
+        of: find.byKey(const ValueKey('source-list-collection')),
         matching: find.byType(Scrollable),
       ),
     )
-    .first
     .position
     .pixels;
 
@@ -81,6 +92,58 @@ void main() {
       await _pumpSheet(tester, sources: sources, selectedId: 's0');
 
       expect(_sheetPixels(tester), 0);
+    },
+  );
+
+  testWidgets('source sheet splits collection and site sources into tabs', (
+    tester,
+  ) async {
+    await _pumpSheet(
+      tester,
+      sources: [
+        ..._sources(2),
+        _site(id: 'age', name: '新 AGE', adapterType: 'age_v2'),
+        _site(id: 'dbku', name: '独播库'),
+      ],
+      selectedId: 's0',
+    );
+
+    expect(find.text(SourceSelectorSheet.collectionTabLabel), findsOneWidget);
+    expect(find.text(SourceSelectorSheet.siteTabLabel), findsOneWidget);
+    expect(find.text('源0'), findsOneWidget);
+    expect(find.textContaining('不一定稳定').hitTestable(), findsNothing);
+
+    await tester.tap(find.text(SourceSelectorSheet.siteTabLabel));
+    await tester.pumpAndSettle();
+    expect(find.text('独播库'), findsOneWidget);
+    expect(find.text('新 AGE'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('独播库')).dy,
+      lessThan(tester.getTopLeft(find.text('新 AGE')).dy),
+    );
+    expect(
+      find.textContaining(SourceSelectorSheet.siteTabHint).hitTestable(),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'source sheet opens the site tab when a site source is selected',
+    (tester) async {
+      await _pumpSheet(
+        tester,
+        sources: [
+          ..._sources(2),
+          _site(id: 'dbku', name: '独播库'),
+        ],
+        selectedId: 'dbku',
+      );
+
+      expect(find.text('独播库'), findsOneWidget);
+      expect(
+        find.textContaining(SourceSelectorSheet.siteTabHint).hitTestable(),
+        findsOneWidget,
+      );
     },
   );
 }

@@ -1,5 +1,9 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:jive/data/adapters/syncnext_plugin_adapter.dart';
 import 'package:jive/data/adapters/syncnext_plugin_models.dart';
 import 'package:jive/data/adapters/syncnext_plugin_runtime.dart';
@@ -410,5 +414,50 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('github raw plugin uris get jsdelivr mirrors', () {
+    final github = Uri.parse(
+      'https://raw.githubusercontent.com/qoli/syncnextPlugin/main/plugin_dbku/config.json',
+    );
+    expect(pluginResourceCandidates(github).map((uri) => '$uri'), [
+      '$github',
+      'https://cdn.jsdelivr.net/gh/qoli/syncnextPlugin@main/plugin_dbku/config.json',
+      'https://cdn.jsdmirror.com/gh/qoli/syncnextPlugin@main/plugin_dbku/config.json',
+    ]);
+    final site = Uri.parse('https://www.dbku.tv/vodtype/2.html');
+    expect(pluginResourceCandidates(site), [site]);
+  });
+
+  test('bundle load falls back to jsdelivr when github cert fails', () async {
+    final requested = <String>[];
+    final client = MockClient((request) async {
+      requested.add('${request.url}');
+      if (request.url.host == 'raw.githubusercontent.com') {
+        throw const HandshakeException('CERTIFICATE_VERIFY_FAILED');
+      }
+      if (request.url.host != 'cdn.jsdelivr.net') {
+        return http.Response('missing', 404);
+      }
+      final name = request.url.pathSegments.last;
+      if (name == 'config.json') {
+        return http.Response.bytes(utf8.encode(jsonEncode(_configJson)), 200);
+      }
+      if (name == 'txml.js') {
+        return http.Response('function tXml(){}', 200);
+      }
+      if (name == 'app.js') {
+        return http.Response('function buildMedias(){}', 200);
+      }
+      return http.Response('missing', 404);
+    });
+
+    final bundle = await SyncnextPluginBundle.load(
+      client,
+      _source.pluginConfigUri!,
+    );
+    expect(bundle.config.name, '独播库');
+    expect(bundle.scripts.map((script) => script.name), ['txml.js', 'app.js']);
+    expect(requested.any((url) => url.contains('cdn.jsdelivr.net')), isTrue);
   });
 }

@@ -83,6 +83,7 @@ void main() {
     });
     expect(source.notification, 'AGE 动漫');
     expect(source.toJson()['notification'], 'AGE 动漫');
+    expect(source.isSiteSource, isTrue);
     expect(source.disablesDownload, isTrue);
   });
 
@@ -97,6 +98,7 @@ void main() {
       'notification': 'dbku.tv 线上看',
     });
     expect(source.pluginConfigUri?.host, 'raw.githubusercontent.com');
+    expect(source.isSiteSource, isTrue);
     expect(source.disablesDownload, isTrue);
     expect(
       source.toJson()['pluginConfigUri'],
@@ -111,6 +113,7 @@ void main() {
     expect(source.enabled, isTrue);
     expect(source.priority, 999);
     expect(source.adapterType, 'mac_cms_v10');
+    expect(source.isSiteSource, isFalse);
   });
 
   test('registry filters enabled and searchable sources', () {

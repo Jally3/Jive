@@ -54,30 +54,39 @@ void main() {
     child: const MaterialApp(home: CacheManagementPage()),
   );
 
-  CacheEntry entry({String title = '测试影片', String episode = '第1集'}) =>
-      CacheEntry(
-        contentKeyVersion: 1,
-        contentKeyHash: 'ck1',
-        revisionKeyHash: 'rk$episode',
-        manifestFingerprint: 'fp',
-        sourceId: 's',
-        sourceVideoId: 'v',
-        title: title,
-        playbackLineIdentity: 'line',
-        playbackLineName: '',
-        episodeIdentity: 'ep$episode',
-        episodeId: '1',
-        episodeName: episode,
-        completeBytes: 1048576,
-        committedResourceCount: 1,
-        expectedResourceCount: 2,
-        lastAccessMs: DateTime.now().millisecondsSinceEpoch,
-      );
+  CacheEntry entry({
+    String title = '测试影片',
+    String episode = '第1集',
+    bool offlinePlayable = false,
+    bool downloadOrigin = false,
+    CacheEntryStatus status = CacheEntryStatus.partial,
+  }) => CacheEntry(
+    contentKeyVersion: 1,
+    contentKeyHash: 'ck1',
+    revisionKeyHash: 'rk$episode',
+    manifestFingerprint: 'fp',
+    sourceId: 's',
+    sourceVideoId: 'v',
+    title: title,
+    playbackLineIdentity: 'line',
+    playbackLineName: '',
+    episodeIdentity: 'ep$episode',
+    episodeId: '1',
+    episodeName: episode,
+    status: status,
+    downloadOrigin: downloadOrigin,
+    completeBytes: 1048576,
+    committedResourceCount: offlinePlayable ? 2 : 1,
+    expectedResourceCount: 2,
+    offlinePlayable: offlinePlayable,
+    lastAccessMs: DateTime.now().millisecondsSinceEpoch,
+  );
 
   testWidgets('shows empty state when there is no cache', (tester) async {
     await tester.pumpWidget(wrap(const []));
     await tester.pumpAndSettle();
-    expect(find.textContaining('还没有缓存'), findsOneWidget);
+    expect(find.textContaining('还没有播放缓存'), findsOneWidget);
+    expect(find.textContaining('主动下载的任务在「下载」里'), findsOneWidget);
     expect(find.text('清理全部'), findsNothing);
   });
 
@@ -90,6 +99,8 @@ void main() {
     expect(find.text('第1集'), findsOneWidget);
     expect(find.text('清理全部'), findsOneWidget);
     expect(find.textContaining('已用'), findsOneWidget);
+    expect(find.textContaining('离线下载请到「下载」'), findsOneWidget);
+    expect(find.text('自动'), findsNothing);
   });
 
   testWidgets('groups multiple episodes under one title', (tester) async {
@@ -111,7 +122,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
     await tester.pumpAndSettle();
     expect(find.text('测试影片'), findsNothing);
-    expect(find.textContaining('还没有缓存'), findsOneWidget);
+    expect(find.textContaining('还没有播放缓存'), findsOneWidget);
   });
 
   testWidgets('clear all asks for confirmation', (tester) async {
@@ -120,5 +131,24 @@ void main() {
     await tester.tap(find.text('清理全部'));
     await tester.pumpAndSettle();
     expect(find.text('清空全部缓存？'), findsOneWidget);
+    expect(find.textContaining('下载列表里的任务不会被取消'), findsOneWidget);
+  });
+
+  testWidgets('status labels distinguish playback cache from downloads', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap([
+        entry(episode: '第1集', offlinePlayable: true),
+        entry(episode: '第2集', offlinePlayable: true, downloadOrigin: true),
+        entry(episode: '第3集', status: CacheEntryStatus.failed),
+      ]),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('已缓存'), findsOneWidget);
+    expect(find.text('离线下载'), findsOneWidget);
+    expect(find.text('缓存失败'), findsOneWidget);
+    expect(find.text('可离线'), findsNothing);
+    expect(find.text('下载失败'), findsNothing);
   });
 }

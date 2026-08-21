@@ -298,7 +298,7 @@ class _DownloadManagementPageState
     );
   }
 
-  /// 删除确认弹窗：返回是否确认，以及是否连带删除已下载缓存。
+  /// 删除确认弹窗：返回是否确认，以及是否连带删除本地文件。
   Future<({bool confirmed, bool deleteCache})> _confirmDelete({
     required String title,
     required String message,
@@ -318,7 +318,7 @@ class _DownloadManagementPageState
                 value: deleteCache,
                 onChanged: (value) =>
                     setDialogState(() => deleteCache = value ?? false),
-                title: const Text('同时删除已下载缓存'),
+                title: const Text('同时删除本地文件'),
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
                 dense: true,

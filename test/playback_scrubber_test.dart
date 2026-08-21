@@ -5,37 +5,45 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/shared/playback_scrubber.dart';
 
 void main() {
-  group('continuousBufferedEnd', () {
-    test('merges unordered overlapping and adjacent ranges from zero', () {
+  group('mergeBufferedRanges', () {
+    test('merges unordered overlapping and adjacent ranges', () {
       expect(
-        continuousBufferedEnd(const [
+        mergeBufferedRanges(const [
           (start: Duration(seconds: 8), end: Duration(seconds: 15)),
           (start: Duration.zero, end: Duration(seconds: 5)),
           (start: Duration(seconds: 4), end: Duration(seconds: 10)),
           (start: Duration(seconds: 15), end: Duration(seconds: 20)),
         ]),
-        const Duration(seconds: 20),
+        const [(start: Duration.zero, end: Duration(seconds: 20))],
       );
     });
 
-    test('stops at the first gap and ignores later buffered ranges', () {
+    test('keeps disjoint ranges after a seek gap', () {
       expect(
-        continuousBufferedEnd(const [
+        mergeBufferedRanges(const [
           (start: Duration(seconds: 25), end: Duration(seconds: 30)),
           (start: Duration.zero, end: Duration(seconds: 10)),
           (start: Duration(seconds: 12), end: Duration(seconds: 20)),
         ]),
-        const Duration(seconds: 10),
+        const [
+          (start: Duration.zero, end: Duration(seconds: 10)),
+          (start: Duration(seconds: 12), end: Duration(seconds: 20)),
+          (start: Duration(seconds: 25), end: Duration(seconds: 30)),
+        ],
       );
     });
 
-    test('returns zero without a valid range that starts at zero', () {
+    test('drops inverted ranges and clamps to duration', () {
       expect(
-        continuousBufferedEnd(const [
+        mergeBufferedRanges(const [
           (start: Duration(seconds: 2), end: Duration(seconds: 4)),
           (start: Duration(seconds: 8), end: Duration(seconds: 3)),
-        ]),
-        Duration.zero,
+          (start: Duration(seconds: 9), end: Duration(seconds: 15)),
+        ], duration: const Duration(seconds: 10)),
+        const [
+          (start: Duration(seconds: 2), end: Duration(seconds: 4)),
+          (start: Duration(seconds: 9), end: Duration(seconds: 10)),
+        ],
       );
     });
   });
@@ -104,7 +112,9 @@ void main() {
             child: PlaybackScrubber(
               position: const Duration(minutes: 2),
               duration: const Duration(minutes: 10),
-              buffered: const Duration(minutes: 4),
+              buffered: const [
+                (start: Duration.zero, end: Duration(minutes: 4)),
+              ],
               enabled: true,
               onSeekStart: previews.add,
               onSeekUpdate: previews.add,
@@ -143,7 +153,7 @@ void main() {
             child: PlaybackScrubber(
               position: Duration.zero,
               duration: const Duration(minutes: 10),
-              buffered: Duration.zero,
+              buffered: const [],
               enabled: true,
               onSeekStart: starts.add,
               onSeekUpdate: (_) {},
@@ -178,7 +188,7 @@ void main() {
         home: PlaybackScrubber(
           position: const Duration(minutes: 3),
           duration: const Duration(minutes: 10),
-          buffered: const Duration(minutes: 5),
+          buffered: const [(start: Duration.zero, end: Duration(minutes: 5))],
           enabled: true,
           committing: true,
           onSeekStart: (_) => called = true,
@@ -207,7 +217,7 @@ void main() {
         home: PlaybackScrubber(
           position: Duration.zero,
           duration: Duration.zero,
-          buffered: Duration.zero,
+          buffered: const [],
           enabled: false,
           onSeekStart: (_) => called = true,
           onSeekUpdate: (_) => called = true,
@@ -236,7 +246,7 @@ void main() {
         home: PlaybackScrubber(
           position: const Duration(minutes: 2),
           duration: const Duration(minutes: 10),
-          buffered: const Duration(minutes: 3),
+          buffered: const [(start: Duration.zero, end: Duration(minutes: 3))],
           enabled: true,
           onSeekStart: starts.add,
           onSeekUpdate: updates.add,
@@ -266,4 +276,86 @@ void main() {
     expect(updates, isEmpty);
     semantics.dispose();
   });
+
+  testWidgets('paints disjoint buffered ranges instead of filling the gap', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 200,
+            child: PlaybackScrubber(
+              position: Duration(minutes: 6),
+              duration: Duration(minutes: 10),
+              buffered: [
+                (start: Duration.zero, end: Duration(minutes: 2)),
+                (start: Duration(minutes: 5), end: Duration(minutes: 7)),
+              ],
+              enabled: true,
+              onSeekStart: _noopSeek,
+              onSeekUpdate: _noopSeek,
+              onSeekEnd: _noopSeek,
+              onSeekCancel: _noop,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('buffered-range-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('buffered-range-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('buffered-range-2')), findsNothing);
+
+    final track = tester.getRect(find.byKey(const ValueKey('playback-track')));
+    final first = tester.getRect(
+      find.byKey(const ValueKey('buffered-range-0')),
+    );
+    final second = tester.getRect(
+      find.byKey(const ValueKey('buffered-range-1')),
+    );
+    expect(first.left, closeTo(track.left, 1));
+    expect(first.width, closeTo(track.width * 0.2, 1.5));
+    expect(second.left, closeTo(track.left + track.width * 0.5, 1.5));
+    expect(second.width, closeTo(track.width * 0.2, 1.5));
+    expect(first.right, lessThan(second.left));
+  });
+
+  testWidgets('paints a buffered island that does not start at zero', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 200,
+            child: PlaybackScrubber(
+              position: Duration(minutes: 8),
+              duration: Duration(minutes: 10),
+              buffered: [
+                (start: Duration(minutes: 7), end: Duration(minutes: 9)),
+              ],
+              enabled: true,
+              onSeekStart: _noopSeek,
+              onSeekUpdate: _noopSeek,
+              onSeekEnd: _noopSeek,
+              onSeekCancel: _noop,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('buffered-range-0')), findsOneWidget);
+    final track = tester.getRect(find.byKey(const ValueKey('playback-track')));
+    final island = tester.getRect(
+      find.byKey(const ValueKey('buffered-range-0')),
+    );
+    expect(island.left, closeTo(track.left + track.width * 0.7, 1.5));
+    expect(island.width, closeTo(track.width * 0.2, 1.5));
+  });
 }
+
+void _noopSeek(Duration _) {}
+
+void _noop() {}

@@ -50,6 +50,12 @@ class VodSource {
 
   bool get isHttps => baseUri.scheme == 'https';
 
+  /// AGE、欧乐与 Syncnext 插件同属站点源，和 Mac CMS 采集站分开展示。
+  bool get isSiteSource =>
+      adapterType == 'age_v2' ||
+      adapterType == 'olevod_v1' ||
+      adapterType == 'syncnext_plugin';
+
   /// AGE resolver URLs and plugin `Player()` handles are not stable media.
   bool get disablesDownload =>
       adapterType == 'age_v2' || adapterType == 'syncnext_plugin';

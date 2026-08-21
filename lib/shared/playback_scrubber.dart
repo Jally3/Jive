@@ -4,32 +4,43 @@ import '../app/theme.dart';
 
 typedef PlaybackBufferedRange = ({Duration start, Duration end});
 
-/// Returns the end of the buffered region that can be played continuously
-/// from the beginning of the video.
+/// Merges native player buffered ranges for painting.
 ///
-/// Buffered ranges may be unordered, overlapping, or separated by gaps after
-/// a seek. A gap stops the continuous region, so later ranges are ignored.
-Duration continuousBufferedEnd(Iterable<PlaybackBufferedRange> ranges) {
-  final sorted =
-      ranges
-          .where(
-            (range) => range.end > Duration.zero && range.end >= range.start,
-          )
-          .map(
-            (range) => (
-              start: range.start < Duration.zero ? Duration.zero : range.start,
-              end: range.end,
-            ),
-          )
-          .toList()
-        ..sort((a, b) => a.start.compareTo(b.start));
-
-  var continuousEnd = Duration.zero;
-  for (final range in sorted) {
-    if (range.start > continuousEnd) break;
-    if (range.end > continuousEnd) continuousEnd = range.end;
+/// Ranges may be unordered, overlapping, or separated by gaps after a seek.
+/// Overlapping and touching ranges are combined; gaps are kept so the scrubber
+/// does not look loaded across unbuffered holes.
+List<PlaybackBufferedRange> mergeBufferedRanges(
+  Iterable<PlaybackBufferedRange> ranges, {
+  Duration duration = Duration.zero,
+}) {
+  final hasLimit = duration > Duration.zero;
+  final cleaned = <PlaybackBufferedRange>[];
+  for (final range in ranges) {
+    var start = range.start < Duration.zero ? Duration.zero : range.start;
+    var end = range.end;
+    if (hasLimit && end > duration) end = duration;
+    if (hasLimit && start >= duration) continue;
+    if (end <= start) continue;
+    cleaned.add((start: start, end: end));
   }
-  return continuousEnd;
+  cleaned.sort((a, b) {
+    final byStart = a.start.compareTo(b.start);
+    return byStart != 0 ? byStart : a.end.compareTo(b.end);
+  });
+  if (cleaned.isEmpty) return const [];
+  final merged = <PlaybackBufferedRange>[cleaned.first];
+  for (var i = 1; i < cleaned.length; i++) {
+    final range = cleaned[i];
+    final last = merged.last;
+    if (range.start <= last.end) {
+      if (range.end > last.end) {
+        merged[merged.length - 1] = (start: last.start, end: range.end);
+      }
+    } else {
+      merged.add(range);
+    }
+  }
+  return merged;
 }
 
 Duration positionFromFraction(double fraction, Duration duration) {
@@ -76,7 +87,8 @@ class PlaybackScrubber extends StatefulWidget {
     this.showTime = true,
   });
 
-  final Duration position, duration, buffered;
+  final Duration position, duration;
+  final List<PlaybackBufferedRange> buffered;
   final bool enabled;
   final bool committing;
   final bool showTime;
@@ -167,7 +179,10 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
         ? widget.duration.inMilliseconds.toDouble()
         : 1.0;
     final played = (displayPosition.inMilliseconds / maximum).clamp(0.0, 1.0);
-    final loaded = (widget.buffered.inMilliseconds / maximum).clamp(0.0, 1.0);
+    final merged = mergeBufferedRanges(
+      widget.buffered,
+      duration: widget.duration,
+    );
     final active = _dragging || widget.committing;
     final increasedPosition = _semanticTarget(displayPosition, increase: true);
     final decreasedPosition = _semanticTarget(displayPosition, increase: false);
@@ -204,6 +219,17 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
                 0.0,
                 (width - _bubbleWidth).clamp(0.0, double.infinity),
               );
+              final bufferedLayout = [
+                for (final range in merged)
+                  (
+                    left:
+                        width *
+                        (range.start.inMilliseconds / maximum).clamp(0.0, 1.0),
+                    right:
+                        width *
+                        (range.end.inMilliseconds / maximum).clamp(0.0, 1.0),
+                  ),
+              ];
               return GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onHorizontalDragStart: _interactive
@@ -250,8 +276,10 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
                       Align(
                         alignment: Alignment.center,
                         child: AnimatedContainer(
+                          key: const ValueKey('playback-track'),
                           duration: const Duration(milliseconds: 120),
                           height: active ? 6 : 4,
+                          clipBehavior: Clip.antiAlias,
                           decoration: BoxDecoration(
                             color: Colors.white24,
                             borderRadius: BorderRadius.circular(3),
@@ -259,14 +287,26 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
                           child: Stack(
                             fit: StackFit.expand,
                             children: [
-                              FractionallySizedBox(
-                                alignment: Alignment.centerLeft,
-                                widthFactor: loaded,
-                                child: const ColoredBox(color: Colors.white54),
-                              ),
-                              FractionallySizedBox(
-                                alignment: Alignment.centerLeft,
-                                widthFactor: played,
+                              for (var i = 0; i < bufferedLayout.length; i++)
+                                if (bufferedLayout[i].right >
+                                    bufferedLayout[i].left)
+                                  Positioned(
+                                    key: ValueKey('buffered-range-$i'),
+                                    left: bufferedLayout[i].left,
+                                    width:
+                                        bufferedLayout[i].right -
+                                        bufferedLayout[i].left,
+                                    top: 0,
+                                    bottom: 0,
+                                    child: const ColoredBox(
+                                      color: Colors.white54,
+                                    ),
+                                  ),
+                              Positioned(
+                                left: 0,
+                                width: width * played,
+                                top: 0,
+                                bottom: 0,
                                 child: const ColoredBox(
                                   color: AppColors.accent,
                                 ),

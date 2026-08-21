@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/theme.dart';
 import '../core/app_states.dart';
+import '../data/category_nav.dart';
 import '../data/content_filter_policy.dart';
 import '../data/video_repository.dart';
 import '../data/vod_source_preferences.dart';
@@ -96,29 +97,40 @@ class _HomePageState extends ConsumerState<HomePage> {
           .read(videoRepositoryProvider)
           .fetchCategories(source);
       if (!isActive()) return;
-      final byId = {for (final item in all) item.id: item};
-      // 部分源不返回 type_pid，此时所有分类都视为顶级、没有子分类。
-      bool isRoot(VideoCategory item) =>
-          item.parentId == 0 || !byId.containsKey(item.parentId);
-      var roots = all.where(isRoot).toList();
-      final children = <int, List<VideoCategory>>{};
-      for (final item in all) {
-        if (!isRoot(item)) {
-          children.putIfAbsent(item.parentId, () => []).add(item);
-        }
-      }
-      final featured = source.featuredCategoryIds;
-      if (featured.isNotEmpty) {
-        final filtered = roots
-            .where((item) => featured.contains(item.id))
-            .toList();
-        if (filtered.isNotEmpty) roots = filtered;
-      }
+      var nav = buildCategoryNav(all, featuredIds: source.featuredCategoryIds);
       if (!isActive()) return;
       setState(() {
-        _roots = roots;
-        _children = children;
+        _roots = nav.roots;
+        _children = nav.children;
       });
+      final repository = ref.read(videoRepositoryProvider);
+      final emptyIds = await findEmptyCategoryIds(
+        ids: categoryIdsToProbe(nav),
+        fetchPage: (id) =>
+            repository.fetchPage(source, page: 1, categoryId: id),
+      );
+      if (!isActive() || emptyIds.isEmpty) return;
+      nav = hideEmptyCategories(nav, emptyIds);
+      if (!isActive()) return;
+      final selectable = {
+        for (final root in nav.roots) root.id,
+        for (final kids in nav.children.values)
+          for (final child in kids) child.id,
+      };
+      final selectionGone =
+          (_selectedRootId != null &&
+              !nav.roots.any((item) => item.id == _selectedRootId)) ||
+          (selectedCategoryId != null &&
+              !selectable.contains(selectedCategoryId));
+      setState(() {
+        _roots = nav.roots;
+        _children = nav.children;
+        if (selectionGone) {
+          _selectedRootId = null;
+          selectedCategoryId = null;
+        }
+      });
+      if (selectionGone) await controller?.loadInitial();
     } catch (e) {
       if (isActive()) setState(() => categoryError = e.toString());
     }

@@ -1249,6 +1249,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         appBar: landscape
             ? null
             : AppBar(
+                centerTitle: false,
+                titleSpacing: 0,
                 leading: IconButton(
                   tooltip: '返回',
                   onPressed: () => unawaited(_saveAndPop()),
@@ -1711,12 +1713,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                                     previewPosition.value ??
                                     current.value.position,
                                 duration: current.value.duration,
-                                buffered: continuousBufferedEnd(
-                                  current.value.buffered.map(
-                                    (range) =>
-                                        (start: range.start, end: range.end),
-                                  ),
-                                ),
+                                buffered: [
+                                  for (final range in current.value.buffered)
+                                    (start: range.start, end: range.end),
+                                ],
                                 enabled:
                                     !failed &&
                                     current.value.isInitialized &&

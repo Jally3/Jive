@@ -117,7 +117,7 @@ class MoreSettingsPage extends ConsumerWidget {
                 final stats = ref.watch(cacheControllerProvider);
                 final subtitle = stats.when(
                   data: (value) =>
-                      '已用 ${_formatBytes(value.usedBytes)} / 配额 ${_formatBytes(value.quotaBytes)} · ${value.entryCount} 个缓存剧集',
+                      '播放缓存 · 已用 ${_formatBytes(value.usedBytes)} / 配额 ${_formatBytes(value.quotaBytes)} · ${value.entryCount} 个剧集',
                   loading: () => '正在统计…',
                   error: (_, _) => '缓存统计加载失败',
                 );

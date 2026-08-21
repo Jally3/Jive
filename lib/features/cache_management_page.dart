@@ -23,7 +23,9 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('清空全部缓存？'),
-        content: const Text('将删除所有已缓存的剧集片段，释放磁盘空间。当前正在播放的内容不受影响。'),
+        content: const Text(
+          '将删除所有本地片段以释放空间，包括离线下载占用的文件。下载列表里的任务不会被取消。正在播放的内容会跳过。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -67,7 +69,11 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('删除该缓存？'),
-        content: Text('删除「${entry.episodeName}」的缓存片段。'),
+        content: Text(
+          entry.downloadOrigin
+              ? '删除「${entry.episodeName}」的本地文件。下载任务仍在「下载」里，但本集将无法离线播放。'
+              : '删除「${entry.episodeName}」观看时保存的片段，不影响下载列表。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -123,7 +129,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
     if (stats.entries.isEmpty) {
       return const AppEmptyView(
         icon: Icons.cleaning_services_outlined,
-        message: '还没有缓存\n播放或下载视频后片段会保存到这里',
+        message: '还没有播放缓存\n看过的片子会把片段留在这里，方便接着播。主动下载的任务在「下载」里。',
       );
     }
     final used = stats.usedBytes;
@@ -171,29 +177,25 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    '已用 ${_formatBytes(used)} / ${_formatBytes(quota)}',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                                const Text(
-                                  '自动',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: AppColors.secondary,
-                                  ),
-                                ),
-                              ],
+                            Text(
+                              '已用 ${_formatBytes(used)} / ${_formatBytes(quota)}',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              '观看时自动保存的片段，占满后会自动清理。离线下载请到「下载」。',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.secondary,
+                                height: 1.4,
+                              ),
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              '完整资源 ${_formatBytes(stats.completeBytes)} · 临时文件 ${_formatBytes(stats.partialBytes)} · ${stats.entryCount} 个缓存剧集',
+                              '完整资源 ${_formatBytes(stats.completeBytes)} · 临时文件 ${_formatBytes(stats.partialBytes)} · ${stats.entryCount} 个剧集',
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: AppColors.secondary,
@@ -336,11 +338,13 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
     );
   }
 
-  /// 条目状态标签与颜色：可离线 / 下载失败 / 部分缓存百分比。
+  /// 条目状态：离线下载成片 / 观看缓存 / 缓存失败 / 部分缓存百分比。
   (String, Color) _entryStatus(CacheEntry entry) {
-    if (entry.offlinePlayable) return ('可离线', AppColors.success);
+    if (entry.offlinePlayable) {
+      return (entry.downloadOrigin ? '离线下载' : '已缓存', AppColors.success);
+    }
     if (entry.status == CacheEntryStatus.failed) {
-      return ('下载失败', AppColors.error);
+      return ('缓存失败', AppColors.error);
     }
     return ('${(entry.progress * 100).round()}%', AppColors.accent);
   }
