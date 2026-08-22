@@ -18,7 +18,7 @@
 相关文档：
 
 - 现有多源架构：`ARCHITECTURE.md`、`doc/archive/vod-source/VOD_SOURCE_SWITCH_PRD_AND_PLAN.md`
-- V1 后端边界：`doc/BACKEND_TECHNICAL_REQUIREMENTS.md`
+- V1 后端边界：`doc/backend/BACKEND_TECHNICAL_REQUIREMENTS.md`
 - 上游协议： [qoli/syncnextPlugin `doc.md`](https://github.com/qoli/syncnextPlugin/blob/main/doc.md)
 - 第一期插件： [plugin_age](https://github.com/qoli/syncnextPlugin/tree/main/plugin_age)
 

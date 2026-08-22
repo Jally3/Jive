@@ -1332,12 +1332,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(8),
-                child: IconButton.filledTonal(
+                child: IconButton(
                   key: const ValueKey('player-state-back'),
                   tooltip: fullScreen ? '退出全屏' : '返回',
                   onPressed: fullScreen
                       ? () => unawaited(_toggleFullScreen())
                       : () => unawaited(_saveAndPop()),
+                  style: IconButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: Colors.white.withValues(alpha: 0.12),
+                  ),
                   icon: const Icon(Icons.arrow_back),
                 ),
               ),

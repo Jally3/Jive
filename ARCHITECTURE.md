@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文档基于 `doc/archive/mvp/APP_REQUIREMENTS_V1.md` 与 `doc/archive/vod-source/VOD_SOURCE_SWITCH_PRD_AND_PLAN.md`，定义第一版视频点播 App 的 Flutter 项目架构、目录结构、状态管理方案和关键技术约束。
+本文档基于 `doc/archive/mvp/APP_REQUIREMENTS_V1.md` 与 `doc/archive/vod-source/VOD_SOURCE_SWITCH_PRD_AND_PLAN.md`，定义第一版视频点播 App 的 Flutter 项目架构、目录结构、状态管理方案和关键技术约束。产品、设计与方案文档的目录见 `doc/README.md`。
 
 目标是支持 Android 和 iOS MVP，并为后续接入自建后端、用户体系、会员能力和多设备同步保留扩展空间。
 

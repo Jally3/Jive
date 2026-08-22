@@ -9,7 +9,7 @@ Jive is a Flutter Android/iOS video-on-demand MVP. Application code lives in `li
 - `lib/data/` contains repositories and API/persistence integration.
 - `lib/features/` contains page and feature controllers; `lib/shared/` contains reusable widgets.
 - `test/` contains Dart unit and Flutter widget tests, generally named after the file or feature under test.
-- `android/` and `ios/` contain platform runners. Product and architecture documentation is in `doc/` (active docs at the top level, completed ones under `doc/archive/`; see `doc/README.md` for the index); see `README.md` and `ARCHITECTURE.md` first.
+- `android/` and `ios/` contain platform runners. Product and architecture documentation is in `doc/` (active docs under `doc/<topic>/`, completed ones under `doc/archive/<topic>/`; see `doc/README.md` for the index); see `README.md` and `ARCHITECTURE.md` first.
 
 ## Build, Test, and Development Commands
 

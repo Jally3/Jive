@@ -539,6 +539,13 @@ void main() {
     );
     expect(find.byKey(const ValueKey('player-state-back')), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    final loadingBack = tester.widget<IconButton>(
+      find.byKey(const ValueKey('player-state-back')),
+    );
+    expect(
+      loadingBack.style?.foregroundColor?.resolve(const <WidgetState>{}),
+      Colors.white,
+    );
 
     videoPlatform.emitInitialized(videoPlatform.lastPlayerId);
     await _pumpUntil(
