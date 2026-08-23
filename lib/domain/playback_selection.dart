@@ -37,6 +37,26 @@ class PlaybackSelection {
   );
 }
 
+/// Finds [target] in [episodes] by identity, then name, then id.
+int? indexOfEpisode(List<Episode> episodes, Episode target) {
+  if (target.identity.isNotEmpty) {
+    for (var i = 0; i < episodes.length; i++) {
+      if (episodes[i].identity == target.identity) return i;
+    }
+  }
+  if (target.name.isNotEmpty) {
+    for (var i = 0; i < episodes.length; i++) {
+      if (episodes[i].name == target.name) return i;
+    }
+  }
+  if (target.id.isNotEmpty) {
+    for (var i = 0; i < episodes.length; i++) {
+      if (episodes[i].id == target.id) return i;
+    }
+  }
+  return null;
+}
+
 PlaybackSelection? selectionFor(Video video, Episode episode) {
   if (video.playbackLines.isEmpty) return null;
   final line = preferredPlaybackLine(video)!;

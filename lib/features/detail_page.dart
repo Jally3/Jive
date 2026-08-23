@@ -125,7 +125,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       final cachedSelection = await _cachedSelectionForCurrentEpisode();
       if (cachedSelection != null) {
         if (!mounted) return;
-        await Navigator.of(context).push(
+        final played = await Navigator.of(context).push<Episode>(
           MaterialPageRoute(
             builder: (_) => PlayerPage(
               video: sc!.activeVideo,
@@ -134,6 +134,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             ),
           ),
         );
+        if (mounted) _syncSelectedFromPlayer(played);
         return;
       }
       final source = _src(sc!.activeVideo.sourceId);
@@ -157,11 +158,12 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
               : selected.clamp(0, fresh.episodes.length - 1)];
       if (!mounted) return;
       setState(() => detail = fresh);
-      await Navigator.of(context).push(
+      final played = await Navigator.of(context).push<Episode>(
         MaterialPageRoute(
           builder: (_) => PlayerPage(video: fresh, episode: ep),
         ),
       );
+      if (mounted) _syncSelectedFromPlayer(played);
     } catch (e) {
       if (mounted) {
         showAppToastVia(overlay, '$e（可尝试查找其他来源）');
@@ -169,6 +171,21 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     } finally {
       if (mounted) setState(() => resolving = false);
     }
+  }
+
+  void _syncSelectedFromPlayer(Episode? played) {
+    if (played == null || sc == null) return;
+    final episodes = sc!.activeVideo.episodes;
+    final index = indexOfEpisode(episodes, played);
+    if (index == null) return;
+    selected = index;
+    if (episodes.length > _epsGroupSize) {
+      final displayIdx = reversed ? episodes.length - 1 - index : index;
+      _expandedEpsGroups
+        ..clear()
+        ..add(displayIdx ~/ _epsGroupSize);
+    }
+    setState(() {});
   }
 
   Future<PlaybackSelection?> _cachedSelectionForCurrentEpisode() async {
@@ -1132,6 +1149,10 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         return ChoiceChip(
           label: Text(episode.name),
           selected: selected == idx,
+          selectedColor: AppColors.accent,
+          labelStyle: TextStyle(
+            color: selected == idx ? AppColors.onAccent : AppColors.secondary,
+          ),
           showCheckmark: false,
           onSelected: (_) {
             setState(() => selected = idx);

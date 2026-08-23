@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -66,11 +67,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   bool failed = false, fullScreen = false, initializing = true;
   bool fillScreen = false;
   bool controlsVisible = true;
+  bool _episodeMenuOpen = false;
   bool _isAppForeground = true;
   bool _playbackDesired = true;
   bool _completionHandled = false;
   bool _fullScreenTransitionInFlight = false;
   bool _fullScreenToggleQueued = false;
+  bool _fullScreenLockedPortrait = false;
   bool _savedBeforePop = false;
   Future<void> _systemUiTransition = Future.value();
   int _lifecycleGeneration = 0;
@@ -394,6 +397,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     _completionHandled = false;
     next.addListener(_handlePlayerValueChanged);
     setState(() => initializing = false);
+    if (fullScreen) unawaited(_syncFullScreenOrientation());
     if (next.value.isPlaying) {
       _startPlaybackTimer();
       _scheduleControlsHide();
@@ -493,9 +497,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       try {
         await current.pause();
       } catch (_) {}
-      try {
-        await current.dispose();
-      } catch (_) {}
+      // video_player 的 dispose 会等待内部 event subscription cancel。
+      // 切集/重试必须继续创建下一个 controller，不能被这次释放卡住。
+      unawaited(() async {
+        try {
+          await current.dispose();
+        } catch (_) {}
+      }());
     }
     final session = playback.session;
     if (session != null) await _closeSession(session);
@@ -670,8 +678,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       unawaited(_syncWakelock());
       return;
     }
+    if (fullScreen &&
+        value.isInitialized &&
+        _isPortraitVideo != _fullScreenLockedPortrait) {
+      unawaited(_syncFullScreenOrientation());
+    }
     if (value.isCompleted && !_completionHandled) {
       _completionHandled = true;
+      final nextEpisode = _adjacentEpisode(1);
+      if (nextEpisode != null) {
+        // video_player 在 completed 事件里会同步通知 listener；
+        // 不能在这里直接 dispose 当前 controller，否则会和内部
+        // pause/event subscription 互相等待。
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(_switchEpisode(nextEpisode));
+        });
+        return;
+      }
       _playbackDesired = false;
       saveTimer?.cancel();
       saveTimer = null;
@@ -866,22 +890,44 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
   }
 
+  bool get _isPortraitVideo {
+    final ratio = controller?.value.aspectRatio ?? 0;
+    return ratio > 0 && ratio < 1;
+  }
+
+  bool _overlayLayoutOf(BuildContext context) =>
+      fullScreen || MediaQuery.orientationOf(context) == Orientation.landscape;
+
+  Future<void> _syncFullScreenOrientation() async {
+    if (!mounted || !fullScreen) return;
+    if (_isPortraitVideo == _fullScreenLockedPortrait) return;
+    final transition = _applyFullScreenSystemUi(true);
+    _systemUiTransition = transition;
+    try {
+      await transition;
+    } catch (_) {}
+  }
+
   Future<void> _applyFullScreenSystemUi(bool enabled) async {
+    final portraitVideo = _isPortraitVideo;
     await SystemChrome.setPreferredOrientations(
       enabled
-          ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+          ? (portraitVideo
+                ? const [DeviceOrientation.portraitUp]
+                : const [
+                    DeviceOrientation.landscapeLeft,
+                    DeviceOrientation.landscapeRight,
+                  ])
           : DeviceOrientation.values,
     );
+    _fullScreenLockedPortrait = enabled && portraitVideo;
     await SystemChrome.setEnabledSystemUIMode(
       enabled ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
     );
   }
 
   Future<void> _switchEpisode(Episode next) async {
-    final sameEpisode = next.identity.isNotEmpty && episode.identity.isNotEmpty
-        ? next.identity == episode.identity
-        : next.id == episode.id;
-    if (sameEpisode) return;
+    if (_isSameEpisode(next, episode)) return;
     final nextSelection = _selectionForEpisodeInCurrentLine(next);
     if (_selection != null && nextSelection == null) {
       if (mounted) showAppToast(context, '当前线路没有该剧集');
@@ -1010,6 +1056,54 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     );
   }
 
+  List<Episode> get _lineEpisodes {
+    final lineId = _selection?.playbackLineIdentity ?? '';
+    if (lineId.isNotEmpty) {
+      for (final line in widget.video.playbackLines) {
+        if (line.identity == lineId && line.episodes.isNotEmpty) {
+          return line.episodes;
+        }
+      }
+    }
+    return widget.video.episodes;
+  }
+
+  bool _isSameEpisode(Episode left, Episode right) {
+    if (left.identity.isNotEmpty && right.identity.isNotEmpty) {
+      return left.identity == right.identity;
+    }
+    return left.id == right.id;
+  }
+
+  int get _currentEpisodeIndex {
+    final episodes = _lineEpisodes;
+    if (episode.identity.isNotEmpty) {
+      final byIdentity = episodes.indexWhere(
+        (item) => item.identity == episode.identity,
+      );
+      if (byIdentity >= 0) return byIdentity;
+    }
+    return episodes.indexWhere(
+      (item) => item.id == episode.id || item.name == episode.name,
+    );
+  }
+
+  Episode? _adjacentEpisode(int delta) {
+    final index = _currentEpisodeIndex;
+    final episodes = _lineEpisodes;
+    final nextIndex = index + delta;
+    if (index < 0 || nextIndex < 0 || nextIndex >= episodes.length) {
+      return null;
+    }
+    return episodes[nextIndex];
+  }
+
+  Future<void> _switchToAdjacentEpisode(int delta) async {
+    final next = _adjacentEpisode(delta);
+    if (next == null) return;
+    await _switchEpisode(next);
+  }
+
   PlaybackSelection? _selectionForEpisodeInCurrentLine(Episode next) {
     final currentSelection = _selection;
     if (currentSelection == null) return selectionFor(widget.video, next);
@@ -1049,6 +1143,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   void _toggleControls() {
+    if (_episodeMenuOpen) return;
     controlsTimer?.cancel();
     setState(() {
       controlsVisible = !controlsVisible;
@@ -1059,9 +1154,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   void _scheduleControlsHide() {
     controlsTimer?.cancel();
-    if (controller?.value.isPlaying != true || isSeeking) return;
+    if (controller?.value.isPlaying != true || isSeeking || _episodeMenuOpen) {
+      return;
+    }
     controlsTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted) {
+      if (mounted && !_episodeMenuOpen) {
         setState(() {
           controlsVisible = false;
           volumeSliderVisible = false;
@@ -1228,25 +1325,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   @override
   Widget build(BuildContext context) {
-    // 退出全屏时屏幕旋转动画有几帧延迟，期间 MediaQuery 仍是横屏尺寸；
-    // 布局按实际方向选择，避免竖屏 Column 布局在横屏尺寸下溢出。
-    final landscape =
-        fullScreen ||
-        MediaQuery.orientationOf(context) == Orientation.landscape;
+    // 沉浸式 overlay：全屏，或设备本身是横屏（iPad 横屏未全屏）。
+    // 退出横屏全屏时旋转动画有几帧延迟，期间 MediaQuery 仍可能是横屏尺寸，
+    // 用 overlay 避免竖屏 Column 在横屏尺寸下溢出。
+    final overlayLayout = _overlayLayoutOf(context);
     return PopScope(
-      canPop: !fullScreen,
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && fullScreen) {
+        if (didPop) return;
+        if (fullScreen) {
           unawaited(_toggleFullScreen());
-        } else if (!_savedBeforePop) {
-          unawaited(_save());
-        } else {
-          _savedBeforePop = false;
+          return;
         }
+        unawaited(_saveAndPop());
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        appBar: landscape
+        appBar: overlayLayout
             ? null
             : AppBar(
                 centerTitle: false,
@@ -1282,8 +1377,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                 ),
                 backgroundColor: Colors.black,
               ),
-        body: landscape
-            ? _landscapeBody()
+        body: overlayLayout
+            ? _overlayBody()
             : Column(
                 children: [
                   _portraitPlayer(),
@@ -1309,12 +1404,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     try {
       await _save();
     } catch (_) {}
-    if (!mounted) return;
-    final popped = await Navigator.maybePop(context);
-    if (!popped && mounted) _savedBeforePop = false;
+    if (!mounted) {
+      _savedBeforePop = false;
+      return;
+    }
+    Navigator.of(context).pop<Episode>(episode);
   }
 
-  Widget _landscapeBody() {
+  Widget _overlayBody() {
     final showStandaloneBack = failed || initializing;
     return Stack(
       fit: StackFit.expand,
@@ -1402,16 +1499,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final aspectRatio = current.value.aspectRatio == 0
         ? 16 / 9
         : current.value.aspectRatio;
-    // 铺满（cover）只在横屏布局生效：视频等比放大覆盖整个区域，超出部分
-    // 裁剪，不改变画面比例；竖屏与适应（contain）模式保持完整画面。
-    final landscapeLayout =
-        fullScreen ||
-        MediaQuery.orientationOf(context) == Orientation.landscape;
-    final cover = fillScreen && landscapeLayout;
+    // 铺满（cover）在沉浸式 overlay（全屏或设备横屏）生效：视频等比放大覆盖
+    // 整个区域，超出部分裁剪；窗口模式保持完整画面。
+    final overlayLayout = _overlayLayoutOf(context);
+    final cover = fillScreen && overlayLayout && !_isPortraitVideo;
     final compactControls =
-        !landscapeLayout &&
-        (MediaQuery.sizeOf(context).width < 430 ||
-            MediaQuery.textScalerOf(context).scale(1) > 1.2);
+        MediaQuery.sizeOf(context).width < 430 ||
+        MediaQuery.textScalerOf(context).scale(1) > 1.2;
+    final showEpisodeNav = overlayLayout && _lineEpisodes.length > 1;
     final stack = Stack(
       alignment: Alignment.center,
       children: [
@@ -1631,10 +1726,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             );
           },
         ),
-        // 横屏布局没有 AppBar（含 iPad 横屏但未全屏的情况），
+        // Overlay 布局没有 AppBar（全屏或 iPad 横屏未全屏），
         // 统一由播放器内顶栏提供返回和标题。
-        if (fullScreen ||
-            MediaQuery.orientationOf(context) == Orientation.landscape)
+        if (overlayLayout)
           AnimatedOpacity(
             opacity: controlsVisible ? 1 : 0,
             duration: const Duration(milliseconds: 200),
@@ -1705,225 +1799,361 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                           previewPosition,
                           seekCommitting,
                         ]),
-                        builder: (_, _) => Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                              ),
-                              child: PlaybackScrubber(
-                                position:
-                                    previewPosition.value ??
-                                    current.value.position,
-                                duration: current.value.duration,
-                                buffered: [
-                                  for (final range in current.value.buffered)
-                                    (start: range.start, end: range.end),
-                                ],
-                                enabled:
-                                    !failed &&
-                                    current.value.isInitialized &&
-                                    current.value.duration > Duration.zero &&
-                                    !seekCommitting.value,
-                                committing: seekCommitting.value,
-                                showTime: false,
-                                onSeekStart: _seekStart,
-                                onSeekUpdate: _seekUpdate,
-                                onSeekEnd: _seekEnd,
-                                onSeekCancel: _seekCancel,
-                              ),
+                        builder: (_, _) {
+                          final timeAboveScrubber =
+                              fullScreen &&
+                              MediaQuery.orientationOf(context) ==
+                                  Orientation.portrait;
+                          final positionLabel = Text(
+                            key: const ValueKey('player-position-label'),
+                            '${formatPlaybackTime(previewPosition.value ?? current.value.position)} / ${formatPlaybackTime(current.value.duration)}',
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.white70,
                             ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-                              child: Row(
-                                children: [
-                                  IconButton(
-                                    onPressed: _togglePlayback,
-                                    tooltip: current.value.isPlaying
-                                        ? '暂停'
-                                        : current.value.isCompleted
-                                        ? '重新播放'
-                                        : '播放',
-                                    iconSize: 30,
-                                    icon: Icon(
-                                      current.value.isPlaying
-                                          ? Icons.pause
-                                          : Icons.play_arrow,
-                                    ),
+                          );
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (timeAboveScrubber)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    0,
+                                    16,
+                                    0,
                                   ),
-                                  if (!compactControls)
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: positionLabel,
+                                  ),
+                                ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
+                                child: PlaybackScrubber(
+                                  position:
+                                      previewPosition.value ??
+                                      current.value.position,
+                                  duration: current.value.duration,
+                                  buffered: [
+                                    for (final range in current.value.buffered)
+                                      (start: range.start, end: range.end),
+                                  ],
+                                  enabled:
+                                      !failed &&
+                                      current.value.isInitialized &&
+                                      current.value.duration > Duration.zero &&
+                                      !seekCommitting.value,
+                                  committing: seekCommitting.value,
+                                  showTime: false,
+                                  onSeekStart: _seekStart,
+                                  onSeekUpdate: _seekUpdate,
+                                  onSeekEnd: _seekEnd,
+                                  onSeekCancel: _seekCancel,
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  6,
+                                ),
+                                child: Row(
+                                  children: [
+                                    if (showEpisodeNav)
+                                      IconButton(
+                                        key: const ValueKey(
+                                          'player-previous-episode',
+                                        ),
+                                        tooltip: '上一集',
+                                        onPressed: _adjacentEpisode(-1) == null
+                                            ? null
+                                            : () {
+                                                _showControls();
+                                                unawaited(
+                                                  _switchToAdjacentEpisode(-1),
+                                                );
+                                              },
+                                        icon: const Icon(Icons.skip_previous),
+                                      ),
                                     IconButton(
-                                      onPressed: () {
-                                        _showControls();
-                                        setState(
-                                          () => volumeSliderVisible =
-                                              !volumeSliderVisible,
-                                        );
-                                      },
-                                      onLongPress: () =>
-                                          unawaited(_toggleMute()),
-                                      tooltip: '音量（长按静音）',
+                                      onPressed: _togglePlayback,
+                                      tooltip: current.value.isPlaying
+                                          ? '暂停'
+                                          : current.value.isCompleted
+                                          ? '重新播放'
+                                          : '播放',
+                                      iconSize: 30,
                                       icon: Icon(
-                                        current.value.volume > 0.5
-                                            ? Icons.volume_up
-                                            : current.value.volume > 0
-                                            ? Icons.volume_down
-                                            : Icons.volume_off,
+                                        current.value.isPlaying
+                                            ? Icons.pause
+                                            : Icons.play_arrow,
                                       ),
                                     ),
-                                  Expanded(
-                                    child: FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                        '${formatPlaybackTime(previewPosition.value ?? current.value.position)} / ${formatPlaybackTime(current.value.duration)}',
-                                        maxLines: 1,
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.white70,
+                                    if (showEpisodeNav)
+                                      IconButton(
+                                        key: const ValueKey(
+                                          'player-next-episode',
+                                        ),
+                                        tooltip: '下一集',
+                                        onPressed: _adjacentEpisode(1) == null
+                                            ? null
+                                            : () {
+                                                _showControls();
+                                                unawaited(
+                                                  _switchToAdjacentEpisode(1),
+                                                );
+                                              },
+                                        icon: const Icon(Icons.skip_next),
+                                      ),
+                                    if (!compactControls)
+                                      IconButton(
+                                        onPressed: () {
+                                          _showControls();
+                                          setState(
+                                            () => volumeSliderVisible =
+                                                !volumeSliderVisible,
+                                          );
+                                        },
+                                        onLongPress: () =>
+                                            unawaited(_toggleMute()),
+                                        tooltip: '音量（长按静音）',
+                                        icon: Icon(
+                                          current.value.volume > 0.5
+                                              ? Icons.volume_up
+                                              : current.value.volume > 0
+                                              ? Icons.volume_down
+                                              : Icons.volume_off,
+                                        ),
+                                      ),
+                                    if (timeAboveScrubber)
+                                      const Spacer()
+                                    else
+                                      Expanded(
+                                        child: FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          alignment: Alignment.centerLeft,
+                                          child: positionLabel,
+                                        ),
+                                      ),
+                                    const SizedBox(width: 6),
+                                    PlaybackStatusIndicator(
+                                      key: const ValueKey(
+                                        'playback-status-indicator',
+                                      ),
+                                      status: playbackStatus,
+                                      onLongPress: _showPlaybackStatusDetails,
+                                    ),
+                                    if (!fullScreen)
+                                      IconButton(
+                                        key: const ValueKey(
+                                          'player-download-button',
+                                        ),
+                                        tooltip:
+                                            currentDownload?.status ==
+                                                DownloadTaskStatus.completed
+                                            ? '已下载'
+                                            : '下载本集',
+                                        onPressed:
+                                            currentDownload?.status ==
+                                                DownloadTaskStatus.completed
+                                            ? null
+                                            : _downloadCurrentEpisode,
+                                        icon: Icon(
+                                          switch (currentDownload?.status) {
+                                            DownloadTaskStatus.completed =>
+                                              Icons.download_done,
+                                            DownloadTaskStatus.downloading =>
+                                              Icons.downloading,
+                                            DownloadTaskStatus.queued =>
+                                              Icons.schedule,
+                                            DownloadTaskStatus.paused =>
+                                              Icons.pause_circle_outline,
+                                            DownloadTaskStatus.failed =>
+                                              Icons.refresh,
+                                            DownloadTaskStatus.cancelled ||
+                                            null => Icons.download_outlined,
+                                          },
+                                        ),
+                                      ),
+                                    PopupMenuButton<double>(
+                                      key: const ValueKey(
+                                        'playback-speed-menu',
+                                      ),
+                                      tooltip: '播放速度',
+                                      initialValue: playbackSpeed,
+                                      onSelected: (speed) =>
+                                          unawaited(_setPlaybackSpeed(speed)),
+                                      itemBuilder: (_) => const [
+                                        PopupMenuItem(
+                                          value: 0.5,
+                                          child: Text('0.5×'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 0.75,
+                                          child: Text('0.75×'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 1.0,
+                                          child: Text('正常'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 1.25,
+                                          child: Text('1.25×'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 1.5,
+                                          child: Text('1.5×'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 2.0,
+                                          child: Text('2×'),
+                                        ),
+                                      ],
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 10,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.speed, size: 21),
+                                            const SizedBox(width: 3),
+                                            Text(
+                                              '${playbackSpeed.toStringAsFixed(playbackSpeed % 1 == 0 ? 0 : 2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}×',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  PlaybackStatusIndicator(
-                                    key: const ValueKey(
-                                      'playback-status-indicator',
-                                    ),
-                                    status: playbackStatus,
-                                    onLongPress: _showPlaybackStatusDetails,
-                                  ),
-                                  if (!fullScreen)
-                                    IconButton(
-                                      key: const ValueKey(
-                                        'player-download-button',
-                                      ),
-                                      tooltip:
-                                          currentDownload?.status ==
-                                              DownloadTaskStatus.completed
-                                          ? '已下载'
-                                          : '下载本集',
-                                      onPressed:
-                                          currentDownload?.status ==
-                                              DownloadTaskStatus.completed
-                                          ? null
-                                          : _downloadCurrentEpisode,
-                                      icon: Icon(
-                                        switch (currentDownload?.status) {
-                                          DownloadTaskStatus.completed =>
-                                            Icons.download_done,
-                                          DownloadTaskStatus.downloading =>
-                                            Icons.downloading,
-                                          DownloadTaskStatus.queued =>
-                                            Icons.schedule,
-                                          DownloadTaskStatus.paused =>
-                                            Icons.pause_circle_outline,
-                                          DownloadTaskStatus.failed =>
-                                            Icons.refresh,
-                                          DownloadTaskStatus.cancelled ||
-                                          null => Icons.download_outlined,
+                                    if (showEpisodeNav)
+                                      PopupMenuButton<Episode>(
+                                        key: const ValueKey(
+                                          'player-episode-menu',
+                                        ),
+                                        tooltip: '选集',
+                                        constraints: const BoxConstraints(
+                                          maxHeight: 320,
+                                          minWidth: 128,
+                                        ),
+                                        onOpened: () {
+                                          controlsTimer?.cancel();
+                                          setState(
+                                            () => _episodeMenuOpen = true,
+                                          );
                                         },
-                                      ),
-                                    ),
-                                  PopupMenuButton<double>(
-                                    key: const ValueKey('playback-speed-menu'),
-                                    tooltip: '播放速度',
-                                    initialValue: playbackSpeed,
-                                    onSelected: (speed) =>
-                                        unawaited(_setPlaybackSpeed(speed)),
-                                    itemBuilder: (_) => const [
-                                      PopupMenuItem(
-                                        value: 0.5,
-                                        child: Text('0.5×'),
-                                      ),
-                                      PopupMenuItem(
-                                        value: 0.75,
-                                        child: Text('0.75×'),
-                                      ),
-                                      PopupMenuItem(
-                                        value: 1.0,
-                                        child: Text('正常'),
-                                      ),
-                                      PopupMenuItem(
-                                        value: 1.25,
-                                        child: Text('1.25×'),
-                                      ),
-                                      PopupMenuItem(
-                                        value: 1.5,
-                                        child: Text('1.5×'),
-                                      ),
-                                      PopupMenuItem(
-                                        value: 2.0,
-                                        child: Text('2×'),
-                                      ),
-                                    ],
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 10,
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.speed, size: 21),
-                                          const SizedBox(width: 3),
-                                          Text(
-                                            '${playbackSpeed.toStringAsFixed(playbackSpeed % 1 == 0 ? 0 : 2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}×',
-                                            style: const TextStyle(
+                                        onCanceled: () {
+                                          if (!mounted) return;
+                                          setState(
+                                            () => _episodeMenuOpen = false,
+                                          );
+                                          _scheduleControlsHide();
+                                        },
+                                        onSelected: (next) {
+                                          setState(
+                                            () => _episodeMenuOpen = false,
+                                          );
+                                          unawaited(_switchEpisode(next));
+                                          _scheduleControlsHide();
+                                        },
+                                        itemBuilder: (_) {
+                                          final episodes = _lineEpisodes;
+                                          return [
+                                            for (final item in episodes)
+                                              PopupMenuItem(
+                                                value: item,
+                                                child: Text(
+                                                  item.name,
+                                                  style: TextStyle(
+                                                    fontWeight:
+                                                        _isSameEpisode(
+                                                          item,
+                                                          episode,
+                                                        )
+                                                        ? FontWeight.w700
+                                                        : FontWeight.w400,
+                                                    color:
+                                                        _isSameEpisode(
+                                                          item,
+                                                          episode,
+                                                        )
+                                                        ? AppColors.accent
+                                                        : null,
+                                                  ),
+                                                ),
+                                              ),
+                                          ];
+                                        },
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 10,
+                                          ),
+                                          child: Text(
+                                            '选集',
+                                            style: TextStyle(
                                               fontSize: 12,
                                               fontWeight: FontWeight.w700,
                                             ),
                                           ),
-                                        ],
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  if (fullScreen ||
-                                      MediaQuery.orientationOf(context) ==
-                                          Orientation.landscape)
-                                    IconButton(
-                                      onPressed: () {
-                                        _showControls();
-                                        setState(
-                                          () => fillScreen = !fillScreen,
-                                        );
-                                        if (fillScreen) {
-                                          showAppToast(
-                                            context,
-                                            '已切换为铺满模式，画面边缘可能被裁剪',
+                                    if (overlayLayout &&
+                                        !compactControls &&
+                                        !(fullScreen && _isPortraitVideo))
+                                      IconButton(
+                                        onPressed: () {
+                                          _showControls();
+                                          setState(
+                                            () => fillScreen = !fillScreen,
                                           );
-                                        }
-                                      },
-                                      tooltip: fillScreen ? '适应' : '铺满',
-                                      icon: Icon(
-                                        fillScreen
-                                            ? Icons.fit_screen
-                                            : Icons.crop_free,
+                                          if (fillScreen) {
+                                            showAppToast(
+                                              context,
+                                              '已切换为铺满模式，画面边缘可能被裁剪',
+                                            );
+                                          }
+                                        },
+                                        tooltip: fillScreen ? '适应' : '铺满',
+                                        icon: Icon(
+                                          fillScreen
+                                              ? Icons.fit_screen
+                                              : Icons.crop_free,
+                                        ),
                                       ),
-                                    ),
-                                  // iPad 横屏本来就是横屏布局，全屏按钮没有作用，
-                                  // 只在竖屏（进入全屏）或全屏态（退出全屏）显示。
-                                  if (fullScreen ||
-                                      MediaQuery.orientationOf(context) ==
-                                          Orientation.portrait)
-                                    IconButton(
-                                      tooltip: fullScreen ? '退出全屏' : '进入全屏',
-                                      onPressed: () {
-                                        _showControls();
-                                        unawaited(_toggleFullScreen());
-                                      },
-                                      icon: Icon(
-                                        fullScreen
-                                            ? Icons.fullscreen_exit
-                                            : Icons.fullscreen,
+                                    // 横屏片在 iPad 横屏已经是横屏布局，全屏按钮没有作用。
+                                    // 竖屏片即使当前是设备横屏，全屏也会转到竖屏展开。
+                                    if (fullScreen ||
+                                        MediaQuery.orientationOf(context) ==
+                                            Orientation.portrait ||
+                                        _isPortraitVideo)
+                                      IconButton(
+                                        tooltip: fullScreen ? '退出全屏' : '进入全屏',
+                                        onPressed: () {
+                                          _showControls();
+                                          unawaited(_toggleFullScreen());
+                                        },
+                                        icon: Icon(
+                                          fullScreen
+                                              ? Icons.fullscreen_exit
+                                              : Icons.fullscreen,
+                                        ),
                                       ),
-                                    ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                   ),
@@ -1969,12 +2199,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               padding: EdgeInsets.only(
                 left:
                     46 +
-                    (landscapeLayout
+                    (overlayLayout
                         ? MediaQuery.viewPaddingOf(context).left
                         : 0),
                 bottom:
                     60 +
-                    (landscapeLayout
+                    (overlayLayout
                         ? MediaQuery.viewPaddingOf(context).bottom
                         : 0),
               ),
@@ -2448,7 +2678,36 @@ class PlayerInfoPanel extends StatefulWidget {
 }
 
 class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
+  /// 剧集超过该数量时按每组 100 集折叠展示，与详情页一致。
+  static const int _epsGroupSize = 100;
+
   bool expanded = false;
+  late Set<int> _expandedEpsGroups;
+
+  int get _currentIndex =>
+      indexOfEpisode(widget.video.episodes, widget.current) ?? 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _expandedEpsGroups = {_groupOf(_currentIndex)};
+  }
+
+  @override
+  void didUpdateWidget(PlayerInfoPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.current.identity != widget.current.identity ||
+        oldWidget.current.id != widget.current.id ||
+        oldWidget.current.name != widget.current.name ||
+        oldWidget.video.episodes.length != widget.video.episodes.length) {
+      _expandedEpsGroups.add(_groupOf(_currentIndex));
+    }
+  }
+
+  int _groupOf(int index) {
+    final last = math.max(widget.video.episodes.length - 1, 0);
+    return index.clamp(0, last) ~/ _epsGroupSize;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2493,19 +2752,91 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
           ),
         ),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final e in video.episodes)
-              ChoiceChip(
-                label: Text(e.name),
-                selected: e.id == widget.current.id,
-                onSelected: (_) => widget.onEpisodeTap(e),
-                showCheckmark: false,
+        if (video.episodes.length <= _epsGroupSize)
+          _epsWrap(video.episodes, 0, video.episodes.length)
+        else
+          _epsGroups(video.episodes),
+      ],
+    );
+  }
+
+  Widget _epsGroups(List<Episode> episodes) {
+    final total = episodes.length;
+    final groupCount = (total + _epsGroupSize - 1) ~/ _epsGroupSize;
+    return Column(
+      children: [
+        for (var g = 0; g < groupCount; g++) ...[
+          _epsGroupHeader(total, g),
+          if (_expandedEpsGroups.contains(g))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _epsWrap(
+                episodes,
+                g * _epsGroupSize,
+                math.min((g + 1) * _epsGroupSize, total),
               ),
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _epsGroupHeader(int total, int group) {
+    final start = group * _epsGroupSize;
+    final end = math.min(start + _epsGroupSize, total);
+    final isExpanded = _expandedEpsGroups.contains(group);
+    return InkWell(
+      onTap: () => setState(() {
+        if (isExpanded) {
+          _expandedEpsGroups.remove(group);
+        } else {
+          _expandedEpsGroups.add(group);
+        }
+      }),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '第 ${start + 1}–$end 集',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.secondary,
+                ),
+              ),
+            ),
+            Icon(
+              isExpanded ? Icons.expand_less : Icons.expand_more,
+              size: 20,
+              color: AppColors.secondary,
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _epsWrap(List<Episode> episodes, int start, int end) {
+    final selectedIndex = _currentIndex;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (var idx = start; idx < end; idx++)
+          ChoiceChip(
+            label: Text(episodes[idx].name),
+            selected: idx == selectedIndex,
+            selectedColor: AppColors.accent,
+            labelStyle: TextStyle(
+              color: idx == selectedIndex
+                  ? AppColors.onAccent
+                  : AppColors.secondary,
+            ),
+            showCheckmark: false,
+            onSelected: (_) => widget.onEpisodeTap(episodes[idx]),
+          ),
       ],
     );
   }

@@ -437,6 +437,36 @@ void main() {
       expect(refreshed.playbackSource.url, Uri.parse(freshEpisode.url));
     },
   );
+
+  test('indexOfEpisode prefers identity then name then id', () {
+    const episodes = [
+      Episode(id: '1', name: '第1集', url: 'https://a/1', identity: 'ep:1'),
+      Episode(id: '2', name: '第2集', url: 'https://a/2', identity: 'ep:2'),
+      Episode(id: '3', name: '第3集', url: 'https://a/3', identity: 'ep:3'),
+    ];
+    expect(
+      indexOfEpisode(
+        episodes,
+        const Episode(id: '9', name: '其他', url: '', identity: 'ep:2'),
+      ),
+      1,
+    );
+    expect(
+      indexOfEpisode(
+        episodes,
+        const Episode(id: '9', name: '第3集', url: '', identity: 'missing'),
+      ),
+      2,
+    );
+    expect(
+      indexOfEpisode(episodes, const Episode(id: '1', name: '其他', url: '')),
+      0,
+    );
+    expect(
+      indexOfEpisode(episodes, const Episode(id: 'x', name: '没有', url: '')),
+      isNull,
+    );
+  });
 }
 
 final _source = VodSource(

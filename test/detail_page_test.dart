@@ -1,12 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jive/data/cache/download_providers.dart';
+import 'package:jive/data/cache/download_task_manager.dart';
+import 'package:jive/data/cache/prefetch_policy.dart';
+import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
+import 'package:jive/domain/watch_record.dart';
 import 'package:jive/features/detail_page.dart';
+import 'package:jive/features/player_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+// ignore: depend_on_referenced_packages
+import 'package:video_player_platform_interface/video_player_platform_interface.dart';
+// ignore: depend_on_referenced_packages
+import 'package:wakelock_plus_platform_interface/wakelock_plus_platform_interface.dart';
 
 VodSource _src(String id, String name) => VodSource(
   id: id,
@@ -114,6 +126,128 @@ Future<void> _pumpDetailPage(
     ),
   );
   await tester.pump();
+}
+
+class _FakeHistoryRepository extends HistoryRepository {
+  @override
+  Future<List<WatchRecord>> load() async => const [];
+
+  @override
+  Future<void> save(WatchRecord record) async {}
+
+  @override
+  Future<void> clear() async {}
+}
+
+class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
+  final List<DataSource> dataSources = [];
+  final Map<int, StreamController<VideoEvent>> _streams = {};
+  int _nextPlayerId = 0;
+
+  @override
+  Future<int?> createWithOptions(VideoCreationOptions options) async {
+    final playerId = _nextPlayerId++;
+    final stream = StreamController<VideoEvent>();
+    _streams[playerId] = stream;
+    dataSources.add(options.dataSource);
+    stream.add(
+      VideoEvent(
+        eventType: VideoEventType.initialized,
+        size: const Size(160, 90),
+        duration: const Duration(minutes: 10),
+      ),
+    );
+    return playerId;
+  }
+
+  @override
+  Stream<VideoEvent> videoEventsFor(int playerId) => _streams[playerId]!.stream;
+
+  @override
+  Future<void> dispose(int playerId) async {}
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<void> play(int playerId) async {}
+
+  @override
+  Future<void> pause(int playerId) async {}
+
+  @override
+  Future<Duration> getPosition(int playerId) async => Duration.zero;
+
+  @override
+  Future<void> seekTo(int playerId, Duration position) async {}
+
+  @override
+  Future<void> setLooping(int playerId, bool looping) async {}
+
+  @override
+  Future<void> setVolume(int playerId, double volume) async {}
+
+  @override
+  Future<void> setPlaybackSpeed(int playerId, double speed) async {}
+
+  @override
+  Widget buildViewWithOptions(VideoViewOptions options) => ColoredBox(
+    key: ValueKey('fake-video-${options.playerId}'),
+    color: Colors.black,
+  );
+}
+
+class _FakeWakelockPlatform extends WakelockPlusPlatformInterface {
+  @override
+  Future<bool> get enabled async => false;
+
+  @override
+  Future<void> toggle({required bool enable}) async {}
+}
+
+({_FakeVideoPlayerPlatform video, VoidCallback restore})
+_installPlayerPlatforms() {
+  final originalVideo = VideoPlayerPlatform.instance;
+  final originalWakelock = WakelockPlusPlatformInterface.instance;
+  final video = _FakeVideoPlayerPlatform();
+  VideoPlayerPlatform.instance = video;
+  WakelockPlusPlatformInterface.instance = _FakeWakelockPlatform();
+  return (
+    video: video,
+    restore: () {
+      VideoPlayerPlatform.instance = originalVideo;
+      WakelockPlusPlatformInterface.instance = originalWakelock;
+    },
+  );
+}
+
+ProviderContainer _playerAwareContainer(_FakeDetailRepository repository) =>
+    ProviderContainer(
+      overrides: [
+        videoRepositoryProvider.overrideWithValue(repository),
+        historyRepositoryProvider.overrideWithValue(_FakeHistoryRepository()),
+        vodSourceRegistryProvider.overrideWith(
+          (ref) async => VodSourceRegistry(_sources, const {}),
+        ),
+        downloadTasksProvider.overrideWith(
+          (ref) => Stream.value(const <DownloadTask>[]),
+        ),
+        downloadManagerProvider.overrideWith(
+          (ref) async => throw StateError('unused'),
+        ),
+        prefetchAheadProvider.overrideWithValue(Duration.zero),
+      ],
+    );
+
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  String reason = 'condition was not reached',
+}) async {
+  for (var i = 0; i < 200 && !condition(); i++) {
+    await tester.pump(const Duration(milliseconds: 10));
+  }
+  if (!condition()) fail(reason);
 }
 
 void main() {
@@ -309,4 +443,110 @@ void main() {
     expect(find.text('第1集'), findsOneWidget);
     expect(find.text('第250集'), findsNothing);
   });
+
+  testWidgets('returning from the player highlights the played episode', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final platforms = _installPlayerPlatforms();
+    addTearDown(platforms.restore);
+
+    final container = _playerAwareContainer(
+      _FakeDetailRepository(activeEpisodes: 3),
+    );
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+
+    expect(find.text('播放 第1集'), findsOneWidget);
+    await tester.tap(find.text('播放 第1集'));
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not open from the detail page',
+    );
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(PlayerPage),
+        matching: find.widgetWithText(ChoiceChip, '第3集'),
+      ),
+    );
+    await _pumpUntil(
+      tester,
+      () => platforms.video.dataSources.length == 2,
+      reason: 'player did not switch to the third episode',
+    );
+    await tester.tap(
+      find.descendant(
+        of: find.byType(PlayerPage),
+        matching: find.byTooltip('返回'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('播放 第3集'), findsOneWidget);
+
+    ChoiceChip detailChip(String name) => tester.widget<ChoiceChip>(
+      find.descendant(
+        of: find.byType(VideoDetailPage),
+        matching: find.widgetWithText(ChoiceChip, name),
+      ),
+    );
+    expect(detailChip('第3集').selected, isTrue);
+    expect(detailChip('第1集').selected, isFalse);
+  });
+
+  testWidgets(
+    'returning from the player expands the group of the played episode',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(844, 390);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final platforms = _installPlayerPlatforms();
+      addTearDown(platforms.restore);
+
+      final container = _playerAwareContainer(
+        _FakeDetailRepository(activeEpisodes: 250),
+      );
+      await container.read(vodSourceRegistryProvider.future);
+      addTearDown(container.dispose);
+      await _pumpDetailPage(tester, container);
+      await tester.pump();
+
+      await tester.tap(find.text('播放 第1集'));
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not open from the detail page',
+      );
+      await tester.tap(find.byKey(const ValueKey('player-episode-menu')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.scrollUntilVisible(
+        find.text('第120集'),
+        200,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(find.text('第120集'));
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-1')).evaluate().isNotEmpty,
+        reason: 'player did not switch to episode 120',
+      );
+      await tester.tap(find.byKey(const ValueKey('fullscreen-back')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(PlayerPage), findsNothing);
+      expect(find.text('播放 第120集'), findsOneWidget);
+      expect(find.text('第 101–200 集', skipOffstage: false), findsOneWidget);
+      expect(find.text('第120集', skipOffstage: false), findsOneWidget);
+      expect(find.text('第1集', skipOffstage: false), findsNothing);
+    },
+  );
 }

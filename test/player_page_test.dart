@@ -8,12 +8,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/data/cache/download_providers.dart';
 import 'package:jive/data/cache/download_task_manager.dart';
 import 'package:jive/data/cache/prefetch_policy.dart';
+import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source_registry.dart';
 import 'package:jive/domain/playback_status.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
+import 'package:jive/domain/watch_record.dart';
+import 'package:jive/app/theme.dart';
 import 'package:jive/features/player_page.dart';
+import 'package:jive/shared/playback_scrubber.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // These interfaces are transitive test fixtures of the production plugins.
 // ignore: depend_on_referenced_packages
@@ -42,7 +46,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   @override
   Future<int?> createWithOptions(VideoCreationOptions options) async {
     final playerId = _nextPlayerId++;
-    final stream = StreamController<VideoEvent>.broadcast();
+    final stream = StreamController<VideoEvent>();
     _streams[playerId] = stream;
     playing[playerId] = false;
     positions[playerId] = Duration.zero;
@@ -51,17 +55,14 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
     final result = initializationPlan.isEmpty
         ? _InitializationResult.success
         : initializationPlan.removeAt(0);
-    Timer.run(() {
-      if (!identical(_streams[playerId], stream)) return;
-      switch (result) {
-        case _InitializationResult.success:
-          emitInitialized(playerId);
-        case _InitializationResult.failure:
-          emitError(playerId);
-        case _InitializationResult.pending:
-          break;
-      }
-    });
+    switch (result) {
+      case _InitializationResult.success:
+        emitInitialized(playerId);
+      case _InitializationResult.failure:
+        emitError(playerId);
+      case _InitializationResult.pending:
+        break;
+    }
     return playerId;
   }
 
@@ -91,7 +92,6 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   @override
   Future<void> dispose(int playerId) async {
     calls.add('dispose:$playerId');
-    unawaited(_streams.remove(playerId)?.close());
   }
 
   @override
@@ -146,6 +146,17 @@ class _FakeWakelockPlatform extends WakelockPlusPlatformInterface {
   Future<void> toggle({required bool enable}) async {
     isEnabled = enable;
   }
+}
+
+class _FakeHistoryRepository extends HistoryRepository {
+  @override
+  Future<List<WatchRecord>> load() async => const [];
+
+  @override
+  Future<void> save(WatchRecord record) async {}
+
+  @override
+  Future<void> clear() async {}
 }
 
 class _FakeVideoRepository implements VideoRepository {
@@ -210,15 +221,44 @@ Video _playableVideo(String url) {
   );
 }
 
+Video _playableSeries(String urlPrefix, {int count = 3}) {
+  final episodes = [
+    for (var i = 1; i <= count; i++)
+      Episode(
+        id: '$i',
+        name: '第$i集',
+        url: '$urlPrefix/$i.mp4',
+        identity: 'episode:$i',
+      ),
+  ];
+  final line = PlaybackLine(
+    id: '0',
+    name: 'MP4',
+    identity: 'line:1',
+    episodes: episodes,
+  );
+  return Video(
+    id: '1',
+    title: '测试剧集',
+    sourceId: _testSource.id,
+    sourceVideoId: '1',
+    description: '这是一部测试剧集的简介。',
+    episodes: episodes,
+    playbackLines: [line],
+  );
+}
+
 Future<ProviderContainer> _pumpPlayerPage(
   WidgetTester tester, {
   required Video video,
   required _FakeVideoRepository repository,
+  Episode? episode,
   double textScale = 1,
 }) async {
   final container = ProviderContainer(
     overrides: [
       videoRepositoryProvider.overrideWithValue(repository),
+      historyRepositoryProvider.overrideWithValue(_FakeHistoryRepository()),
       vodSourceRegistryProvider.overrideWith(
         (ref) async => VodSourceRegistry([_testSource], const {}),
       ),
@@ -240,7 +280,10 @@ Future<ProviderContainer> _pumpPlayerPage(
           ).copyWith(textScaler: TextScaler.linear(textScale)),
           child: child!,
         ),
-        home: PlayerPage(video: video, episode: video.episodes.first),
+        home: PlayerPage(
+          video: video,
+          episode: episode ?? video.episodes.first,
+        ),
       ),
     ),
   );
@@ -262,6 +305,26 @@ Future<void> _pumpUntil(
 Future<void> _unmountPlayerPage(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pump();
+}
+
+List<List<String>> _capturePreferredOrientations(WidgetTester tester) {
+  final orientations = <List<String>>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (call) async {
+      if (call.method == 'SystemChrome.setPreferredOrientations') {
+        orientations.add(List<String>.from(call.arguments as List));
+      }
+      return null;
+    },
+  );
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
+  );
+  return orientations;
 }
 
 Video _video() => Video(
@@ -379,6 +442,8 @@ void main() {
         find.widgetWithText(ChoiceChip, '第2集'),
       );
       expect(current.selected, isTrue);
+      expect(current.selectedColor, AppColors.accent);
+      expect(current.labelStyle?.color, AppColors.onAccent);
 
       await tester.tap(find.widgetWithText(ChoiceChip, '第3集'));
       expect(tapped?.id, '3');
@@ -408,6 +473,52 @@ void main() {
 
     expect(find.text('暂无简介'), findsOneWidget);
   });
+
+  testWidgets(
+    'PlayerInfoPanel groups episodes by 100 and expands the current group',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = Video(
+        id: '1',
+        title: '测试剧集',
+        description: '这是一部测试剧集的简介。',
+        episodes: List.generate(
+          250,
+          (i) => Episode(
+            id: '${i + 1}',
+            name: '第${i + 1}集',
+            url: 'https://example.com/$i.m3u8',
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PlayerInfoPanel(
+              video: video,
+              current: video.episodes[119],
+              onEpisodeTap: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('选集（250）'), findsOneWidget);
+      expect(find.text('第 1–100 集'), findsOneWidget);
+      expect(find.text('第 101–200 集'), findsOneWidget);
+      expect(find.text('第 201–250 集'), findsOneWidget);
+      expect(find.text('第120集'), findsOneWidget);
+      expect(find.text('第1集'), findsNothing);
+      expect(find.text('第101集'), findsOneWidget);
+
+      await tester.tap(find.text('第 1–100 集'));
+      await tester.pump();
+      expect(find.text('第1集'), findsOneWidget);
+    },
+  );
 
   testWidgets('portrait title sits beside the back button', (tester) async {
     tester.view.devicePixelRatio = 1;
@@ -602,6 +713,149 @@ void main() {
   });
 
   testWidgets(
+    'landscape player hides episode navigation for a single episode',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(844, 390);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+
+      expect(find.byKey(const ValueKey('player-episode-menu')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('player-previous-episode')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('player-next-episode')), findsNothing);
+      await _unmountPlayerPage(tester);
+    },
+  );
+
+  testWidgets(
+    'landscape player can pick another episode and step with next/previous',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(844, 390);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      videoPlatform.initializationPlan = [
+        _InitializationResult.success,
+        _InitializationResult.success,
+        _InitializationResult.success,
+        _InitializationResult.success,
+      ];
+      final video = _playableSeries('https://old.example.com');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+
+      expect(find.byKey(const ValueKey('player-episode-menu')), findsOneWidget);
+      final previous = tester.widget<IconButton>(
+        find.byKey(const ValueKey('player-previous-episode')),
+      );
+      expect(previous.onPressed, isNull);
+
+      await tester.tap(find.byKey(const ValueKey('player-next-episode')));
+      await _pumpUntil(
+        tester,
+        () => videoPlatform.dataSources.length == 2,
+        reason: 'next episode did not start',
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-1')).evaluate().isNotEmpty,
+        reason: 'next episode controller did not initialize',
+      );
+      expect(
+        videoPlatform.dataSources.last.uri,
+        'https://old.example.com/2.mp4',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('player-episode-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('第3集'));
+      await _pumpUntil(
+        tester,
+        () => videoPlatform.dataSources.length == 3,
+        reason: 'episode menu did not start the selected episode',
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-2')).evaluate().isNotEmpty,
+        reason: 'selected episode controller did not initialize',
+      );
+      expect(
+        videoPlatform.dataSources.last.uri,
+        'https://old.example.com/3.mp4',
+      );
+
+      final next = tester.widget<IconButton>(
+        find.byKey(const ValueKey('player-next-episode')),
+      );
+      expect(next.onPressed, isNull);
+
+      await tester.tap(find.byKey(const ValueKey('player-previous-episode')));
+      await _pumpUntil(
+        tester,
+        () => videoPlatform.dataSources.length == 4,
+        reason: 'previous episode did not start',
+      );
+      expect(
+        videoPlatform.dataSources.last.uri,
+        'https://old.example.com/2.mp4',
+      );
+      await _unmountPlayerPage(tester);
+    },
+  );
+
+  testWidgets(
+    'portrait player keeps the episode panel and hides overlay episode nav',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = _playableSeries('https://old.example.com');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+
+      expect(find.byKey(const ValueKey('player-episode-menu')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('player-previous-episode')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('player-next-episode')), findsNothing);
+      expect(find.byType(ChoiceChip), findsNWidgets(3));
+      await _unmountPlayerPage(tester);
+    },
+  );
+
+  testWidgets(
     'completed playback exposes replay and seeks to zero before play',
     (tester) async {
       final video = _playableVideo('https://old.example.com/1.mp4');
@@ -638,4 +892,284 @@ void main() {
       await _unmountPlayerPage(tester);
     },
   );
+
+  testWidgets('completed playback auto-starts the next episode', (
+    tester,
+  ) async {
+    videoPlatform.initializationPlan = [
+      _InitializationResult.success,
+      _InitializationResult.success,
+    ];
+    final video = _playableSeries('https://old.example.com');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    videoPlatform.emitCompleted(videoPlatform.lastPlayerId);
+    await _pumpUntil(
+      tester,
+      () => videoPlatform.dataSources.length == 2,
+      reason: 'completed episode did not auto-start the next episode',
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-1')).evaluate().isNotEmpty,
+      reason: 'next episode controller did not initialize',
+    );
+    expect(videoPlatform.dataSources.last.uri, 'https://old.example.com/2.mp4');
+    expect(videoPlatform.playing[videoPlatform.lastPlayerId], isTrue);
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets('last episode still exposes replay when playback completes', (
+    tester,
+  ) async {
+    final video = _playableSeries('https://old.example.com');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      episode: video.episodes.last,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+    final playerId = videoPlatform.lastPlayerId;
+
+    videoPlatform.emitCompleted(playerId);
+    await tester.pump();
+    await tester.pump();
+
+    expect(videoPlatform.dataSources, hasLength(1));
+    final replayButton = tester
+        .widgetList<IconButton>(find.byType(IconButton))
+        .singleWhere(
+          (button) => button.tooltip == '重新播放' && button.style != null,
+        );
+    expect(replayButton.tooltip, '重新播放');
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets('popping the player returns the episode that was playing', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    videoPlatform.initializationPlan = [
+      _InitializationResult.success,
+      _InitializationResult.success,
+    ];
+    final video = _playableSeries('https://old.example.com');
+    Episode? popped;
+    final container = ProviderContainer(
+      overrides: [
+        videoRepositoryProvider.overrideWithValue(_FakeVideoRepository(video)),
+        historyRepositoryProvider.overrideWithValue(_FakeHistoryRepository()),
+        vodSourceRegistryProvider.overrideWith(
+          (ref) async => VodSourceRegistry([_testSource], const {}),
+        ),
+        downloadTasksProvider.overrideWith(
+          (ref) => Stream.value(const <DownloadTask>[]),
+        ),
+        prefetchAheadProvider.overrideWithValue(Duration.zero),
+      ],
+    );
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async {
+                  popped = await Navigator.of(context).push<Episode>(
+                    MaterialPageRoute(
+                      builder: (_) => PlayerPage(
+                        video: video,
+                        episode: video.episodes.first,
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('open-player'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open-player'));
+    await tester.pump();
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '第3集'));
+    await _pumpUntil(
+      tester,
+      () => videoPlatform.dataSources.length == 2,
+      reason: 'player did not switch to the third episode',
+    );
+    await tester.tap(find.byTooltip('返回'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(popped?.name, '第3集');
+    expect(popped?.identity, 'episode:3');
+    expect(find.text('open-player'), findsOneWidget);
+  });
+
+  testWidgets('system back returns the current episode', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final video = _playableSeries('https://old.example.com');
+    Episode? popped;
+    final container = ProviderContainer(
+      overrides: [
+        videoRepositoryProvider.overrideWithValue(_FakeVideoRepository(video)),
+        historyRepositoryProvider.overrideWithValue(_FakeHistoryRepository()),
+        vodSourceRegistryProvider.overrideWith(
+          (ref) async => VodSourceRegistry([_testSource], const {}),
+        ),
+        downloadTasksProvider.overrideWith(
+          (ref) => Stream.value(const <DownloadTask>[]),
+        ),
+        prefetchAheadProvider.overrideWithValue(Duration.zero),
+      ],
+    );
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async {
+                  popped = await Navigator.of(context).push<Episode>(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          PlayerPage(video: video, episode: video.episodes[1]),
+                    ),
+                  );
+                },
+                child: const Text('open-player'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open-player'));
+    await tester.pump();
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await tester.pump();
+
+    expect(popped?.name, '第2集');
+    expect(find.text('open-player'), findsOneWidget);
+  });
+
+  testWidgets(
+    'portrait video fullscreen stays portrait and hides the info panel',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      videoPlatform.videoSize = const Size(90, 160);
+      final orientations = _capturePreferredOrientations(tester);
+      final video = _playableSeries('https://old.example.com');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+      expect(find.byType(PlayerInfoPanel), findsOneWidget);
+
+      await tester.tap(find.byTooltip('进入全屏'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(orientations, isNotEmpty);
+      expect(orientations.last, ['DeviceOrientation.portraitUp']);
+      expect(find.byType(PlayerInfoPanel), findsNothing);
+      expect(find.byKey(const ValueKey('fullscreen-back')), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-episode-menu')), findsOneWidget);
+      expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
+      expect(find.byTooltip('铺满'), findsNothing);
+      expect(find.byTooltip('适应'), findsNothing);
+      final time = tester.getRect(
+        find.byKey(const ValueKey('player-position-label')),
+      );
+      final scrubber = tester.getRect(find.byType(PlaybackScrubber));
+      expect(time.bottom, lessThanOrEqualTo(scrubber.top + 1));
+      expect(time.left, lessThan(scrubber.left + 8));
+      await _unmountPlayerPage(tester);
+    },
+  );
+
+  testWidgets('landscape video fullscreen still locks landscape', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    videoPlatform.videoSize = const Size(160, 90);
+    final orientations = _capturePreferredOrientations(tester);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    await tester.tap(find.byTooltip('进入全屏'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(orientations, isNotEmpty);
+    expect(orientations.last, [
+      'DeviceOrientation.landscapeLeft',
+      'DeviceOrientation.landscapeRight',
+    ]);
+    expect(find.byType(PlayerInfoPanel), findsNothing);
+    await _unmountPlayerPage(tester);
+  });
 }

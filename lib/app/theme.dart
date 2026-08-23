@@ -50,16 +50,23 @@ ThemeData buildTheme() => ThemeData(
       ),
     ),
   ),
-  chipTheme: const ChipThemeData(
+  chipTheme: ChipThemeData(
     backgroundColor: AppColors.elevated,
     selectedColor: AppColors.accent,
     disabledColor: AppColors.surface,
     side: BorderSide.none,
-    shape: StadiumBorder(),
-    labelStyle: TextStyle(color: AppColors.secondary, fontSize: 13),
-    secondaryLabelStyle: TextStyle(color: AppColors.onAccent, fontSize: 13),
+    shape: const StadiumBorder(),
+    labelStyle: const TextStyle(color: AppColors.secondary, fontSize: 13),
+    secondaryLabelStyle: const TextStyle(
+      color: AppColors.onAccent,
+      fontSize: 13,
+    ),
     checkmarkColor: AppColors.onAccent,
-    padding: EdgeInsets.symmetric(horizontal: 4),
+    padding: const EdgeInsets.symmetric(horizontal: 4),
+    color: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.selected)) return AppColors.accent;
+      return AppColors.elevated;
+    }),
   ),
   filledButtonTheme: FilledButtonThemeData(
     style: FilledButton.styleFrom(
