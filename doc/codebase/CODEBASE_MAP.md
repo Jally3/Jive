@@ -18,9 +18,10 @@ lib/
 lib/shared/
 ├── app_states.dart                    # 通用状态视图：AppLoadingView / AppEmptyView / AppErrorView
 ├── app_toast.dart                     # 全局居中 toast：挂 root Overlay，2 秒自消，同时只显示一条
+├── is_tv.dart                         # isTvProvider：经 jive/device 通道判断是否 Android TV（iOS/失败恒 false）
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
 ├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
-├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、观看进度条
+├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、观看进度条、TV 焦点描边
 └── video_grid.dart                    # 自适应视频网格 VideoGrid：两列/四列 sliver 布局、动态卡片比例
 ```
 

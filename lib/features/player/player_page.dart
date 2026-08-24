@@ -31,6 +31,7 @@ import '../../domain/playback_status.dart';
 import '../../domain/video.dart';
 import '../../domain/watch_record.dart';
 import '../../shared/app_toast.dart';
+import '../../shared/is_tv.dart';
 import '../../shared/playback_scrubber.dart';
 import 'widgets/playback_status_indicator.dart';
 import 'widgets/player_controls_bar.dart';
@@ -121,6 +122,19 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   int seekGeneration = 0;
   String errorMessage = '视频加载失败，请检查网络后重试';
 
+  /// TV 遥控器/D-pad 按键处理的焦点节点，以 autofocus 挂在页面根部，
+  /// 保证遥控器事件始终落到播放页。
+  final FocusNode _remoteKeyFocusNode = FocusNode();
+
+  /// 选集/倍速菜单的 GlobalKey，供遥控器菜单键程序化打开；
+  /// 按钮本身仍由原 ValueKey 定位。
+  final GlobalKey<PopupMenuButtonState<Episode>> _episodeMenuKey = GlobalKey();
+  final GlobalKey<PopupMenuButtonState<double>> _speedMenuKey = GlobalKey();
+
+  /// 是否运行在 Android TV（isTvProvider 驱动）。仅 TV 接管遥控器按键，
+  /// 手机端不拦截任何键盘事件，保持既有触摸路径。
+  bool _isTv = false;
+
   /// 当前预取目标（领先播放位置的时长），由 prefetchAheadProvider 驱动
   /// （网络类型/开关变化）。
   Duration _prefetchAhead = Duration.zero;
@@ -152,6 +166,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     ref.listenManual(cacheTtlProvider, (_, next) {
       final option = next.value;
       if (option != null) _cleanCacheOnExit = option.cleanOnExit;
+    });
+    _isTv = ref
+        .read(isTvProvider)
+        .maybeWhen(data: (value) => value, orElse: () => false);
+    ref.listenManual(isTvProvider, (_, next) {
+      _isTv = next.maybeWhen(data: (value) => value, orElse: () => false);
     });
     WidgetsBinding.instance.addObserver(this);
     episode = widget.episode;
@@ -919,7 +939,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   Future<void> _applyFullScreenSystemUi(bool enabled) async {
-    final portraitVideo = _isPortraitVideo;
+    // 电视面板固定横屏：竖屏视频也不请求竖屏方向。
+    final isTv = ref
+        .read(isTvProvider)
+        .maybeWhen(data: (v) => v, orElse: () => false);
+    final portraitVideo = _isPortraitVideo && !isTv;
     await SystemChrome.setPreferredOrientations(
       enabled
           ? (portraitVideo
@@ -1169,12 +1193,118 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
     controlsTimer = Timer(const Duration(seconds: 3), () {
       if (mounted && !_episodeMenuOpen) {
-        setState(() {
-          controlsVisible = false;
-          volumeSliderVisible = false;
-        });
+        _hideControls();
       }
     });
+  }
+
+  /// 收起控制条（遥控器下/返回键，也是自动隐藏计时器的收尾）。
+  /// TV 上顺带把焦点收回到页面根节点，保证后续遥控器按键仍被接管。
+  void _hideControls() {
+    controlsTimer?.cancel();
+    if (!controlsVisible) return;
+    setState(() {
+      controlsVisible = false;
+      volumeSliderVisible = false;
+    });
+    if (_isTv) _remoteKeyFocusNode.requestFocus();
+  }
+
+  /// TV 遥控器/D-pad 按键映射（仅 TV 生效，手机端不拦截任何按键）：
+  /// - OK/确定：控制条隐藏时先唤出，否则播放/暂停；
+  /// - 左/右：以当前位置快退/快进 10 秒；
+  /// - 上/下：唤出/收起控制条；
+  /// - 返回：控制条显示时先收起，否则走与 PopScope 一致的退出逻辑；
+  /// - 菜单键：打开选集菜单（单集没有选集入口时打开倍速菜单）。
+  KeyEventResult _handleRemoteKeyEvent(FocusNode node, KeyEvent event) {
+    if (!_isTv || event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    // 返回/菜单/上下不依赖焦点位置：焦点在控制条按钮上时同样生效。
+    if (key == LogicalKeyboardKey.goBack ||
+        key == LogicalKeyboardKey.browserBack) {
+      if (controlsVisible) {
+        _hideControls();
+        return KeyEventResult.handled;
+      }
+      if (fullScreen) {
+        unawaited(_toggleFullScreen());
+      } else {
+        unawaited(_saveAndPop());
+      }
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.contextMenu) {
+      _openEpisodeMenuFromRemote();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      if (!failed && !initializing) _showControls();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _hideControls();
+      return KeyEventResult.handled;
+    }
+    // OK 与左右仅在焦点停留在播放层时接管；焦点移到控制条按钮等控件上时
+    // 交还默认的焦点导航与控件激活，不抢焦点。
+    if (FocusManager.instance.primaryFocus != _remoteKeyFocusNode) {
+      return KeyEventResult.ignored;
+    }
+    if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.gameButtonA) {
+      if (!controlsVisible) {
+        if (!failed && !initializing) _showControls();
+      } else {
+        unawaited(_togglePlayback());
+      }
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      _seekByRemote(const Duration(seconds: -10));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      _seekByRemote(const Duration(seconds: 10));
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// 遥控器左右键：以当前播放位置为基准快退/快进 [delta]，
+  /// 复用 scrubber 的 seek 管线（暂停-跳转-恢复-保存-预取重锚定），
+  /// 并唤出控制条让进度变化可见（自动隐藏计时照旧）。
+  void _seekByRemote(Duration delta) {
+    final current = controller;
+    if (current == null ||
+        !current.value.isInitialized ||
+        failed ||
+        isSeeking ||
+        seekCommitting.value ||
+        current.value.duration <= Duration.zero) {
+      return;
+    }
+    final target = _clampSeekTarget(
+      current.value.position + delta,
+      current.value.duration,
+    );
+    _showControls();
+    _seekStart(target);
+    unawaited(_seekEnd(target));
+  }
+
+  /// 遥控器菜单键：唤出控制条并直接打开选集菜单；
+  /// 单集没有选集入口时退化为倍速菜单。
+  void _openEpisodeMenuFromRemote() {
+    if (failed || initializing) return;
+    _showControls();
+    final episodeMenu = _episodeMenuKey.currentState;
+    if (episodeMenu != null) {
+      episodeMenu.showButtonMenu();
+    } else {
+      _speedMenuKey.currentState?.showButtonMenu();
+    }
   }
 
   Future<void> _togglePlayback() async {
@@ -1321,6 +1451,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     screenSeeking.dispose();
     speedBoosting.dispose();
     verticalDrag.dispose();
+    _remoteKeyFocusNode.dispose();
     unawaited(() async {
       try {
         await _systemUiTransition;
@@ -1349,61 +1480,66 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         }
         unawaited(_saveAndPop());
       },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        appBar: overlayLayout
-            ? null
-            : AppBar(
-                centerTitle: false,
-                titleSpacing: 0,
-                leading: IconButton(
-                  tooltip: '返回',
-                  onPressed: () => unawaited(_saveAndPop()),
-                  icon: const Icon(Icons.arrow_back),
-                ),
-                toolbarHeight:
-                    56 +
-                    12 *
-                        (MediaQuery.textScalerOf(context).scale(1) - 1).clamp(
-                          0.0,
-                          1.0,
+      child: Focus(
+        focusNode: _remoteKeyFocusNode,
+        autofocus: true,
+        onKeyEvent: _handleRemoteKeyEvent,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          appBar: overlayLayout
+              ? null
+              : AppBar(
+                  centerTitle: false,
+                  titleSpacing: 0,
+                  leading: IconButton(
+                    tooltip: '返回',
+                    onPressed: () => unawaited(_saveAndPop()),
+                    icon: const Icon(Icons.arrow_back),
+                  ),
+                  toolbarHeight:
+                      56 +
+                      12 *
+                          (MediaQuery.textScalerOf(context).scale(1) - 1).clamp(
+                            0.0,
+                            1.0,
+                          ),
+                  title: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.video.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        episode.name,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.secondary,
                         ),
-                title: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                      ),
+                    ],
+                  ),
+                  backgroundColor: Colors.black,
+                ),
+          body: overlayLayout
+              ? _overlayBody()
+              : Column(
                   children: [
-                    Text(
-                      widget.video.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      episode.name,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.secondary,
+                    _portraitPlayer(),
+                    Expanded(
+                      child: SafeArea(
+                        top: false,
+                        child: PlayerInfoPanel(
+                          video: widget.video,
+                          current: episode,
+                          onEpisodeTap: (e) => unawaited(_switchEpisode(e)),
+                        ),
                       ),
                     ),
                   ],
                 ),
-                backgroundColor: Colors.black,
-              ),
-        body: overlayLayout
-            ? _overlayBody()
-            : Column(
-                children: [
-                  _portraitPlayer(),
-                  Expanded(
-                    child: SafeArea(
-                      top: false,
-                      child: PlayerInfoPanel(
-                        video: widget.video,
-                        current: episode,
-                        onEpisodeTap: (e) => unawaited(_switchEpisode(e)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+        ),
       ),
     );
   }
@@ -1568,6 +1704,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           controller: current,
           previewPosition: previewPosition,
           seekCommitting: seekCommitting,
+          episodeMenuKey: _episodeMenuKey,
+          speedMenuKey: _speedMenuKey,
           controlsVisible: controlsVisible,
           failed: failed,
           fullScreen: fullScreen,

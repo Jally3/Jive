@@ -23,6 +23,8 @@ class SourceSelectorSheet extends ConsumerStatefulWidget {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      // 宽屏（电视/平板横屏）下收敛宽度居中。
+      constraints: const BoxConstraints(maxWidth: 600),
       builder: (_) => SourceSelectorSheet(selectedId: selectedId),
     );
   }

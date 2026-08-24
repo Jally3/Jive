@@ -33,6 +33,8 @@ Future<void> _selectTtl(
 ) async {
   final selected = await showModalBottomSheet<CacheTtlOption>(
     context: context,
+    // 宽屏（电视/平板横屏）下收敛宽度居中。
+    constraints: const BoxConstraints(maxWidth: 600),
     builder: (sheetContext) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,

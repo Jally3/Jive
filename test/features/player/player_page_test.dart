@@ -17,6 +17,8 @@ import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
 import 'package:jive/app/theme.dart';
 import 'package:jive/features/player/player_page.dart';
+import 'package:jive/features/player/widgets/player_controls_bar.dart';
+import 'package:jive/shared/is_tv.dart';
 import 'package:jive/shared/playback_scrubber.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // These interfaces are transitive test fixtures of the production plugins.
@@ -254,6 +256,7 @@ Future<ProviderContainer> _pumpPlayerPage(
   required _FakeVideoRepository repository,
   Episode? episode,
   double textScale = 1,
+  bool isTv = false,
 }) async {
   final container = ProviderContainer(
     overrides: [
@@ -266,6 +269,7 @@ Future<ProviderContainer> _pumpPlayerPage(
         (ref) => Stream.value(const <DownloadTask>[]),
       ),
       prefetchAheadProvider.overrideWithValue(Duration.zero),
+      isTvProvider.overrideWith((ref) async => isTv),
     ],
   );
   await container.read(vodSourceRegistryProvider.future);
@@ -306,6 +310,16 @@ Future<void> _unmountPlayerPage(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pump();
 }
+
+/// 控制条整体的透明度（0 = 隐藏，1 = 显示）。
+double _controlsBarOpacity(WidgetTester tester) => tester
+    .widget<AnimatedOpacity>(
+      find.descendant(
+        of: find.byType(PlayerControlsBar),
+        matching: find.byType(AnimatedOpacity),
+      ),
+    )
+    .opacity;
 
 List<List<String>> _capturePreferredOrientations(WidgetTester tester) {
   final orientations = <List<String>>[];
@@ -1171,5 +1185,294 @@ void main() {
     ]);
     expect(find.byType(PlayerInfoPanel), findsNothing);
     await _unmountPlayerPage(tester);
+  });
+
+  group('remote control key mapping (TV)', () {
+    testWidgets('OK reveals hidden controls first, then toggles playback', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1920, 1080);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+        isTv: true,
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+      final playerId = videoPlatform.lastPlayerId;
+      expect(videoPlatform.playing[playerId], isTrue);
+
+      // 等控制条自动隐藏。
+      await tester.pump(const Duration(seconds: 4));
+      expect(_controlsBarOpacity(tester), 0);
+
+      // 第一次 OK：只唤出控制条，不暂停。
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      expect(_controlsBarOpacity(tester), 1);
+      expect(videoPlatform.playing[playerId], isTrue);
+
+      // 第二次 OK：暂停。
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      await tester.pump();
+      expect(videoPlatform.playing[playerId], isFalse);
+
+      // enter 恢复播放。
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.pump();
+      expect(videoPlatform.playing[playerId], isTrue);
+      await _unmountPlayerPage(tester);
+    });
+
+    testWidgets('left/right seek ten seconds around the current position', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1920, 1080);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+        isTv: true,
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+      final playerId = videoPlatform.lastPlayerId;
+      expect(videoPlatform.playing[playerId], isTrue);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await _pumpUntil(
+        tester,
+        () => videoPlatform.seekPositions.isNotEmpty,
+        reason: 'right key did not seek forward',
+      );
+      expect(videoPlatform.seekPositions.last, const Duration(seconds: 10));
+
+      // 向左快退：起点不足 10 秒时按 0 截断。
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await _pumpUntil(
+        tester,
+        () => videoPlatform.seekPositions.length >= 2,
+        reason: 'left key did not seek backward',
+      );
+      expect(videoPlatform.seekPositions.last, Duration.zero);
+
+      // seek 完成后恢复播放。
+      await _pumpUntil(
+        tester,
+        () => videoPlatform.playing[playerId] == true,
+        reason: 'playback did not resume after remote seek',
+      );
+      await _unmountPlayerPage(tester);
+    });
+
+    testWidgets('up reveals and down hides the controls bar', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1920, 1080);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+        isTv: true,
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+      expect(_controlsBarOpacity(tester), 1);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(_controlsBarOpacity(tester), 0);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      expect(_controlsBarOpacity(tester), 1);
+
+      // 按键唤出控制条后自动隐藏计时照旧。
+      await tester.pump(const Duration(seconds: 4));
+      expect(_controlsBarOpacity(tester), 0);
+      await _unmountPlayerPage(tester);
+    });
+
+    testWidgets('back hides visible controls before leaving the page', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1920, 1080);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      final container = ProviderContainer(
+        overrides: [
+          videoRepositoryProvider.overrideWithValue(
+            _FakeVideoRepository(video),
+          ),
+          historyRepositoryProvider.overrideWithValue(_FakeHistoryRepository()),
+          vodSourceRegistryProvider.overrideWith(
+            (ref) async => VodSourceRegistry([_testSource], const {}),
+          ),
+          downloadTasksProvider.overrideWith(
+            (ref) => Stream.value(const <DownloadTask>[]),
+          ),
+          prefetchAheadProvider.overrideWithValue(Duration.zero),
+          isTvProvider.overrideWith((ref) async => true),
+        ],
+      );
+      await container.read(vodSourceRegistryProvider.future);
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () {
+                    Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => PlayerPage(
+                          video: video,
+                          episode: video.episodes.first,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('open-player'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('open-player'));
+      await tester.pump();
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+      expect(_controlsBarOpacity(tester), 1);
+
+      // 控制条显示时：返回先收起控制条，页面不退出。
+      // 测试平台没有 goBack 的物理键映射，显式指定 physicalKey。
+      await tester.sendKeyEvent(
+        LogicalKeyboardKey.goBack,
+        physicalKey: PhysicalKeyboardKey.escape,
+      );
+      await tester.pump();
+      expect(_controlsBarOpacity(tester), 0);
+      expect(find.byKey(const ValueKey('fake-video-0')), findsOneWidget);
+
+      // 控制条已隐藏：返回走既有退出逻辑（保存进度并退出页面）。
+      await tester.sendKeyEvent(
+        LogicalKeyboardKey.goBack,
+        physicalKey: PhysicalKeyboardKey.escape,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('open-player'), findsOneWidget);
+      expect(find.byKey(const ValueKey('fake-video-0')), findsNothing);
+      await _unmountPlayerPage(tester);
+    });
+
+    testWidgets('menu key opens the episode menu and D-pad confirms', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1920, 1080);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      videoPlatform.initializationPlan = [
+        _InitializationResult.success,
+        _InitializationResult.success,
+      ];
+      final video = _playableSeries('https://old.example.com');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+        isTv: true,
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+
+      // 菜单键直接打开选集菜单。
+      await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
+      await tester.pumpAndSettle();
+      expect(find.text('第2集'), findsOneWidget);
+
+      // D-pad 移动焦点（第一次进入菜单首项，第二次移到第 2 集）后 OK 确认。
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await _pumpUntil(
+        tester,
+        () => videoPlatform.dataSources.length == 2,
+        reason: 'episode menu did not start the selected episode',
+      );
+      expect(
+        videoPlatform.dataSources.last.uri,
+        'https://old.example.com/2.mp4',
+      );
+      await _unmountPlayerPage(tester);
+    });
+
+    testWidgets('key events are ignored when not running on TV', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1920, 1080);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+      final playerId = videoPlatform.lastPlayerId;
+      expect(videoPlatform.playing[playerId], isTrue);
+
+      // 非 TV（手机/平板）不接管任何遥控器按键。
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      await tester.pump();
+      expect(videoPlatform.playing[playerId], isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(videoPlatform.seekPositions, isEmpty);
+      await _unmountPlayerPage(tester);
+    });
   });
 }

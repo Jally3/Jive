@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 电视桌面横幅：夜幕底色 + 居中图标，替代生成 320x180 位图的轻量方案 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/banner_background"/>
+    <item>
+        <bitmap
+            android:src="@mipmap/ic_launcher"
+            android:gravity="center"/>
+    </item>
+</layer-list>

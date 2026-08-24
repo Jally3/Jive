@@ -257,6 +257,16 @@ class _HomePageState extends ConsumerState<HomePage> {
     ),
     checkmarkColor: AppColors.onAccent,
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    // 选中态是 accent 实心底，focusColor 洗上去不可见，聚焦时加深区分。
+    // 触摸点击不会持有焦点（仅方向键/键盘），手机端无变化。
+    color: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.selected)) {
+        return states.contains(WidgetState.focused)
+            ? AppColors.accentPressed
+            : AppColors.accent;
+      }
+      return AppColors.elevated.withValues(alpha: 0.6);
+    }),
   );
 
   double _mainCategoryRowHeight(BuildContext context) =>
@@ -405,6 +415,16 @@ class _HomePageState extends ConsumerState<HomePage> {
                 child: ChipTheme(
                   data: _chipTheme.copyWith(
                     backgroundColor: AppColors.elevated.withValues(alpha: 0.45),
+                    // copyWith 会沿用 _chipTheme 的 color 解析器（优先级高于
+                    // backgroundColor），这里同步覆盖为 0.45 版本，保持原有底色。
+                    color: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return states.contains(WidgetState.focused)
+                            ? AppColors.accentPressed
+                            : AppColors.accent;
+                      }
+                      return AppColors.elevated.withValues(alpha: 0.45);
+                    }),
                     labelStyle: const TextStyle(
                       color: AppColors.secondary,
                       fontSize: 13,

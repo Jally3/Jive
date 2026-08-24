@@ -72,6 +72,35 @@ double _sheetPixels(WidgetTester tester) => tester
     .pixels;
 
 void main() {
+  testWidgets('sheet caps its width and stays centered on wide screens', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await _pumpSheet(tester, sources: _sources(3), selectedId: 's0');
+
+    final rect = tester.getRect(find.byType(SourceSelectorSheet));
+    expect(rect.width, lessThanOrEqualTo(600));
+    expect(rect.center.dx, closeTo(640, 1));
+  });
+
+  testWidgets('focus moves into the sheet when it opens', (tester) async {
+    await _pumpSheet(tester, sources: _sources(3), selectedId: 's0');
+
+    final sheetScope = FocusScope.of(
+      tester.element(find.byType(SourceSelectorSheet)),
+    );
+    final primary = FocusManager.instance.primaryFocus;
+    expect(primary, isNotNull);
+    expect(
+      primary == sheetScope || primary!.ancestors.contains(sheetScope),
+      isTrue,
+    );
+  });
+
   testWidgets('source sheet scrolls the selected source into view', (
     tester,
   ) async {

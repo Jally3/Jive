@@ -13,6 +13,10 @@ doc/
 │   └── DESIGN_SYSTEM.md                      # 夜幕影院设计规范
 ├── backend/
 │   └── BACKEND_TECHNICAL_REQUIREMENTS.md     # V1.1 后端技术需求
+├── cast/
+│   └── CAST_PLAN.md                          # 投屏功能方案（待确认电视型号后启动）
+├── tv/
+│   └── TV_ADAPTATION_PLAN.md                 # 最小 TV 适配需求方案（feature/tv-adaptation 分支）
 ├── vod-source/
 │   └── SYNCNEXT_SOURCE_INTEGRATION_PLAN.md   # Syncnext / AGE 接入方案
 └── archive/
@@ -36,6 +40,8 @@ doc/
 | [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) | 持续生效 | 「夜幕影院」深色主题设计规范（颜色/字号/组件 Token），UI 改动须遵守 |
 | [`backend/BACKEND_TECHNICAL_REQUIREMENTS.md`](backend/BACKEND_TECHNICAL_REQUIREMENTS.md) | 进行中 | V1.1 后端（VOD 源目录与远程配置服务）技术需求 |
 | [`vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md`](vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md) | 第二期进行中 | 接入 SyncnextPlugin 源；AGE Dart Adapter + 通用 JS 插件运行时 |
+| [`cast/CAST_PLAN.md`](cast/CAST_PLAN.md) | 待启动 | 投屏功能方案：Cast/DLNA/AirPlay 路线对比与分期计划；待确认电视型号与广告过滤取舍后进入 P0 验证 |
+| [`tv/TV_ADAPTATION_PLAN.md`](tv/TV_ADAPTATION_PLAN.md) | 开发中 | 最小 TV 适配需求方案：FR-1~FR-4 已实现（`feature/tv-adaptation` 分支），待真机实测 |
 
 ## 归档（`archive/`，功能已实现，仅作历史记录与验收依据）
 

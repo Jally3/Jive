@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 取自应用图标夜幕底色（tool/generate_app_icon.py 的 FALLBACK_BACKGROUND） -->
+    <color name="banner_background">#131930</color>
+</resources>

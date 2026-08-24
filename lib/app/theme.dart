@@ -19,6 +19,10 @@ abstract final class AppColors {
 ThemeData buildTheme() => ThemeData(
   brightness: Brightness.dark,
   scaffoldBackgroundColor: AppColors.background,
+  // 遥控器/D-pad 焦点态底色（InkWell/Chip/ListTile/Tab 等统一走这里）。
+  // Material 只在 traditional 高亮模式（键盘/方向键输入）下显示焦点色，
+  // 手机触摸不可见，无回归。
+  focusColor: AppColors.accent.withValues(alpha: 0.24),
   colorScheme: const ColorScheme.dark(
     surface: AppColors.surface,
     primary: AppColors.accent,
@@ -64,20 +68,37 @@ ThemeData buildTheme() => ThemeData(
     checkmarkColor: AppColors.onAccent,
     padding: const EdgeInsets.symmetric(horizontal: 4),
     color: WidgetStateProperty.resolveWith((states) {
-      if (states.contains(WidgetState.selected)) return AppColors.accent;
+      if (states.contains(WidgetState.selected)) {
+        // 选中态是 accent 实心底，focusColor 洗上去不可见，聚焦时加深区分。
+        // 触摸点击不会持有焦点（仅方向键/键盘），手机端无变化。
+        return states.contains(WidgetState.focused)
+            ? AppColors.accentPressed
+            : AppColors.accent;
+      }
       return AppColors.elevated;
     }),
   ),
   filledButtonTheme: FilledButtonThemeData(
-    style: FilledButton.styleFrom(
-      minimumSize: const Size(44, 48),
-      backgroundColor: AppColors.accent,
-      foregroundColor: AppColors.onAccent,
-      disabledBackgroundColor: AppColors.accent.withValues(alpha: 0.45),
-      disabledForegroundColor: AppColors.onAccent.withValues(alpha: 0.65),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-    ),
+    style:
+        FilledButton.styleFrom(
+          minimumSize: const Size(44, 48),
+          backgroundColor: AppColors.accent,
+          foregroundColor: AppColors.onAccent,
+          disabledBackgroundColor: AppColors.accent.withValues(alpha: 0.45),
+          disabledForegroundColor: AppColors.onAccent.withValues(alpha: 0.65),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ).copyWith(
+          // 主按钮是 accent 实心底，focusColor 底色洗上去不可见，
+          // 聚焦时改用亮色描边。触摸设备上按钮不会持有焦点，手机上不可见。
+          side: WidgetStateBorderSide.resolveWith(
+            (states) => states.contains(WidgetState.focused)
+                ? const BorderSide(color: AppColors.text, width: 2)
+                : null,
+          ),
+        ),
   ),
   inputDecorationTheme: InputDecorationTheme(
     filled: true,

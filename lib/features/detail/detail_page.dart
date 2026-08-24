@@ -14,6 +14,7 @@ import '../../domain/video.dart';
 import '../../domain/playback_selection.dart';
 import '../../domain/vod_source.dart';
 import '../../shared/app_toast.dart';
+import '../../shared/is_tv.dart';
 import './detail_source_controller.dart';
 import './detail_more_sources_sheet.dart';
 import '../download/download_management_page.dart';
@@ -39,9 +40,15 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   bool downloadResolving = false;
   final Set<int> _expandedEpsGroups = {0};
 
+  /// TV 端进入详情页时默认聚焦"播放"按钮（D-pad 起点）。
+  /// 仅 isTvProvider 为 true 时请求一次，手机端不抢焦点、无视觉变化。
+  final FocusNode _playFocusNode = FocusNode();
+  bool _didFocusPlay = false;
+
   @override
   void dispose() {
     sc?.dispose();
+    _playFocusNode.dispose();
     super.dispose();
   }
 
@@ -229,6 +236,8 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     final selectedIndexes = await showModalBottomSheet<List<int>>(
       context: context,
       isScrollControlled: true,
+      // 宽屏（电视/平板横屏）下收敛宽度居中，不随屏幕拉满。
+      constraints: const BoxConstraints(maxWidth: 600),
       builder: (context) {
         final checked = <int>{current};
         return StatefulBuilder(
@@ -494,7 +503,37 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     );
   }
 
-  Widget _content(Video v) => ListView(
+  Widget _content(Video v) {
+    _focusPlayOnTv();
+    // 宽屏（平板/电视横屏）下收敛内容宽度居中，避免按钮与文本行被拉满。
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final list = _contentList(v);
+        if (constraints.maxWidth < 700) return list;
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 840),
+            child: list,
+          ),
+        );
+      },
+    );
+  }
+
+  void _focusPlayOnTv() {
+    if (_didFocusPlay) return;
+    final isTv = ref
+        .watch(isTvProvider)
+        .maybeWhen(data: (value) => value, orElse: () => false);
+    if (!isTv) return;
+    _didFocusPlay = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _playFocusNode.requestFocus();
+    });
+  }
+
+  Widget _contentList(Video v) => ListView(
     padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
     // section 间距统一为 24/28，模块内部 4/8/12（8pt 体系）。
     children: [
@@ -602,6 +641,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   Widget _playBtn(Video v) => SizedBox(
     height: 48,
     child: FilledButton.icon(
+      focusNode: _playFocusNode,
       onPressed: v.episodes.isEmpty || resolving ? null : _play,
       icon: resolving
           ? const SizedBox.square(
@@ -797,6 +837,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     }
     showModalBottomSheet<void>(
       context: context,
+      constraints: const BoxConstraints(maxWidth: 600),
       builder: (_) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
@@ -928,6 +969,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     if (reg == null) return;
     showModalBottomSheet<void>(
       context: context,
+      constraints: const BoxConstraints(maxWidth: 600),
       builder: (_) => DetailMoreSourcesSheet(
         sources: reg.enabledSources,
         controller: sc!,

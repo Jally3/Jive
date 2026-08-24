@@ -14,6 +14,7 @@ import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
 import 'package:jive/features/detail/detail_page.dart';
 import 'package:jive/features/player/player_page.dart';
+import 'package:jive/shared/is_tv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // ignore: depend_on_referenced_packages
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
@@ -103,6 +104,7 @@ class _FakeDetailRepository implements VideoRepository {
 ProviderContainer _container(
   _FakeDetailRepository repository, {
   bool delayRegistry = false,
+  bool isTv = false,
 }) => ProviderContainer(
   overrides: [
     videoRepositoryProvider.overrideWithValue(repository),
@@ -112,6 +114,7 @@ ProviderContainer _container(
       }
       return VodSourceRegistry(_sources, const {});
     }),
+    isTvProvider.overrideWith((ref) async => isTv),
   ],
 );
 
@@ -253,6 +256,34 @@ Future<void> _pumpUntil(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('focuses the play button by default on TV', (tester) async {
+    final container = _container(_FakeDetailRepository(), isTv: true);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+    await tester.pump();
+    final playButton = tester.widget<FilledButton>(
+      find.bySubtype<FilledButton>(),
+    );
+    expect(find.text('播放 第1集'), findsOneWidget);
+    expect(playButton.focusNode?.hasFocus, isTrue);
+  });
+
+  testWidgets('does not grab focus on non-TV devices', (tester) async {
+    final container = _container(_FakeDetailRepository());
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+    await tester.pump();
+    final playButton = tester.widget<FilledButton>(
+      find.bySubtype<FilledButton>(),
+    );
+    expect(find.text('播放 第1集'), findsOneWidget);
+    expect(playButton.focusNode?.hasFocus, isFalse);
+  });
 
   testWidgets('opens without setState during build when registry resolves', (
     tester,
