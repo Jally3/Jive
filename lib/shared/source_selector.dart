@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/theme.dart';
-import '../core/app_states.dart';
-import '../data/vod_source_preferences.dart';
-import '../data/vod_source_registry.dart';
+import './app_states.dart';
+import '../data/vod_source/vod_source_preferences.dart';
+import '../data/vod_source/vod_source_registry.dart';
 import '../domain/vod_source.dart';
 
 class SourceSelectorSheet extends ConsumerStatefulWidget {
@@ -12,6 +12,10 @@ class SourceSelectorSheet extends ConsumerStatefulWidget {
   static const collectionTabLabel = '资源站';
   static const siteTabLabel = '高清站';
   static const siteTabHint = '画质更高、速度更快，但线路不一定稳定。失败时可切回资源站。';
+
+  /// 高清站中固定置顶的源。
+  static bool isPinnedSite(VodSource source) =>
+      source.id == 'dbku' || source.name.contains('独播');
 
   final String? selectedId;
 
@@ -31,9 +35,6 @@ class SourceSelectorSheet extends ConsumerStatefulWidget {
 class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
   /// 固定行高，保证初始滚动定位精确。
   static const double _itemExtent = 72;
-
-  static bool _isPinnedSite(VodSource source) =>
-      source.id == 'dbku' || source.name.contains('独播');
 
   final _collectionScroll = ScrollController();
   final _siteScroll = ScrollController();
@@ -77,9 +78,11 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
     ];
     final sites = [
       for (final source in sources)
-        if (source.isSiteSource && _isPinnedSite(source)) source,
+        if (source.isSiteSource && SourceSelectorSheet.isPinnedSite(source))
+          source,
       for (final source in sources)
-        if (source.isSiteSource && !_isPinnedSite(source)) source,
+        if (source.isSiteSource && !SourceSelectorSheet.isPinnedSite(source))
+          source,
     ];
     final currentId =
         widget.selectedId ??

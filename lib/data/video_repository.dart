@@ -2,14 +2,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../domain/video.dart';
 import '../domain/vod_source.dart';
-import 'adapters/age_adapter.dart';
-import 'adapters/mac_cms_v10_adapter.dart';
-import 'adapters/olevod_adapter.dart';
-import 'adapters/syncnext_plugin_adapter.dart';
-import 'category_blocklist.dart';
-import 'content_filter_policy.dart';
-import 'vod_source_adapter.dart';
-import 'vod_source_registry.dart';
+import './vod_source/adapters/age_adapter.dart';
+import './vod_source/adapters/mac_cms_v10_adapter.dart';
+import './vod_source/adapters/olevod_adapter.dart';
+import './vod_source/adapters/syncnext_plugin_adapter.dart';
+import './content/category_blocklist.dart';
+import './content/content_filter_policy.dart';
+import './vod_source/vod_source_adapter.dart';
+import './vod_source/vod_source_registry.dart';
 
 class VideoDataException implements Exception {
   const VideoDataException(this.message);

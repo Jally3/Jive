@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../core/app_states.dart';
-import '../data/cache/download_providers.dart';
-import '../data/vod_source_preferences.dart';
-import '../data/vod_source_registry.dart';
-import '../features/home_page.dart';
-import '../features/profile_page.dart';
-import '../features/search_page.dart';
+import '../shared/app_states.dart';
+import '../data/download/download_providers.dart';
+import '../data/vod_source/vod_source_preferences.dart';
+import '../data/vod_source/vod_source_registry.dart';
+import '../features/home/home_page.dart';
+import '../features/profile/profile_page.dart';
+import '../features/search/search_page.dart';
 import 'theme.dart';
 
 class JiveApp extends ConsumerWidget {

@@ -4,11 +4,14 @@
 
 Jive is a Flutter Android/iOS video-on-demand MVP. Application code lives in `lib/`:
 
-- `lib/app/` contains app setup and theme definitions; `lib/main.dart` is the entry point.
-- `lib/domain/` contains models such as `Video`, `Library`, and playback records.
-- `lib/data/` contains repositories and API/persistence integration.
-- `lib/features/` contains page and feature controllers; `lib/shared/` contains reusable widgets.
-- `test/` contains Dart unit and Flutter widget tests, generally named after the file or feature under test.
+- `lib/app/` contains app setup (`app.dart`) and theme definitions (`theme.dart`); `lib/main.dart` is the entry point.
+- `lib/shared/` contains reusable widgets and shared UI state views: `app_states.dart` (moved from the removed `lib/core/`), `app_toast.dart`, `playback_scrubber.dart`, `source_selector.dart`, `video_card.dart`, and `video_grid.dart`.
+- `lib/domain/` contains pure business models such as `Video`, `Library`, `VodSource`, and playback records.
+- `lib/data/` contains repositories and API/persistence integration. `video_repository.dart`, `library_repository.dart`, and `history_repository.dart` sit at its root, alongside five subdirectories: `vod_source/` (source config/registry/adapter interface/preferences plus `adapters/` implementations), `content/` (category nav, blocklist, filter policy), `playback/` (playback session, URL resolver, local proxy, HLS/ad filtering/sniffing/prefetch), `cache/` (cache manager/index/IO/TTL/policy/providers), and `download/` (download managers, providers, disk space).
+- `lib/features/` contains one subdirectory per page/feature: `home/`, `search/`, `detail/`, `player/` (page plus `widgets/` components), `profile/`, `cache/`, `download/`, and `settings/`.
+- `test/` mirrors `lib/`: `test/data/{playback,cache,download,vod_source,content}/`, `test/domain/`, `test/features/<feature>/`, and `test/shared/`, with `widget_test.dart` at the root.
+
+For a per-file index of what each Dart file does, see `doc/codebase/CODEBASE_MAP.md` (keep it in sync when adding/moving/deleting files).
 - `android/` and `ios/` contain platform runners. Product and architecture documentation is in `doc/` (active docs under `doc/<topic>/`, completed ones under `doc/archive/<topic>/`; see `doc/README.md` for the index); see `README.md` and `ARCHITECTURE.md` first.
 
 ## Build, Test, and Development Commands

@@ -54,110 +54,49 @@ VideoRepository.fetchPage(source, ...) / fetchDetail(source, ref) ...
 lib/
 ├── main.dart
 ├── app/
-│   ├── app.dart
-│   ├── router/
-│   │   ├── app_router.dart
-│   │   └── route_names.dart
-│   ├── theme/
-│   │   ├── app_theme.dart
-│   │   ├── app_colors.dart
-│   │   └── app_text_styles.dart
-│   └── config/
-│       ├── app_config.dart
-│       └── env.dart
-│
-├── core/
-│   ├── network/
-│   │   ├── dio_client.dart
-│   │   ├── api_exception.dart
-│   │   ├── network_interceptor.dart
-│   │   └── request_result.dart
-│   ├── pagination/
-│   │   ├── page_request.dart
-│   │   └── pagination_state.dart
-│   ├── error/
-│   │   ├── app_error.dart
-│   │   └── error_mapper.dart
-│   ├── constants/
-│   ├── extensions/
-│   └── widgets/
-│       ├── app_error_view.dart
-│       ├── app_empty_view.dart
-│       ├── app_loading_view.dart
-│       └── load_more_footer.dart
-│
-├── shared/
-│   ├── models/
-│   ├── providers/
-│   │   └── core_providers.dart
-│   └── widgets/
-│       ├── video_card.dart
-│       ├── video_grid.dart
-│       └── category_chip.dart
-│
-├── features/
-│   ├── home/
-│   │   ├── data/
-│   │   ├── domain/
-│   │   ├── application/
-│   │   │   └── home_providers.dart
-│   │   └── presentation/
-│   │       ├── pages/
-│   │       │   └── home_page.dart
-│   │       └── widgets/
-│   ├── category/
-│   │   ├── data/
-│   │   ├── domain/
-│   │   ├── application/
-│   │   │   └── category_providers.dart
-│   │   └── presentation/
-│   │       ├── pages/
-│   │       │   └── category_page.dart
-│   │       └── widgets/
-│   ├── search/
-│   │   ├── data/
-│   │   ├── domain/
-│   │   ├── application/
-│   │   │   └── search_providers.dart
-│   │   └── presentation/
-│   │       ├── pages/
-│   │       │   └── search_page.dart
-│   │       └── widgets/
-│   ├── video_detail/
-│   │   ├── data/
-│   │   ├── domain/
-│   │   ├── application/
-│   │   │   └── video_detail_providers.dart
-│   │   └── presentation/
-│   │       ├── pages/
-│   │       │   └── video_detail_page.dart
-│   │       └── widgets/
-│   ├── player/
-│   │   ├── data/
-│   │   ├── domain/
-│   │   ├── application/
-│   │   │   ├── player_controller.dart
-│   │   │   └── player_providers.dart
-│   │   └── presentation/
-│   │       ├── pages/
-│   │       │   └── player_page.dart
-│   │       └── widgets/
-│   │           ├── video_player_view.dart
-│   │           ├── player_controls.dart
-│   │           └── player_error_view.dart
-│   └── watch_history/
-│       ├── data/
-│       ├── domain/
-│       ├── application/
-│       │   └── watch_history_providers.dart
-│       └── presentation/
-│           ├── pages/
-│           │   └── watch_history_page.dart
-│           └── widgets/
-└── l10n/
-    ├── app_zh.arb
-    └── app_en.arb
+│   ├── app.dart            # ProviderScope + MaterialApp 组装
+│   └── theme.dart          # 主题定义
+├── shared/                 # 跨页面复用组件与通用状态视图
+│   ├── app_states.dart     # 加载/空/错误等通用状态视图（原 lib/core/）
+│   ├── app_toast.dart
+│   ├── playback_scrubber.dart
+│   ├── source_selector.dart
+│   ├── video_card.dart
+│   └── video_grid.dart
+├── domain/                 # 纯业务模型，不依赖 UI/网络/存储实现
+│   ├── vod_source.dart     # VodSource（详见 3.1）
+│   ├── video.dart          # Video / VideoRef / PlaybackLine 等（详见 3.1）
+│   └── ...
+├── data/
+│   ├── video_repository.dart    # VideoRepositoryImpl 统一入口，按 source/ref 请求
+│   ├── library_repository.dart
+│   ├── history_repository.dart
+│   ├── vod_source/         # 多 VOD 源（详见 3.1）
+│   │   ├── vod_source_config.dart
+│   │   ├── vod_source_registry.dart
+│   │   ├── vod_source_adapter.dart   # VodSourceAdapter 接口
+│   │   ├── vod_source_preferences.dart
+│   │   └── adapters/       # mac_cms_v10 / age / olevod / syncnext_plugin
+│   ├── content/            # category_nav、category_blocklist、content_filter_policy
+│   ├── playback/           # playback_session、playback_url_resolver、local_proxy、
+│   │                       # hls_parser、ad_filter、content_type_sniffer、prefetch_policy
+│   ├── cache/              # cache_manager、cache_index、cache_io、cache_ttl_policy、
+│   │                       # content_key、cache_controller、cache_repository、
+│   │                       # cache_providers、single_flight、url_normalizer
+│   └── download/           # download_manager、download_task_manager、
+│                           # download_providers、platform_disk_space
+└── features/               # 每个页面/功能一个子目录
+    ├── home/               # home_page、paged_video_controller
+    ├── search/             # search_page、multi_source_search_controller
+    ├── detail/             # detail_page、detail_source_controller、detail_more_sources_sheet
+    ├── player/             # player_page 及 widgets/ 子组件
+    ├── profile/            # profile_page
+    ├── cache/              # cache_management_page
+    ├── download/           # download_management_page
+    └── settings/           # more_settings_page、source_management_page
 ```
+
+上述结构仍遵循第 2 节的基本原则：页面不直接调用 HTTP 或本地存储，Provider 负责编排，Repository 屏蔽数据来源。每个 feature 再细分 `data/domain/application/presentation` 四层是长期方向，当前并未采用；测试目录 `test/` 镜像 `lib/`（`test/data/<子目录>/`、`test/features/<同名>/`、`test/shared/` 等）。逐文件的作用说明见 [`doc/codebase/CODEBASE_MAP.md`](doc/codebase/CODEBASE_MAP.md)，本节只维护目录级概括。
 
 ### 3.1 多 VOD 源模块（当前实现）
 
@@ -167,24 +106,28 @@ lib/domain/
 ├── video.dart               # Video 含 sourceId/sourceVideoId/globalId；VideoRef；PlaybackLine；VideoPage.total
 
 lib/data/
-├── vod_source_config.dart   # 从 assets 读取 config/vod_sources.json
-├── vod_source_registry.dart # 内置源列表 + adapter 映射；vodSourceRegistryProvider
-├── vod_source_adapter.dart  # VodSourceAdapter 接口
-├── adapters/
-│   ├── mac_cms_v10_adapter.dart  # Mac CMS V10 解析实现
-│   ├── age_adapter.dart          # AGE JSON API（age_v2）；剧集 URL 为 resolver 句柄
-│   ├── olevod_adapter.dart       # 欧乐 JSON API（olevod_v1）；_vv 签名 + 直链 HLS
-│   ├── syncnext_plugin_adapter.dart  # Syncnext JS 插件（syncnext_plugin）
-│   ├── syncnext_plugin_models.dart
-│   └── syncnext_plugin_runtime.dart  # flutter_js + $http/$next 桥
-├── vod_source_preferences.dart   # selectedVodSourceProvider（持久化全局源）
-└── video_repository.dart    # VideoRepositoryImpl 统一入口，按 source/ref 请求
+├── video_repository.dart    # VideoRepositoryImpl 统一入口，按 source/ref 请求
+└── vod_source/
+    ├── vod_source_config.dart   # 从 assets 读取 config/vod_sources.json
+    ├── vod_source_registry.dart # 内置源列表 + adapter 映射；vodSourceRegistryProvider
+    ├── vod_source_adapter.dart  # VodSourceAdapter 接口
+    ├── vod_source_preferences.dart   # selectedVodSourceProvider（持久化全局源）
+    └── adapters/
+        ├── mac_cms_v10_adapter.dart  # Mac CMS V10 解析实现
+        ├── age_adapter.dart          # AGE JSON API（age_v2）；剧集 URL 为 resolver 句柄
+        ├── olevod_adapter.dart       # 欧乐 JSON API（olevod_v1）；_vv 签名 + 直链 HLS
+        ├── syncnext_plugin_adapter.dart  # Syncnext JS 插件（syncnext_plugin）
+        ├── syncnext_plugin_models.dart
+        └── syncnext_plugin_runtime.dart  # flutter_js + $http/$next 桥
 
 lib/features/
-├── paged_video_controller.dart          # 首页/单源分页（绑定 VodSource）
-├── multi_source_search_controller.dart  # 搜索页 1+3 多源探测协调器
-├── detail_source_controller.dart        # 详情页局部切源协调器
-└── detail_more_sources_sheet.dart       # 详情"更多来源"底部弹窗
+├── home/
+│   └── paged_video_controller.dart          # 首页/单源分页（绑定 VodSource）
+├── search/
+│   └── multi_source_search_controller.dart  # 搜索页 1+3 多源探测协调器
+└── detail/
+    ├── detail_source_controller.dart        # 详情页局部切源协调器
+    └── detail_more_sources_sheet.dart       # 详情"更多来源"底部弹窗
 ```
 
 ### 3.2 Provider 结构
@@ -205,7 +148,7 @@ videoRepositoryProvider        Provider<VideoRepository>            统一访问
 页面不应直接出现以下代码：
 
 ```dart
-Dio().get(...);
+http.get(...);
 SharedPreferences.getInstance();
 ```
 
@@ -231,7 +174,7 @@ SharedPreferences.getInstance();
 
 ### 4.3 domain
 
-放置稳定的业务模型和 Repository 接口，不依赖 Dio、Flutter Widget 或具体存储实现。
+放置稳定的业务模型和 Repository 接口，不依赖 HTTP 客户端、Flutter Widget 或具体存储实现。
 
 示例：
 
@@ -399,7 +342,7 @@ abstract interface class PlayerRepository {
 
 ### 6.3 网络层
 
-建议使用 Dio，并统一处理：
+当前使用 `http` 包按需发起请求，尚无统一网络层；如需拦截器、请求取消等能力，再评估迁移 Dio。网络层应统一处理：
 
 - HTTPS
 - 连接、发送和接收超时
@@ -510,7 +453,7 @@ MVP 可以使用 JSON 形式的本地存储，并限制最近记录数量；如�
 
 ## 9. 路由设计
 
-建议使用声明式路由，路由只传递业务 ID：
+建议使用声明式路由，路由只传递业务 ID（当前未实施：页面跳转仍为命令式 `Navigator.push`，未引入 go_router）：
 
 ```text
 /                         首页
@@ -528,32 +471,33 @@ MVP 可以使用 JSON 形式的本地存储，并限制最近记录数量；如�
 ```yaml
 dependencies:
   flutter_riverpod:
-  riverpod_annotation:
-  dio:
-  go_router:
+  http:
   video_player:
-  cached_network_image:
   shared_preferences:
-  freezed_annotation:
-  json_annotation:
+  cached_network_image:
+  screen_brightness:
+  crypto:
+  path_provider:
+  wakelock_plus:
+  connectivity_plus:
+  flutter_js:
 
 dev_dependencies:
-  riverpod_generator:
-  build_runner:
-  freezed:
-  json_serializable:
   flutter_lints:
 ```
 
 依赖选择原则：
 
-- `flutter_riverpod`：状态管理和依赖注入
-- `dio`：网络请求
-- `go_router`：路由和参数传递
+- `flutter_riverpod`：状态管理和依赖注入（手写 Provider，未引入 `riverpod_annotation` / `riverpod_generator`）
+- `http`：网络请求（当前无统一网络层；如需拦截器、请求取消等能力，再评估迁移 `dio`）
 - `video_player`：基础视频播放能力
 - `cached_network_image`：封面缓存
-- `freezed` / `json_serializable`：模型和 JSON 解析
 - `shared_preferences`：简单本地配置或 MVP 观看记录
+- `screen_brightness` / `wakelock_plus`：播放页亮度与常亮控制
+- `crypto` / `path_provider`：缓存键散列与本地缓存目录
+- `connectivity_plus`：网络状态监听
+- `flutter_js`：Syncnext JS 插件运行时
+- 未引入：`go_router`（路由仍为命令式 `Navigator.push`）、`freezed` / `json_serializable`（模型手写 `fromJson`/`toJson`）
 
 不建议同时引入 Riverpod、BLoC、GetX、Provider 等多套状态管理方案。
 

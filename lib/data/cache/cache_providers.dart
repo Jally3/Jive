@@ -5,7 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'cache_index.dart';
 import 'cache_manager.dart';
 import 'cache_ttl_policy.dart';
-import 'platform_disk_space.dart';
+import '../download/platform_disk_space.dart';
 
 final cacheRootDirectoryProvider = FutureProvider<Directory>((ref) async {
   // Explicit downloads must survive app restarts and must not be constrained

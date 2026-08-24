@@ -7,6 +7,8 @@
 ```text
 doc/
 ├── README.md                                 # 本索引
+├── codebase/
+│   └── CODEBASE_MAP.md                       # 代码文件地图（逐文件索引）
 ├── design/
 │   └── DESIGN_SYSTEM.md                      # 夜幕影院设计规范
 ├── backend/
@@ -30,6 +32,7 @@ doc/
 
 | 文档 | 状态 | 说明 |
 | --- | --- | --- |
+| [`codebase/CODEBASE_MAP.md`](codebase/CODEBASE_MAP.md) | 持续生效 | 代码文件地图：`lib/` 逐文件作用索引，新增/移动/删除文件时须同步 |
 | [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) | 持续生效 | 「夜幕影院」深色主题设计规范（颜色/字号/组件 Token），UI 改动须遵守 |
 | [`backend/BACKEND_TECHNICAL_REQUIREMENTS.md`](backend/BACKEND_TECHNICAL_REQUIREMENTS.md) | 进行中 | V1.1 后端（VOD 源目录与远程配置服务）技术需求 |
 | [`vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md`](vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md) | 第二期进行中 | 接入 SyncnextPlugin 源；AGE Dart Adapter + 通用 JS 插件运行时 |
