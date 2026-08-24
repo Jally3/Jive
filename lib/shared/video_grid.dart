@@ -27,8 +27,9 @@ class VideoGrid extends StatelessWidget {
     final width = MediaQuery.sizeOf(context).width;
     final crossAxisCount = width >= 700 ? 4 : 2;
     // 卡片信息区固定高度：海报→标题 8 + 标题(16×1.3) + 间距 4 + meta(12×1.3) ≈ 48.4。
+    // CJK 回退字体行高略大于理论值（实测溢出 1.2px），预留约 4px 余量。
     // 海报 4:5，按实际卡宽动态算比例，避免固定比例在窄屏溢出、宽屏留白。
-    const infoHeight = 52.0;
+    const infoHeight = 56.0;
     final cardWidth = (width - 32 - 12 * (crossAxisCount - 1)) / crossAxisCount;
     return CustomScrollView(
       controller: controller,
