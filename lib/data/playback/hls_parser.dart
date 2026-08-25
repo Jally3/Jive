@@ -65,6 +65,7 @@ class HlsMediaPlaylist {
     this.mediaSequence = 0,
     required this.raw,
     this.timelineMapping,
+    this.adFilterReport,
   });
 
   final Uri baseUri;
@@ -79,6 +80,24 @@ class HlsMediaPlaylist {
   final int mediaSequence;
   final String raw;
   final TimelineMapping? timelineMapping;
+  final AdFilterReport? adFilterReport;
+
+  HlsMediaPlaylist copyWith({AdFilterReport? adFilterReport}) =>
+      HlsMediaPlaylist(
+        baseUri: baseUri,
+        segments: segments,
+        mapUri: mapUri,
+        mapByteRange: mapByteRange,
+        hasEncryption: hasEncryption,
+        hasUnsupportedEncryption: hasUnsupportedEncryption,
+        hasImplicitEncryptionIv: hasImplicitEncryptionIv,
+        keyUris: keyUris,
+        isLive: isLive,
+        mediaSequence: mediaSequence,
+        raw: raw,
+        timelineMapping: timelineMapping,
+        adFilterReport: adFilterReport ?? this.adFilterReport,
+      );
 }
 
 class HlsProxyPlan {
@@ -177,6 +196,9 @@ class HlsParser {
           filterConfidence: outcome.confidence,
         );
       }
+      return HlsDecision.cacheable(
+        playlist.copyWith(adFilterReport: outcome.report),
+      );
     }
     return HlsDecision.cacheable(playlist);
   }
@@ -199,6 +221,7 @@ class HlsParser {
       mediaSequence: original.mediaSequence,
       raw: raw,
       timelineMapping: outcome.mapping,
+      adFilterReport: outcome.report,
     );
   }
 

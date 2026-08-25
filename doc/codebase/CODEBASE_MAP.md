@@ -88,7 +88,7 @@ lib/data/playback/
 ├── local_proxy.dart                   # 本地回环代理 LocalProxyServer：按 token 路由转发 manifest 与分片资源
 ├── playback_url_resolver.dart         # 未知格式播放地址解析 PlaybackUrlResolver：HTML/重定向解析，结果带 10 分钟缓存
 ├── hls_parser.dart                    # HLS manifest 解析与代理改写：HlsParser / HlsProxyPlan / HlsDecision 可缓存性判定
-├── ad_filter.dart                     # 广告分片识别与剔除 AdFilter；TimelineMapping 负责源时间轴 ↔ 过滤后时间轴换算
+├── ad_filter.dart                     # 广告分片识别与剔除 AdFilter（adfilter-v3：夹心中插 + 节奏侏儒 + AdFilterReport）；TimelineMapping 负责源时间轴 ↔ 过滤后时间轴换算
 ├── content_type_sniffer.dart          # 播放格式嗅探：HEAD content-type 优先、魔数回退，带 TTL 缓存
 └── prefetch_policy.dart               # 预取策略：Wi-Fi/蜂窝预取窗口时长，prefetchModeProvider 开关持久化
 ```

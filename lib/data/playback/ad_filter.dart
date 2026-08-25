@@ -1,9 +1,63 @@
 import 'dart:math';
 import './hls_parser.dart';
 
-const String adFilterVersion = 'adfilter-v1';
+const String adFilterVersion = 'adfilter-v3';
 
 const int adTimelineVersion = 1;
+
+abstract final class AdFilterRule {
+  static const explicit = 'explicit';
+  static const shortCluster = 'shortCluster';
+  static const discontinuityDuration = 'discontinuityDuration';
+  static const hostCluster = 'hostCluster';
+  static const dwarf = 'dwarf';
+  static const midRollSandwich = 'midRollSandwich';
+  static const cadenceDwarf = 'cadenceDwarf';
+}
+
+class AdRuleHit {
+  const AdRuleHit({
+    required this.rule,
+    required this.start,
+    required this.end,
+    required this.totalMs,
+  });
+
+  final String rule;
+  final int start;
+  final int end;
+  final int totalMs;
+}
+
+class AdFilterReport {
+  const AdFilterReport({
+    required this.version,
+    required this.originalCount,
+    required this.removedCount,
+    required this.removedMs,
+    this.hits = const [],
+  });
+
+  final String version;
+  final int originalCount;
+  final int removedCount;
+  final int removedMs;
+  final List<AdRuleHit> hits;
+
+  bool get removedAny => removedCount > 0;
+
+  String get statusText {
+    if (!removedAny) {
+      return '广告过滤：未识别到可跳过分片。硬编进正片、且清单无断点的广告无法去除。';
+    }
+    final seconds = (removedMs / 1000).round();
+    return '广告过滤：已跳过 $removedCount 段，共 $seconds 秒（$version）';
+  }
+
+  List<String> get debugLines => [
+    for (final hit in hits) '${hit.rule}  #${hit.start}–${hit.end}',
+  ];
+}
 
 class RemovedRange {
   const RemovedRange(this.startMs, this.endMs);
@@ -65,12 +119,14 @@ class AdFilterResult {
     required this.filtered,
     required this.blocks,
     required this.mapping,
+    required this.report,
   });
 
   final List<HlsSegment> original;
   final List<HlsSegment> filtered;
   final List<AdBlock> blocks;
   final TimelineMapping mapping;
+  final AdFilterReport report;
 
   bool get removedAny => blocks.isNotEmpty;
 
@@ -101,21 +157,39 @@ class AdFilter {
 
   AdFilterResult filter(HlsMediaPlaylist playlist) {
     if (!enabled) {
-      return AdFilterResult(
-        original: playlist.segments,
-        filtered: playlist.segments,
-        blocks: const [],
-        mapping: TimelineMapping(const []),
-      );
+      return _emptyResult(playlist.segments);
     }
     final candidates = <AdBlock>{};
+    final hits = <AdRuleHit>[];
+    void collect(String rule, List<AdBlock> blocks) {
+      candidates.addAll(blocks);
+      for (final block in blocks) {
+        hits.add(
+          AdRuleHit(
+            rule: rule,
+            start: block.start,
+            end: block.end,
+            totalMs: block.totalMs,
+          ),
+        );
+      }
+    }
+
     final baseline = _baselineDuration(playlist.segments);
     if (baseline > 0) {
-      candidates.addAll(_shortClusterBlocks(playlist, baseline));
-      candidates.addAll(_discontinuityDurationBlocks(playlist, baseline));
-      candidates.addAll(_hostClusterBlocks(playlist));
-      candidates.addAll(_explicitMarkerBlocks(playlist));
-      candidates.addAll(_structuralDwarfBlocks(playlist));
+      collect(
+        AdFilterRule.shortCluster,
+        _shortClusterBlocks(playlist, baseline),
+      );
+      collect(
+        AdFilterRule.discontinuityDuration,
+        _discontinuityDurationBlocks(playlist, baseline),
+      );
+      collect(AdFilterRule.hostCluster, _hostClusterBlocks(playlist));
+      collect(AdFilterRule.explicit, _explicitMarkerBlocks(playlist));
+      collect(AdFilterRule.dwarf, _structuralDwarfBlocks(playlist));
+      collect(AdFilterRule.midRollSandwich, _midRollSandwichBlocks(playlist));
+      collect(AdFilterRule.cadenceDwarf, _cadenceDwarfBlocks(playlist));
     }
 
     final merged = _mergeBlocks(candidates, playlist.segments);
@@ -139,12 +213,34 @@ class AdFilter {
       }
       cursor += durationMs;
     }
-
+    final mapping = TimelineMapping(ranges);
     return AdFilterResult(
       original: playlist.segments,
       filtered: filtered,
       blocks: merged,
-      mapping: TimelineMapping(ranges),
+      mapping: mapping,
+      report: AdFilterReport(
+        version: adFilterVersion,
+        originalCount: playlist.segments.length,
+        removedCount: removedIndices.length,
+        removedMs: mapping.removedMs,
+        hits: hits,
+      ),
+    );
+  }
+
+  AdFilterResult _emptyResult(List<HlsSegment> segments) {
+    return AdFilterResult(
+      original: segments,
+      filtered: segments,
+      blocks: const [],
+      mapping: TimelineMapping(const []),
+      report: AdFilterReport(
+        version: adFilterVersion,
+        originalCount: segments.length,
+        removedCount: 0,
+        removedMs: 0,
+      ),
     );
   }
 
@@ -181,20 +277,8 @@ class AdFilter {
     double baseline,
   ) {
     final segments = playlist.segments;
-    final groups = <List<int>>[];
-    var group = <int>[0];
-    for (var i = 1; i < segments.length; i++) {
-      if (segments[i].discontinuityBefore) {
-        groups.add(group);
-        group = [i];
-      } else {
-        group.add(i);
-      }
-    }
-    groups.add(group);
-
     final blocks = <AdBlock>[];
-    for (final indices in groups) {
+    for (final indices in _discontinuityGroups(segments)) {
       if (indices.length < 2) continue;
       var sum = 0.0;
       for (final idx in indices) {
@@ -274,17 +358,7 @@ class AdFilter {
 
   List<AdBlock> _structuralDwarfBlocks(HlsMediaPlaylist playlist) {
     final segments = playlist.segments;
-    final groups = <List<int>>[];
-    var group = <int>[0];
-    for (var i = 1; i < segments.length; i++) {
-      if (segments[i].discontinuityBefore) {
-        groups.add(group);
-        group = [i];
-      } else {
-        group.add(i);
-      }
-    }
-    groups.add(group);
+    final groups = _discontinuityGroups(segments);
     if (groups.length < 3) return const [];
 
     final blocks = <AdBlock>[];
@@ -292,17 +366,90 @@ class AdFilter {
       final indices = groups[g];
       final prev = groups[g - 1];
       final next = groups[g + 1];
-      var sum = 0.0;
-      for (final idx in indices) {
-        sum += segments[idx].duration ?? 0;
-      }
-      final totalMs = (sum * 1000).round();
+      final totalMs = _groupDurationMs(segments, indices);
       if (indices.length <= 8 &&
           totalMs <= 45000 &&
           prev.length >= 15 &&
           next.length >= 15) {
         blocks.add(AdBlock(indices.first, indices.last, totalMs, 0.5));
       }
+    }
+    return blocks;
+  }
+
+  /// Mid-roll SSAI: a 12–90s discontinuity group sandwiched between two
+  /// long content groups. Does not touch the first or last group.
+  List<AdBlock> _midRollSandwichBlocks(HlsMediaPlaylist playlist) {
+    final segments = playlist.segments;
+    final groups = _discontinuityGroups(segments);
+    if (groups.length < 3) return const [];
+
+    final blocks = <AdBlock>[];
+    for (var g = 1; g < groups.length - 1; g++) {
+      final indices = groups[g];
+      final totalMs = _groupDurationMs(segments, indices);
+      if (totalMs < 12000 || totalMs > 90000) continue;
+      if (_groupDurationMs(segments, groups[g - 1]) < 120000) continue;
+      if (_groupDurationMs(segments, groups[g + 1]) < 120000) continue;
+      blocks.add(AdBlock(indices.first, indices.last, totalMs, 0.6));
+    }
+    return blocks;
+  }
+
+  /// Dense-discontinuity packagers (电影天堂 etc.) stamp DISCONTINUITY on
+  /// every ~5 content segments. Ads show up as runs of groups smaller than
+  /// that cadence, typically 6–20s. Only fires when one group size owns
+  /// ≥70% of groups, so mixed playlists are left alone.
+  List<AdBlock> _cadenceDwarfBlocks(HlsMediaPlaylist playlist) {
+    final segments = playlist.segments;
+    final groups = _discontinuityGroups(segments);
+    if (groups.length < 8) return const [];
+
+    final counts = <int, int>{};
+    for (final group in groups) {
+      counts[group.length] = (counts[group.length] ?? 0) + 1;
+    }
+    var cadence = 0;
+    var cadenceCount = 0;
+    counts.forEach((size, count) {
+      if (count > cadenceCount) {
+        cadence = size;
+        cadenceCount = count;
+      }
+    });
+    if (cadence < 4 || cadenceCount < groups.length * 0.7) {
+      return const [];
+    }
+
+    final undersized = <int>[];
+    for (var g = 0; g < groups.length; g++) {
+      if (groups[g].length < cadence) undersized.add(g);
+    }
+    if (undersized.isEmpty) return const [];
+
+    final blocks = <AdBlock>[];
+    var i = 0;
+    while (i < undersized.length) {
+      var j = i;
+      while (j + 1 < undersized.length &&
+          undersized[j + 1] == undersized[j] + 1) {
+        j++;
+      }
+      final firstGroup = undersized[i];
+      final lastGroup = undersized[j];
+      final start = groups[firstGroup].first;
+      final end = groups[lastGroup].last;
+      var sum = 0.0;
+      for (var idx = start; idx <= end; idx++) {
+        sum += segments[idx].duration ?? 0;
+      }
+      final totalMs = (sum * 1000).round();
+      final isTrailingStub =
+          lastGroup == groups.length - 1 && firstGroup == lastGroup;
+      if (totalMs >= 6000 && totalMs <= 45000 && !isTrailingStub) {
+        blocks.add(AdBlock(start, end, totalMs, 0.65));
+      }
+      i = j + 1;
     }
     return blocks;
   }
@@ -337,6 +484,30 @@ class AdFilter {
     }
     merged.add(current);
     return merged;
+  }
+
+  static List<List<int>> _discontinuityGroups(List<HlsSegment> segments) {
+    if (segments.isEmpty) return const [];
+    final groups = <List<int>>[];
+    var group = <int>[0];
+    for (var i = 1; i < segments.length; i++) {
+      if (segments[i].discontinuityBefore) {
+        groups.add(group);
+        group = [i];
+      } else {
+        group.add(i);
+      }
+    }
+    groups.add(group);
+    return groups;
+  }
+
+  static int _groupDurationMs(List<HlsSegment> segments, List<int> indices) {
+    var sum = 0.0;
+    for (final idx in indices) {
+      sum += segments[idx].duration ?? 0;
+    }
+    return (sum * 1000).round();
   }
 
   static bool _isShort(HlsSegment segment, double baseline) {

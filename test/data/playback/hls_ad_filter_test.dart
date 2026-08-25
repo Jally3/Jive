@@ -135,6 +135,51 @@ https://cdn.example.com/movie/0002.ts
     final playlist = decision.mediaPlaylist!;
     expect(playlist.segments, hasLength(3));
     expect(playlist.timelineMapping, isNull);
+    expect(playlist.adFilterReport, isNotNull);
+    expect(playlist.adFilterReport!.removedAny, isFalse);
+  });
+
+  test('mid-roll sandwich playlist is filtered through the parser', () async {
+    final buffer = StringBuffer()
+      ..writeln('#EXTM3U')
+      ..writeln('#EXT-X-VERSION:3')
+      ..writeln('#EXT-X-TARGETDURATION:10');
+    void content(String prefix, int count, {bool disc = false}) {
+      for (var i = 0; i < count; i++) {
+        if (disc && i == 0) buffer.writeln('#EXT-X-DISCONTINUITY');
+        buffer.writeln('#EXTINF:4.0,');
+        buffer.writeln('https://cdn.example.com/$prefix$i.ts');
+      }
+    }
+
+    content('a', 300);
+    content('ad', 19, disc: true);
+    content('b', 300, disc: true);
+    buffer.writeln('#EXT-X-ENDLIST');
+
+    final parser = HlsParser(
+      client: MockClient(
+        (request) async => http.Response(buffer.toString(), 200),
+      ),
+      adFilter: const AdFilter(enabled: true),
+    );
+    final decision = await parser.resolve(source());
+    expect(decision.isCacheable, isTrue);
+    final playlist = decision.mediaPlaylist!;
+    expect(playlist.segments, hasLength(600));
+    expect(playlist.timelineMapping, isNotNull);
+    expect(playlist.timelineMapping!.removedMs, 76000);
+    expect(playlist.adFilterReport, isNotNull);
+    expect(playlist.adFilterReport!.removedCount, 19);
+    expect(
+      playlist.adFilterReport!.hits.any(
+        (hit) => hit.rule == AdFilterRule.midRollSandwich,
+      ),
+      isTrue,
+    );
+    final plan = parser.buildProxyPlan(playlist, 'tok');
+    expect(plan.proxyManifest, isNot(contains('/ad0.ts')));
+    expect(plan.proxyManifest, contains('#EXT-X-ENDLIST'));
   });
 
   test('structural failure keeps original manifest (rollback)', () async {

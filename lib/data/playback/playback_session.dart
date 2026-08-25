@@ -38,6 +38,7 @@ class PlaybackSession {
     this.cacheManager,
     this.cacheRef,
     this.timelineMapping,
+    this.adFilterReport,
     this.originalDurationMs = 0,
     this.filterVersion = 0,
     this.timelineVersion = 0,
@@ -53,6 +54,7 @@ class PlaybackSession {
   final CacheManager? cacheManager;
   CacheRef? cacheRef;
   final TimelineMapping? timelineMapping;
+  final AdFilterReport? adFilterReport;
   final int originalDurationMs;
   final int filterVersion;
   final int timelineVersion;
@@ -224,6 +226,7 @@ class PlaybackSession {
         cacheManager: cacheManager,
         cacheRef: cacheRef,
         timelineMapping: timelineMapping,
+        adFilterReport: playlist.adFilterReport,
         originalDurationMs: originalDurationMs,
         filterVersion: filterVersion,
         timelineVersion: timelineVersion,

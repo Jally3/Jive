@@ -75,3 +75,92 @@ class PlaybackStatusIndicator extends StatelessWidget {
     );
   }
 }
+
+/// 长按状态圆点后的详情底栏内容。
+class PlaybackStatusDetails extends StatelessWidget {
+  const PlaybackStatusDetails({
+    super.key,
+    required this.status,
+    this.adFilterStatus,
+    this.adFilterDebug = const [],
+  });
+
+  final PlaybackStatus status;
+  final String? adFilterStatus;
+  final List<String> adFilterDebug;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '当前播放模式',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                PlaybackStatusIndicator.iconFor(
+                  status.mode,
+                  color: PlaybackStatusIndicator.colorFor(status.mode),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  status.label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              status.description,
+              style: const TextStyle(color: Colors.white70, height: 1.45),
+            ),
+            if (status.reasonText != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                '原因：${status.reasonText}',
+                style: const TextStyle(
+                  color: Colors.orangeAccent,
+                  height: 1.45,
+                ),
+              ),
+            ],
+            if (adFilterStatus != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                adFilterStatus!,
+                key: const ValueKey('ad-filter-status'),
+                style: const TextStyle(color: Colors.white70, height: 1.45),
+              ),
+              for (final line in adFilterDebug)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    line,
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}

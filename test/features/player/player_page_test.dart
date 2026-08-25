@@ -11,6 +11,7 @@ import 'package:jive/data/playback/prefetch_policy.dart';
 import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
+import 'package:jive/data/playback/ad_filter.dart';
 import 'package:jive/domain/playback_status.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
@@ -429,6 +430,102 @@ void main() {
       semantics.dispose();
     },
   );
+
+  testWidgets('PlaybackStatusDetails shows skipped-ad copy', (tester) async {
+    const report = AdFilterReport(
+      version: 'adfilter-v2',
+      originalCount: 619,
+      removedCount: 19,
+      removedMs: 76000,
+      hits: [
+        AdRuleHit(
+          rule: AdFilterRule.midRollSandwich,
+          start: 300,
+          end: 318,
+          totalMs: 76000,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PlaybackStatusDetails(
+            status: const PlaybackStatus(
+              mode: PlaybackMode.proxyWithoutCaching,
+              reason: PlaybackFallbackReason.cacheUnavailable,
+            ),
+            adFilterStatus: report.statusText,
+            adFilterDebug: report.debugLines,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('当前播放模式'), findsOneWidget);
+    expect(find.text('在线播放'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ad-filter-status')), findsOneWidget);
+    expect(find.text(report.statusText), findsOneWidget);
+    expect(find.text('midRollSandwich  #300–318'), findsOneWidget);
+  });
+
+  testWidgets('PlaybackStatusDetails shows unrecognized-ad copy', (
+    tester,
+  ) async {
+    const report = AdFilterReport(
+      version: 'adfilter-v2',
+      originalCount: 10,
+      removedCount: 0,
+      removedMs: 0,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PlaybackStatusDetails(
+            status: const PlaybackStatus(
+              mode: PlaybackMode.streamingAndCaching,
+            ),
+            adFilterStatus: report.statusText,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text(report.statusText), findsOneWidget);
+    expect(find.textContaining('未识别到可跳过分片'), findsOneWidget);
+  });
+
+  testWidgets('direct MP4 playback omits ad filter copy on status sheet', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find
+          .byKey(const ValueKey('playback-status-indicator'))
+          .evaluate()
+          .isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    await tester.longPress(
+      find.byKey(const ValueKey('playback-status-indicator')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('当前播放模式'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ad-filter-status')), findsNothing);
+    expect(find.textContaining('广告过滤'), findsNothing);
+
+    await _unmountPlayerPage(tester);
+  });
 
   testWidgets(
     'PlayerInfoPanel shows description and selectable episode chips',

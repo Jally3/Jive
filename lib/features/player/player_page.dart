@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -831,59 +832,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   Future<void> _showPlaybackStatusDetails() async {
     if (!mounted || playbackStatus.mode == PlaybackMode.preparing) return;
     final status = playbackStatus;
+    final report = _activeSession?.adFilterReport;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF202124),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '当前播放模式',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  PlaybackStatusIndicator.iconFor(
-                    status.mode,
-                    color: PlaybackStatusIndicator.colorFor(status.mode),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    status.label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                status.description,
-                style: const TextStyle(color: Colors.white70, height: 1.45),
-              ),
-              if (status.reasonText != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  '原因：${status.reasonText}',
-                  style: const TextStyle(
-                    color: Colors.orangeAccent,
-                    height: 1.45,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
+      builder: (context) => PlaybackStatusDetails(
+        status: status,
+        adFilterStatus: report?.statusText,
+        adFilterDebug: kDebugMode ? report?.debugLines ?? const [] : const [],
       ),
     );
   }

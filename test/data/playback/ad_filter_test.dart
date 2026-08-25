@@ -154,5 +154,161 @@ void main() {
       final back = result.mapping.filteredToSource(filtered);
       expect(back.inMilliseconds, closeTo(8000, 1));
     });
+
+    test('disabled filter report is empty', () {
+      final result = disabled.filter(
+        playlist([seg('a', '0', 4), seg('a', '1', 4)]),
+      );
+      expect(result.report.removedAny, isFalse);
+      expect(result.report.version, adFilterVersion);
+      expect(result.report.statusText, contains('未识别到可跳过分片'));
+    });
+
+    test('mid-roll sandwich removes same-duration 75s ad block', () {
+      final segments = <HlsSegment>[
+        ..._run('a', 300),
+        ..._run('ad', 19, disc: true),
+        ..._run('b', 300, disc: true),
+      ];
+      final result = enabled.filter(playlist(segments));
+      expect(result.removedAny, isTrue);
+      expect(result.filtered, hasLength(600));
+      expect(result.blocks.single.start, 300);
+      expect(result.blocks.single.end, 318);
+      expect(result.report.removedCount, 19);
+      expect(result.report.removedMs, 76000);
+      expect(
+        result.report.hits.any(
+          (hit) => hit.rule == AdFilterRule.midRollSandwich,
+        ),
+        isTrue,
+      );
+      expect(result.report.statusText, contains('已跳过 19 段，共 76 秒'));
+      expect(result.report.debugLines, contains('midRollSandwich  #300–318'));
+    });
+
+    test('mid-roll sandwich ignores a 120s middle discontinuity block', () {
+      final segments = <HlsSegment>[
+        ..._run('a', 300),
+        ..._run('ad', 30, disc: true),
+        ..._run('b', 300, disc: true),
+      ];
+      final result = enabled.filter(playlist(segments));
+      expect(result.removedAny, isFalse);
+    });
+
+    test(
+      'mid-roll sandwich ignores a 75s block with a short left neighbor',
+      () {
+        final segments = <HlsSegment>[
+          ..._run('a', 15),
+          ..._run('ad', 19, disc: true),
+          ..._run('b', 300, disc: true),
+        ];
+        final result = enabled.filter(playlist(segments));
+        expect(result.removedAny, isFalse);
+      },
+    );
+
+    test('mid-roll sandwich does not remove a leading pre-roll group', () {
+      final segments = <HlsSegment>[
+        ..._run('ad', 15),
+        ..._run('b', 300, disc: true),
+      ];
+      final result = enabled.filter(playlist(segments));
+      expect(result.removedAny, isFalse);
+    });
+
+    test('same-duration mid-roll without discontinuity is not removed', () {
+      final segments = <HlsSegment>[
+        ..._run('a', 300),
+        ..._run('ad', 19),
+        ..._run('b', 300),
+      ];
+      final result = enabled.filter(playlist(segments));
+      expect(result.removedAny, isFalse);
+      expect(result.report.statusText, contains('未识别到可跳过分片'));
+    });
+
+    test(
+      'cadence dwarf removes undersized disc groups in a 5-seg packager',
+      () {
+        final segments = <HlsSegment>[
+          ..._groups('a', 15, 5, discFirst: false),
+          ..._adClip('ad'),
+          ..._groups('b', 15, 5, discFirst: true),
+        ];
+        final result = enabled.filter(playlist(segments));
+        expect(result.removedAny, isTrue);
+        expect(result.filtered, hasLength(150));
+        expect(
+          result.report.hits.any(
+            (hit) => hit.rule == AdFilterRule.cadenceDwarf,
+          ),
+          isTrue,
+        );
+        expect(result.report.removedCount, 4);
+      },
+    );
+
+    test('cadence dwarf keeps a trailing sub-6s stub', () {
+      final segments = <HlsSegment>[
+        ..._groups('a', 15, 5, discFirst: false),
+        seg('cdn', 'tail', 1.24, discontinuity: true),
+      ];
+      final result = enabled.filter(playlist(segments));
+      expect(result.removedAny, isFalse);
+    });
+
+    test('cadence dwarf does not fire without a dominant group size', () {
+      final segments = <HlsSegment>[
+        ..._groups('a', 8, 5, discFirst: false),
+        ..._groups('b', 8, 6, discFirst: true),
+        ..._adClip('ad'),
+        ..._groups('c', 8, 5, discFirst: true),
+      ];
+      final result = enabled.filter(playlist(segments));
+      expect(
+        result.report.hits.any((hit) => hit.rule == AdFilterRule.cadenceDwarf),
+        isFalse,
+      );
+    });
   });
 }
+
+List<HlsSegment> _run(String prefix, int count, {bool disc = false}) => [
+  for (var i = 0; i < count; i++)
+    seg('cdn', '$prefix$i', 4, discontinuity: disc && i == 0),
+];
+
+List<HlsSegment> _groups(
+  String prefix,
+  int groupCount,
+  int groupSize, {
+  required bool discFirst,
+}) {
+  final out = <HlsSegment>[];
+  var n = 0;
+  for (var g = 0; g < groupCount; g++) {
+    for (var i = 0; i < groupSize; i++) {
+      out.add(
+        seg(
+          'cdn',
+          '$prefix$n',
+          4,
+          discontinuity: i == 0 && (g > 0 || discFirst),
+        ),
+      );
+      n++;
+    }
+  }
+  return out;
+}
+
+/// 电影天堂中插形态：1+3 段、约 16 秒，夹在 5 段节奏组之间。
+List<HlsSegment> _adClip(String prefix) => [
+  seg('cdn', '${prefix}0', 6.67, discontinuity: true),
+  seg('cdn', '${prefix}1', 2.13, discontinuity: true),
+  seg('cdn', '${prefix}2', 3.23),
+  seg('cdn', '${prefix}3', 3.73),
+];
