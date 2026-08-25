@@ -166,6 +166,36 @@ ScrollableState _leafTabScrollState(WidgetTester tester) => tester
     .where((state) => state.position.axis == Axis.horizontal)
     .last;
 
+/// 「全部频道」页面的滚动容器内，先把目标滚进可视区再点。
+Future<void> _scrollPanelUntilVisible(WidgetTester tester, Finder target) {
+  final scrollView = find.descendant(
+    of: find.byKey(const ValueKey('category-channels-page')),
+    matching: find.byType(SingleChildScrollView),
+  );
+  return tester.scrollUntilVisible(
+    target,
+    120,
+    scrollable: find
+        .descendant(of: scrollView, matching: find.byType(Scrollable))
+        .first,
+  );
+}
+
+/// 点分类栏右侧按钮打开「全部频道」页面，并等路由动画完成。
+Future<void> _openChannelsPage(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('home-category-expand-button')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 350));
+}
+
+/// 点 X 关闭「全部频道」页面。页面盖住时首页 offstage（finder 默认跳过），
+/// tab 行的断言必须在关闭页面之后进行。
+Future<void> _closeChannelsPage(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('category-channels-close')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 350));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -287,5 +317,194 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(_leafTabScrollState(tester).position.pixels, closeTo(offset, 0.01));
+  });
+
+  testWidgets('expand button opens the all-channels page', (tester) async {
+    await _pumpHome(tester, repository: _ManyNestedCategoryRepository());
+    expect(find.byKey(const ValueKey('category-channels-page')), findsNothing);
+
+    await _openChannelsPage(tester);
+
+    final page = find.byKey(const ValueKey('category-channels-page'));
+    expect(page, findsOneWidget);
+    expect(
+      find.descendant(of: page, matching: find.text('最新')),
+      findsOneWidget,
+    );
+    // 子分类按所属主分类分组展示；「电影」出现在我的频道网格和分组区头两处。
+    expect(find.descendant(of: page, matching: find.text('电影')), findsWidgets);
+    expect(
+      find.descendant(of: page, matching: find.text('子分类5')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('selecting a leaf in the page pops it and applies selection', (
+    tester,
+  ) async {
+    await _pumpHome(tester, repository: _ManyNestedCategoryRepository());
+    await _openChannelsPage(tester);
+
+    final page = find.byKey(const ValueKey('category-channels-page'));
+    final target = find.descendant(of: page, matching: find.text('子分类5'));
+    await _scrollPanelUntilVisible(tester, target);
+    await tester.tap(target);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byKey(const ValueKey('category-channels-page')), findsNothing);
+    // 选中后主分类切到「电影」，子分类行出现且「子分类5」为选中态。
+    final chip = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, '子分类5'),
+    );
+    expect(chip.selected, isTrue);
+  });
+
+  testWidgets('selecting a childless root in the page selects that category', (
+    tester,
+  ) async {
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+    await _openChannelsPage(tester);
+
+    final page = find.byKey(const ValueKey('category-channels-page'));
+    // 「分类3」在页面里出现两处（我的频道网格 + 自身分组），点任一均可选中。
+    await tester.tap(
+      find.descendant(of: page, matching: find.text('分类3')).first,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byKey(const ValueKey('category-channels-page')), findsNothing);
+    final chip = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, '分类3'),
+    );
+    expect(chip.selected, isTrue);
+  });
+
+  testWidgets('edit mode removes a channel from my channels and persists', (
+    tester,
+  ) async {
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+    await _openChannelsPage(tester);
+
+    final page = find.byKey(const ValueKey('category-channels-page'));
+    await tester.tap(find.descendant(of: page, matching: find.text('编辑')));
+    await tester.pump();
+
+    // 编辑态点我的频道里的「分类0」（id 1）移除它。
+    await tester.tap(
+      find.descendant(of: page, matching: find.text('分类0')).first,
+    );
+    await tester.pump();
+
+    await _closeChannelsPage(tester);
+
+    // tab 行的 chip 消失。
+    expect(find.widgetWithText(ChoiceChip, '分类0'), findsNothing);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('home_my_channels_storm'), isNot(contains('1')));
+  });
+
+  testWidgets('edit mode adds a hidden channel back to the tab row', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'home_my_channels_storm': ['1', '2', '3'],
+    });
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+    // 定制生效：tab 行只保留前三个分类。
+    expect(find.widgetWithText(ChoiceChip, '分类3'), findsNothing);
+
+    await _openChannelsPage(tester);
+    final page = find.byKey(const ValueKey('category-channels-page'));
+    await tester.tap(find.descendant(of: page, matching: find.text('编辑')));
+    await tester.pump();
+
+    // 第一个「+ 添加」属于「分类3」（id 4）的分组区头。
+    final addAction = find
+        .descendant(of: page, matching: find.text('+ 添加'))
+        .first;
+    await _scrollPanelUntilVisible(tester, addAction);
+    await tester.tap(addAction);
+    await tester.pump();
+    await _closeChannelsPage(tester);
+
+    expect(find.widgetWithText(ChoiceChip, '分类3'), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('home_my_channels_storm'), contains('4'));
+  });
+
+  testWidgets('edit mode drag reorders my channels and persists the order', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'home_my_channels_storm': ['1', '2', '3', '4'],
+    });
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+    await _openChannelsPage(tester);
+
+    final page = find.byKey(const ValueKey('category-channels-page'));
+    await tester.tap(find.descendant(of: page, matching: find.text('编辑')));
+    await tester.pump();
+
+    // 长按「分类0」（id 1）拖到「分类2」（id 3）的位置。
+    // key 同时挂在 ReorderableItemView 与内部 pill 上，取 .first（外层）。
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('my-channel-1')).first),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    await gesture.moveTo(
+      tester.getCenter(find.byKey(const ValueKey('my-channel-3')).first),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    // 顺序持久化：「分类0」被移到了「分类1」「分类2」之后。
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList('home_my_channels_storm');
+    expect(ids, isNotNull);
+    expect(ids!.length, 4);
+    expect(ids.indexOf('1'), greaterThan(ids.indexOf('3')));
+  });
+
+  testWidgets('reset restores all channels and clears the saved record', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'home_my_channels_storm': ['1', '2'],
+    });
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+    // 定制后「分类2」（id 3）不在 tab 行。
+    expect(find.widgetWithText(ChoiceChip, '分类2'), findsNothing);
+
+    await _openChannelsPage(tester);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('category-channels-page')),
+        matching: find.text('恢复默认'),
+      ),
+    );
+    await tester.pump();
+    await _closeChannelsPage(tester);
+
+    // 恢复后回到 tab 行（用靠前的分类断言：横滑列表是懒构建，屏幕外的不在树里）。
+    expect(find.widgetWithText(ChoiceChip, '分类2'), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('home_my_channels_storm'), isNull);
+  });
+
+  testWidgets('close button pops the page', (tester) async {
+    await _pumpHome(tester, repository: _ManyNestedCategoryRepository());
+    await _openChannelsPage(tester);
+    expect(
+      find.byKey(const ValueKey('category-channels-page')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('category-channels-close')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.byKey(const ValueKey('category-channels-page')), findsNothing);
   });
 }

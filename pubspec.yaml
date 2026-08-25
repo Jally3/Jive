@@ -45,6 +45,7 @@ dependencies:
   wakelock_plus: ^1.2.0
   connectivity_plus: ^7.3.1
   flutter_js: ^0.8.7
+  reorderable_grid_view: ^2.2.8
 
 # screen_brightness_ios 2.1.4+ uses Flutter 3.38 scene APIs
 # (registrar.addSceneDelegate) and fails to compile on Flutter 3.35.

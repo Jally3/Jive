@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../shared/app_states.dart';
 import '../../data/content/category_nav.dart';
 import '../../data/content/content_filter_policy.dart';
+import '../../data/content/my_channels_store.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
 import '../../domain/video.dart';
@@ -13,6 +14,7 @@ import '../../domain/vod_source.dart';
 import '../../shared/source_selector.dart';
 import '../../shared/video_grid.dart';
 import '../detail/detail_page.dart';
+import './category_channels_page.dart';
 import './paged_video_controller.dart';
 
 class HomePage extends ConsumerStatefulWidget {
@@ -33,6 +35,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   int? selectedCategoryId;
   String? categoryError;
   String? _activeSourceId;
+
+  /// 「我的频道」：主 tab 行展示的根分类 id 及顺序，按源持久化；
+  /// null 表示未定制，展示全部根分类。
+  List<int>? _myChannelIds;
 
   /// 网格滚动控制器与"返回顶部"悬浮按钮的可见性（滚动超过一屏左右时出现）。
   /// 不保存 PageStorage offset，切换分类或来源后始终从新列表顶部开始。
@@ -85,6 +91,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _selectedRootId = null;
     selectedCategoryId = null;
     categoryError = null;
+    _myChannelIds = null;
     controller!.loadInitial();
     _loadCategories(source);
   }
@@ -103,6 +110,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         _roots = nav.roots;
         _children = nav.children;
       });
+      final myIds = await MyChannelsStore.load(source.id);
+      if (!isActive()) return;
+      setState(() => _myChannelIds = myIds);
       final repository = ref.read(videoRepositoryProvider);
       final emptyIds = await findEmptyCategoryIds(
         ids: categoryIdsToProbe(nav),
@@ -157,12 +167,91 @@ class _HomePageState extends ConsumerState<HomePage> {
     await controller?.loadInitial(category: categoryId);
   }
 
+  /// 下拉面板里直接选中子分类：同步所属主分类高亮并按子分类查询。
+  Future<void> _selectRootLeaf(int rootId, int leafId) async {
+    _resetScrollPosition();
+    setState(() {
+      _selectedRootId = rootId;
+      selectedCategoryId = leafId;
+    });
+    await controller?.loadInitial(category: leafId);
+  }
+
+  /// 打开「全部频道」全屏页面：选择分类、管理我的频道（增删/拖拽排序）。
+  void _openChannelsPage(VodSource source) {
+    final roots = _roots;
+    if (roots == null || roots.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CategoryChannelsPage(
+          roots: roots,
+          children: _children,
+          myChannelIds: _myChannelIds,
+          selectedRootId: _selectedRootId,
+          selectedCategoryId: selectedCategoryId,
+          onSelectRoot: (id) => _selectRoot(source, id),
+          onSelectLeaf: (rootId, leafId) => _selectRootLeaf(rootId, leafId),
+          onAddRoot: (id) => _addMyChannel(source, id),
+          onRemoveRoot: (id) => _removeMyChannel(source, id),
+          onReorder: (ids) => _reorderMyChannels(source, ids),
+          onReset: () => _resetMyChannels(source),
+        ),
+      ),
+    );
+  }
+
+  /// 当前生效的「我的频道」id 列表（未定制时为全部根分类）。
+  List<int> _currentMyChannelIds() =>
+      _myChannelIds ??
+      [for (final root in _roots ?? const <VideoCategory>[]) root.id];
+
+  Future<void> _addMyChannel(VodSource source, int rootId) async {
+    final current = _currentMyChannelIds();
+    if (current.contains(rootId)) return;
+    final next = [...current, rootId];
+    setState(() => _myChannelIds = next);
+    await MyChannelsStore.save(source.id, next);
+  }
+
+  Future<void> _removeMyChannel(VodSource source, int rootId) async {
+    final next = _currentMyChannelIds().where((id) => id != rootId).toList();
+    setState(() => _myChannelIds = next);
+    await MyChannelsStore.save(source.id, next);
+    // 移除的正是当前选中分类时回到「最新」。
+    if (_selectedRootId == rootId) await _selectRoot(source, null);
+  }
+
+  Future<void> _reorderMyChannels(VodSource source, List<int> ids) async {
+    setState(() => _myChannelIds = ids);
+    await MyChannelsStore.save(source.id, ids);
+  }
+
+  Future<void> _resetMyChannels(VodSource source) async {
+    setState(() => _myChannelIds = null);
+    await MyChannelsStore.reset(source.id);
+  }
+
   void _open(Video video) => Navigator.of(
     context,
   ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
 
   List<VideoCategory> get _selectedRootChildren =>
       _children[_selectedRootId] ?? const [];
+
+  /// 主 tab 行实际展示的根分类：按「我的频道」定制过滤并保持顺序；
+  /// 未定制或定制全部失效时回退为全部根分类。
+  List<VideoCategory>? get _visibleRoots {
+    final roots = _roots;
+    if (roots == null) return null;
+    final ids = _myChannelIds;
+    if (ids == null) return roots;
+    final byId = {for (final root in roots) root.id: root};
+    final mine = [
+      for (final id in ids)
+        if (byId.containsKey(id)) byId[id]!,
+    ];
+    return mine.isEmpty ? roots : mine;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -241,32 +330,6 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
       ),
     ),
-  );
-
-  static ChipThemeData get _chipTheme => ChipThemeData(
-    backgroundColor: AppColors.elevated.withValues(alpha: 0.6),
-    selectedColor: AppColors.accent,
-    disabledColor: AppColors.surface,
-    side: const BorderSide(color: AppColors.divider),
-    shape: const StadiumBorder(),
-    labelStyle: const TextStyle(color: AppColors.text, fontSize: 14),
-    secondaryLabelStyle: const TextStyle(
-      color: AppColors.onAccent,
-      fontSize: 14,
-      fontWeight: FontWeight.w600,
-    ),
-    checkmarkColor: AppColors.onAccent,
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-    // 选中态是 accent 实心底，focusColor 洗上去不可见，聚焦时加深区分。
-    // 触摸点击不会持有焦点（仅方向键/键盘），手机端无变化。
-    color: WidgetStateProperty.resolveWith((states) {
-      if (states.contains(WidgetState.selected)) {
-        return states.contains(WidgetState.focused)
-            ? AppColors.accentPressed
-            : AppColors.accent;
-      }
-      return AppColors.elevated.withValues(alpha: 0.6);
-    }),
   );
 
   double _mainCategoryRowHeight(BuildContext context) =>
@@ -371,51 +434,72 @@ class _HomePageState extends ConsumerState<HomePage> {
           children: [
             SizedBox(
               height: mainRowHeight,
-              child: ChipTheme(
-                data: _chipTheme,
-                child: ListView(
-                  key: PageStorageKey<String>(
-                    'home-root-category-tabs-${source.id}',
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ChipTheme(
+                      data: categoryChipTheme,
+                      child: ListView(
+                        key: PageStorageKey<String>(
+                          'home-root-category-tabs-${source.id}',
+                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: ChoiceChip(
+                              label: const Text('最新'),
+                              selected: _selectedRootId == null,
+                              showCheckmark: false,
+                              onSelected: (_) => _selectRoot(source, null),
+                            ),
+                          ),
+                          ...?_visibleRoots?.map(
+                            (item) => Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(item.name),
+                                selected: _selectedRootId == item.id,
+                                showCheckmark: false,
+                                onSelected: (_) => _selectRoot(source, item.id),
+                              ),
+                            ),
+                          ),
+                          if (categoryError != null)
+                            ActionChip(
+                              label: const Text('重试'),
+                              onPressed: () => _loadCategories(source),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                  scrollDirection: Axis.horizontal,
-                  children: [
+                  // 固定在横滑列表右侧的「全部频道」入口按钮。
+                  if (_visibleRoots?.isNotEmpty ?? false)
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: const Text('最新'),
-                        selected: _selectedRootId == null,
-                        showCheckmark: false,
-                        onSelected: (_) => _selectRoot(source, null),
-                      ),
-                    ),
-                    ...?_roots?.map(
-                      (item) => Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: ChoiceChip(
-                          label: Text(item.name),
-                          selected: _selectedRootId == item.id,
-                          showCheckmark: false,
-                          onSelected: (_) => _selectRoot(source, item.id),
+                      child: IconButton(
+                        key: const ValueKey('home-category-expand-button'),
+                        tooltip: '全部频道',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: AppColors.secondary,
                         ),
+                        onPressed: () => _openChannelsPage(source),
                       ),
                     ),
-                    if (categoryError != null)
-                      ActionChip(
-                        label: const Text('重试'),
-                        onPressed: () => _loadCategories(source),
-                      ),
-                  ],
-                ),
+                ],
               ),
             ),
             if (_selectedRootChildren.isNotEmpty)
               SizedBox(
                 height: subRowHeight,
                 child: ChipTheme(
-                  data: _chipTheme.copyWith(
+                  data: categoryChipTheme.copyWith(
                     backgroundColor: AppColors.elevated.withValues(alpha: 0.45),
-                    // copyWith 会沿用 _chipTheme 的 color 解析器（优先级高于
+                    // copyWith 会沿用 categoryChipTheme 的 color 解析器（优先级高于
                     // backgroundColor），这里同步覆盖为 0.45 版本，保持原有底色。
                     color: WidgetStateProperty.resolveWith((states) {
                       if (states.contains(WidgetState.selected)) {
