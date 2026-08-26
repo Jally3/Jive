@@ -595,7 +595,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         child: VideoGrid(
           videos: c.items,
           onTap: _open,
-          topPadding: 0,
+          topPadding: 12,
           bottomPadding: 96,
           controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
