@@ -229,6 +229,8 @@ class HlsParser {
     final buffer = StringBuffer();
     var sawMap = false;
     var segmentIndex = 0;
+    var outputCount = 0;
+    var needsDiscontinuity = false;
     final pendingSegmentTags = <String>[];
     for (final rawLine in const LineSplitter().convert(original.raw)) {
       final line = rawLine.trim();
@@ -241,11 +243,16 @@ class HlsParser {
         continue;
       }
       if (line.startsWith('#')) {
-        if (line == '#EXT-X-DISCONTINUITY') continue;
+        // 原广告缝和未删除的断点都要留下 DISCONTINUITY，否则拼接后 PTS 对不上。
+        if (line == '#EXT-X-DISCONTINUITY') {
+          needsDiscontinuity = true;
+          continue;
+        }
         if (line.startsWith('#EXT-X-MEDIA-SEQUENCE')) continue;
+        // PDT 跟着被删广告会留下墙钟空洞，过滤后不再写入。
+        if (line.startsWith('#EXT-X-PROGRAM-DATE-TIME:')) continue;
         if (line.startsWith('#EXTINF') ||
-            line.startsWith('#EXT-X-BYTERANGE:') ||
-            line.startsWith('#EXT-X-PROGRAM-DATE-TIME:')) {
+            line.startsWith('#EXT-X-BYTERANGE:')) {
           pendingSegmentTags.add(line);
         } else {
           buffer.writeln(line);
@@ -253,10 +260,17 @@ class HlsParser {
         continue;
       }
       if (!outcome.isRemoved(segmentIndex)) {
+        if (needsDiscontinuity && outputCount > 0) {
+          buffer.writeln('#EXT-X-DISCONTINUITY');
+        }
         for (final tag in pendingSegmentTags) {
           buffer.writeln(tag);
         }
         buffer.writeln(line);
+        outputCount++;
+        needsDiscontinuity = false;
+      } else {
+        needsDiscontinuity = true;
       }
       segmentIndex++;
       pendingSegmentTags.clear();

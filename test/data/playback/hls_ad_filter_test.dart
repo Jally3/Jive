@@ -60,6 +60,44 @@ void main() {
     expect(plan.proxyManifest, contains('#EXT-X-ENDLIST'));
   });
 
+  test(
+    'filtered raw keeps splice discontinuity and drops program-date-time',
+    () async {
+      const media = '''
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXT-X-PROGRAM-DATE-TIME:2020-01-01T00:00:00.000Z
+#EXTINF:4.0,
+https://cdn.example.com/movie/0000.ts
+#EXTINF:4.0,
+https://cdn.example.com/movie/0001.ts
+#EXT-X-DISCONTINUITY
+#EXT-X-PROGRAM-DATE-TIME:2020-01-01T00:00:08.000Z
+#EXTINF:1.7,
+https://cdn.example.com/ads/0001.ts
+#EXTINF:1.7,
+https://cdn.example.com/ads/0002.ts
+#EXT-X-DISCONTINUITY
+#EXT-X-PROGRAM-DATE-TIME:2020-01-01T00:00:11.400Z
+#EXTINF:4.0,
+https://cdn.example.com/movie/0002.ts
+#EXTINF:4.0,
+https://cdn.example.com/movie/0003.ts
+#EXT-X-ENDLIST
+''';
+      final parser = HlsParser(
+        client: MockClient((request) async => http.Response(media, 200)),
+        adFilter: const AdFilter(enabled: true),
+      );
+      final decision = await parser.resolve(source());
+      final plan = parser.buildProxyPlan(decision.mediaPlaylist!, 'tok');
+      expect(plan.proxyManifest, isNot(contains('ads/0001')));
+      expect(plan.proxyManifest, isNot(contains('#EXT-X-PROGRAM-DATE-TIME')));
+      expect('#EXT-X-DISCONTINUITY'.allMatches(plan.proxyManifest).length, 1);
+    },
+  );
+
   test('filtered raw preserves EXTINF durations', () async {
     final parser = HlsParser(
       client: MockClient((request) async => http.Response(_mediaWithAds, 200)),
