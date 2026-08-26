@@ -57,6 +57,7 @@ class PlayerGestureIndicator extends StatelessWidget {
     super.key,
     required this.controller,
     required this.previewPosition,
+    required this.seekClock,
     required this.seekCommitting,
     required this.screenSeeking,
     required this.speedBoosting,
@@ -66,6 +67,7 @@ class PlayerGestureIndicator extends StatelessWidget {
 
   final VideoPlayerController controller;
   final ValueNotifier<Duration?> previewPosition;
+  final ValueNotifier<Duration?> seekClock;
   final ValueNotifier<bool> seekCommitting;
   final ValueNotifier<bool> screenSeeking;
   final ValueNotifier<bool> speedBoosting;
@@ -77,6 +79,7 @@ class PlayerGestureIndicator extends StatelessWidget {
     return AnimatedBuilder(
       animation: Listenable.merge([
         previewPosition,
+        seekClock,
         seekCommitting,
         screenSeeking,
         speedBoosting,
@@ -195,7 +198,7 @@ class PlayerGestureIndicator extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    '/ ${formatPlaybackTime(controller.value.duration)}',
+                    '/ ${formatPlaybackTime(seekClock.value ?? controller.value.duration)}',
                     style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                 ],

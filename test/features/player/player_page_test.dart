@@ -42,6 +42,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   ];
   Size videoSize = const Size(160, 90);
   Duration videoDuration = const Duration(minutes: 10);
+  Duration Function(Duration requested)? seekLanding;
   int _nextPlayerId = 0;
 
   int get lastPlayerId => _nextPlayerId - 1;
@@ -118,7 +119,8 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
 
   @override
   Future<void> seekTo(int playerId, Duration position) async {
-    positions[playerId] = position;
+    final landed = seekLanding?.call(position) ?? position;
+    positions[playerId] = landed;
     seekPositions.add(position);
     calls.add('seekTo:$playerId');
   }
@@ -1375,6 +1377,41 @@ void main() {
         tester,
         () => videoPlatform.playing[playerId] == true,
         reason: 'playback did not resume after remote seek',
+      );
+      await _unmountPlayerPage(tester);
+    });
+
+    testWidgets('retries seek once when native position snaps away', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1920, 1080);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      videoPlatform.seekLanding = (requested) =>
+          requested + const Duration(seconds: 12);
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+        isTv: true,
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+        reason: 'player did not finish initialization',
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await _pumpUntil(
+        tester,
+        () => videoPlatform.seekPositions.length >= 2,
+        reason: 'snapped land did not retry seek',
+      );
+      expect(
+        videoPlatform.seekPositions,
+        everyElement(const Duration(seconds: 10)),
       );
       await _unmountPlayerPage(tester);
     });

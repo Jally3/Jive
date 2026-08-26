@@ -143,6 +143,7 @@ lib/features/
 │   └── detail_more_sources_sheet.dart # 「全部来源」底栏：备用源状态列表与一键探测
 ├── player/
 │   ├── player_page.dart               # 播放器主页 PlayerPage：会话建立与降级、手势亮度/音量、进度记忆、TTL 退出清理
+│   ├── playback_seek_clock.dart       # 拖动/seek 稳定时钟：记住可播时长、冻结尺子、判断 native 落点是否被断点吸附
 │   └── widgets/
 │       ├── player_controls_bar.dart       # 底部控制条：进度、播放/暂停、上下集、下载、倍速、选集、全屏
 │       ├── player_top_bar.dart            # 沉浸式顶栏：返回按钮与标题

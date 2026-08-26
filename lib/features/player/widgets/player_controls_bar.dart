@@ -16,6 +16,7 @@ class PlayerControlsBar extends StatelessWidget {
     super.key,
     required this.controller,
     required this.previewPosition,
+    required this.seekClock,
     required this.seekCommitting,
     required this.controlsVisible,
     required this.failed,
@@ -54,6 +55,9 @@ class PlayerControlsBar extends StatelessWidget {
 
   final VideoPlayerController controller;
   final ValueNotifier<Duration?> previewPosition;
+
+  /// 拖动/提交期间冻结的时长；为 null 时回退到播放器 duration。
+  final ValueNotifier<Duration?> seekClock;
   final ValueNotifier<bool> seekCommitting;
   final bool controlsVisible;
   final bool failed;
@@ -138,16 +142,19 @@ class PlayerControlsBar extends StatelessWidget {
                       animation: Listenable.merge([
                         controller,
                         previewPosition,
+                        seekClock,
                         seekCommitting,
                       ]),
                       builder: (_, _) {
+                        final clock =
+                            seekClock.value ?? controller.value.duration;
                         final timeAboveScrubber =
                             fullScreen &&
                             MediaQuery.orientationOf(context) ==
                                 Orientation.portrait;
                         final positionLabel = Text(
                           key: const ValueKey('player-position-label'),
-                          '${formatPlaybackTime(previewPosition.value ?? controller.value.position)} / ${formatPlaybackTime(controller.value.duration)}',
+                          '${formatPlaybackTime(previewPosition.value ?? controller.value.position)} / ${formatPlaybackTime(clock)}',
                           maxLines: 1,
                           style: const TextStyle(
                             fontSize: 12,
@@ -178,7 +185,7 @@ class PlayerControlsBar extends StatelessWidget {
                                 position:
                                     previewPosition.value ??
                                     controller.value.position,
-                                duration: controller.value.duration,
+                                duration: clock,
                                 buffered: [
                                   for (final range in controller.value.buffered)
                                     (start: range.start, end: range.end),

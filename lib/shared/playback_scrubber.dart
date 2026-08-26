@@ -106,14 +106,18 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
   static const _bubbleWidth = 86.0;
 
   Duration? _dragPosition;
+  Duration? _clock;
   bool _dragging = false;
 
   bool get _interactive => widget.enabled && !widget.committing;
 
+  Duration get _duration => _clock ?? widget.duration;
+
   Duration _target(double dx, double width) =>
-      positionFromFraction(width <= 0 ? 0 : dx / width, widget.duration);
+      positionFromFraction(width <= 0 ? 0 : dx / width, _duration);
 
   void _start(DragStartDetails details, double width) {
+    _clock = widget.duration;
     final target = _target(details.localPosition.dx, width);
     setState(() {
       _dragging = true;
@@ -133,6 +137,7 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
     setState(() {
       _dragging = false;
       _dragPosition = null;
+      _clock = null;
     });
     widget.onSeekEnd(target);
   }
@@ -141,6 +146,7 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
     setState(() {
       _dragging = false;
       _dragPosition = null;
+      _clock = null;
     });
     widget.onSeekCancel();
   }
@@ -152,7 +158,7 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
   }
 
   Duration _semanticTarget(Duration position, {required bool increase}) {
-    final durationMs = widget.duration.inMilliseconds;
+    final durationMs = _duration.inMilliseconds;
     if (durationMs <= 0) return Duration.zero;
     final proportionalStep = durationMs ~/ 10;
     final stepMs = proportionalStep.clamp(1000, 10000);
@@ -175,14 +181,12 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
   @override
   Widget build(BuildContext context) {
     final displayPosition = _dragPosition ?? widget.position;
-    final maximum = widget.duration.inMilliseconds > 0
-        ? widget.duration.inMilliseconds.toDouble()
+    final duration = _duration;
+    final maximum = duration.inMilliseconds > 0
+        ? duration.inMilliseconds.toDouble()
         : 1.0;
     final played = (displayPosition.inMilliseconds / maximum).clamp(0.0, 1.0);
-    final merged = mergeBufferedRanges(
-      widget.buffered,
-      duration: widget.duration,
-    );
+    final merged = mergeBufferedRanges(widget.buffered, duration: duration);
     final active = _dragging || widget.committing;
     final increasedPosition = _semanticTarget(displayPosition, increase: true);
     final decreasedPosition = _semanticTarget(displayPosition, increase: false);
@@ -193,11 +197,11 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
       slider: true,
       label: '播放进度',
       value:
-          '${formatPlaybackTime(displayPosition)} / ${formatPlaybackTime(widget.duration)}',
+          '${formatPlaybackTime(displayPosition)} / ${formatPlaybackTime(duration)}',
       increasedValue:
-          '${formatPlaybackTime(increasedPosition)} / ${formatPlaybackTime(widget.duration)}',
+          '${formatPlaybackTime(increasedPosition)} / ${formatPlaybackTime(duration)}',
       decreasedValue:
-          '${formatPlaybackTime(decreasedPosition)} / ${formatPlaybackTime(widget.duration)}',
+          '${formatPlaybackTime(decreasedPosition)} / ${formatPlaybackTime(duration)}',
       enabled: _interactive,
       onIncrease: _interactive ? () => _semanticSeek(increase: true) : null,
       onDecrease: _interactive ? () => _semanticSeek(increase: false) : null,
@@ -207,7 +211,7 @@ class _PlaybackScrubberState extends State<PlaybackScrubber> {
         children: [
           if (widget.showTime)
             Text(
-              '${formatPlaybackTime(displayPosition)} / ${formatPlaybackTime(widget.duration)}',
+              '${formatPlaybackTime(displayPosition)} / ${formatPlaybackTime(duration)}',
               key: const ValueKey('playback-time'),
               style: const TextStyle(fontSize: 12),
             ),

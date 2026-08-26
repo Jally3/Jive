@@ -99,6 +99,53 @@ void main() {
     );
   });
 
+  testWidgets('drag keeps its duration clock if the parent duration shrinks', (
+    tester,
+  ) async {
+    final commits = <Duration>[];
+    var duration = const Duration(minutes: 10);
+    late StateSetter setDuration;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            setDuration = setState;
+            return Scaffold(
+              body: SizedBox(
+                width: 300,
+                child: PlaybackScrubber(
+                  position: const Duration(minutes: 2),
+                  duration: duration,
+                  buffered: const [],
+                  enabled: true,
+                  onSeekStart: (_) {},
+                  onSeekUpdate: (_) {},
+                  onSeekEnd: commits.add,
+                  onSeekCancel: () {},
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlaybackScrubber));
+    final gesture = await tester.startGesture(center);
+    await gesture.moveBy(const Offset(60, 0));
+    await tester.pump();
+    setDuration(() => duration = const Duration(seconds: 15));
+    await tester.pump();
+    await gesture.moveBy(const Offset(30, 0));
+    await gesture.up();
+    await tester.pump();
+
+    expect(commits, hasLength(1));
+    // 300px 宽、10 分钟尺子：中点 5 分钟再右移 90px ≈ 8 分钟。
+    // 若中途改用 15 秒尺子，提交会掉到十几秒。
+    expect(commits.single, greaterThan(const Duration(minutes: 6)));
+  });
+
   testWidgets('drag previews but commits only once after release', (
     tester,
   ) async {

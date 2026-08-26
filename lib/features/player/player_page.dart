@@ -41,6 +41,7 @@ import 'widgets/player_gesture_layer.dart';
 import 'widgets/player_indicators.dart';
 import 'widgets/player_info_panel.dart';
 import 'widgets/player_overlays.dart';
+import 'playback_seek_clock.dart';
 import 'widgets/player_top_bar.dart';
 
 export 'widgets/playback_status_indicator.dart';
@@ -93,7 +94,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   bool playbackToggleInFlight = false;
   bool isSeeking = false;
   final ValueNotifier<Duration?> previewPosition = ValueNotifier(null);
+  final ValueNotifier<Duration?> seekClock = ValueNotifier(null);
   final ValueNotifier<bool> seekCommitting = ValueNotifier(false);
+  Duration _observedDuration = Duration.zero;
   final ValueNotifier<bool> screenSeeking = ValueNotifier(false);
   final ValueNotifier<bool> speedBoosting = ValueNotifier(false);
   Duration positionBeforeSeek = Duration.zero;
@@ -182,6 +185,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   Future<void> _setup(Duration resume) async {
+    _observedDuration = Duration.zero;
     _resetSeekState();
     final generation = ++setupGeneration;
     _selection = _bindPlaybackHeaders(_selection);
@@ -425,6 +429,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
     _activeSession = session;
     controller = next;
+    _notePlaybackDuration(next.value.duration);
     _completionHandled = false;
     next.addListener(_handlePlayerValueChanged);
     setState(() => initializing = false);
@@ -694,6 +699,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final current = controller;
     if (current == null || !mounted) return;
     final value = current.value;
+    if (value.isInitialized) _notePlaybackDuration(value.duration);
     if (value.hasError && !failed) {
       saveTimer?.cancel();
       saveTimer = null;
@@ -1241,10 +1247,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         current.value.duration <= Duration.zero) {
       return;
     }
-    final target = _clampSeekTarget(
-      current.value.position + delta,
-      current.value.duration,
+    _notePlaybackDuration(current.value.duration);
+    final clock = freezeSeekClock(
+      playerDuration: current.value.duration,
+      observedDuration: _observedDuration,
     );
+    final target = _clampSeekTarget(current.value.position + delta, clock);
     _showControls();
     _seekStart(target);
     unawaited(_seekEnd(target));
@@ -1403,6 +1411,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       client?.close();
     }());
     previewPosition.dispose();
+    seekClock.dispose();
     seekCommitting.dispose();
     screenSeeking.dispose();
     speedBoosting.dispose();
@@ -1639,6 +1648,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         PlayerGestureIndicator(
           controller: current,
           previewPosition: previewPosition,
+          seekClock: seekClock,
           seekCommitting: seekCommitting,
           screenSeeking: screenSeeking,
           speedBoosting: speedBoosting,
@@ -1659,6 +1669,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         PlayerControlsBar(
           controller: current,
           previewPosition: previewPosition,
+          seekClock: seekClock,
           seekCommitting: seekCommitting,
           episodeMenuKey: _episodeMenuKey,
           speedMenuKey: _speedMenuKey,
@@ -1761,11 +1772,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     controlsTimer?.cancel();
     final current = controller;
     if (current == null || isSeeking || seekCommitting.value) return;
+    // 先记下起点和尺子，再 pause：广告乱 PTS 时 pause 可能把 position 打成 0。
+    _notePlaybackDuration(current.value.duration);
+    final clock = freezeSeekClock(
+      playerDuration: current.value.duration,
+      observedDuration: _observedDuration,
+    );
     seekGeneration++;
     isSeeking = true;
     positionBeforeSeek = current.value.position;
     wasPlayingBeforeSeek = current.value.isPlaying;
-    previewPosition.value = _clampSeekTarget(target, current.value.duration);
+    seekClock.value = clock;
+    previewPosition.value = _clampSeekTarget(target, clock);
     seekPause = wasPlayingBeforeSeek ? current.pause() : Future.value();
   }
 
@@ -1813,7 +1831,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         start: screenSeekStartPosition,
         delta: delta,
         width: width,
-        duration: current.value.duration,
+        duration: seekClock.value ?? current.value.duration,
       ),
     );
   }
@@ -1979,10 +1997,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   void _seekUpdate(Duration target) {
-    final current = controller;
-    if (isSeeking && current != null) {
-      previewPosition.value = _clampSeekTarget(target, current.value.duration);
-    }
+    if (!isSeeking) return;
+    final clock =
+        seekClock.value ?? controller?.value.duration ?? Duration.zero;
+    previewPosition.value = _clampSeekTarget(target, clock);
   }
 
   Future<void> _seekEnd(Duration target) async {
@@ -1993,9 +2011,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       return;
     }
     final generation = seekGeneration;
+    final clock = seekClock.value ?? seekController.value.duration;
     final finalTarget = _clampSeekTarget(
       previewPosition.value ?? target,
-      seekController.value.duration,
+      clock,
     );
     isSeeking = false;
     previewPosition.value = finalTarget;
@@ -2003,19 +2022,29 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     try {
       await seekPause;
       if (!_isCurrentSeek(seekController, generation)) return;
+      var landed = positionBeforeSeek;
       if ((finalTarget - positionBeforeSeek).abs() >
           const Duration(milliseconds: 250)) {
-        await seekController.seekTo(finalTarget);
+        landed = await _seekAndRead(seekController, finalTarget);
+        if (!_isCurrentSeek(seekController, generation)) return;
+        if (!seekLandedNear(landed, finalTarget)) {
+          landed = await _seekAndRead(seekController, finalTarget);
+          if (!_isCurrentSeek(seekController, generation)) return;
+        }
       }
-      if (!_isCurrentSeek(seekController, generation)) return;
-      if (finalTarget < seekController.value.duration) {
+      if (finalTarget < clock) {
         _completionHandled = false;
       }
       if (wasPlayingBeforeSeek && _isAppForeground && _playbackDesired) {
         await seekController.play();
       }
       if (!_isCurrentSeek(seekController, generation)) return;
-      previewPosition.value = null;
+      if (seekLandedNear(landed, finalTarget)) {
+        previewPosition.value = null;
+        seekClock.value = null;
+      } else {
+        previewPosition.value = finalTarget;
+      }
       seekCommitting.value = false;
       await _save();
       // seek 成功后立即按新位置重排预取窗口，不等下一次定时拍。
@@ -2039,6 +2068,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         showAppToast(context, '跳转失败，请稍后重试');
       }
       previewPosition.value = null;
+      seekClock.value = null;
       _scheduleControlsHide();
     }
   }
@@ -2060,6 +2090,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     } finally {
       if (_isCurrentSeek(seekController, generation)) {
         previewPosition.value = null;
+        seekClock.value = null;
         _scheduleControlsHide();
       }
     }
@@ -2075,12 +2106,46 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     return target > duration ? duration : target;
   }
 
+  Duration? get _sessionPlayableDuration {
+    final session = _activeSession;
+    if (session == null || session.originalDurationMs <= 0) return null;
+    return sessionPlayableDuration(
+      originalDurationMs: session.originalDurationMs,
+      removedMs: session.timelineMapping?.removedMs ?? 0,
+    );
+  }
+
+  void _notePlaybackDuration(Duration playerDuration) {
+    _observedDuration = rememberPlaybackDuration(
+      playerDuration: playerDuration,
+      observedDuration: _observedDuration,
+      sessionPlayableDuration: _sessionPlayableDuration,
+    );
+  }
+
+  Future<Duration> _nativePosition(VideoPlayerController current) async {
+    try {
+      return await current.position ?? current.value.position;
+    } catch (_) {
+      return current.value.position;
+    }
+  }
+
+  Future<Duration> _seekAndRead(
+    VideoPlayerController current,
+    Duration target,
+  ) async {
+    await current.seekTo(target);
+    return _nativePosition(current);
+  }
+
   void _resetSeekState() {
     seekGeneration++;
     isSeeking = false;
     wasPlayingBeforeSeek = false;
     positionBeforeSeek = Duration.zero;
     previewPosition.value = null;
+    seekClock.value = null;
     seekCommitting.value = false;
     screenSeeking.value = false;
     speedBoosting.value = false;
