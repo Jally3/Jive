@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 
@@ -31,7 +33,85 @@ ChipThemeData get categoryChipTheme => ChipThemeData(
   }),
 );
 
-/// 「全部频道」全屏页面：我的频道 4 列网格 + 全部分类分组。
+/// 「全部频道」网格布局：手机保持 4 列、比例 2.4；平板按宽度加列并限制胶囊高度，
+/// 避免 iPad 上 4 列被拉成又宽又高的按钮。内容宽度封顶，横屏两侧留白。
+@visibleForTesting
+class CategoryChannelsLayout {
+  const CategoryChannelsLayout({
+    required this.columns,
+    required this.padding,
+    required this.spacing,
+    required this.childAspectRatio,
+    required this.contentWidth,
+    required this.isTablet,
+  });
+
+  static const double tabletBreakpoint = 600;
+  static const double tabletMaxContentWidth = 1100;
+  static const double tabletPillHeight = 48;
+  static const double phoneAspectRatio = 2.4;
+  static const double minCellWidth = 110;
+
+  final int columns;
+  final double padding;
+  final double spacing;
+  final double childAspectRatio;
+  final double contentWidth;
+  final bool isTablet;
+
+  double get titleSize => isTablet ? 22 : 17;
+  double get sectionSize => isTablet ? 16 : 14;
+  double get pillSize => isTablet ? 15 : 13;
+  double get actionSize => isTablet ? 15 : 13;
+  double get sectionGap => isTablet ? 24 : 20;
+
+  factory CategoryChannelsLayout.resolve({
+    required double viewportWidth,
+    required double shortestSide,
+  }) {
+    final isTablet = shortestSide >= tabletBreakpoint;
+    final contentWidth = isTablet
+        ? math.min(viewportWidth, tabletMaxContentWidth)
+        : viewportWidth;
+    final padding = isTablet ? 24.0 : 16.0;
+    final spacing = isTablet ? 12.0 : 8.0;
+    final columns = columnCount(
+      contentWidth,
+      padding: padding,
+      spacing: spacing,
+    );
+    final available = math.max(0.0, contentWidth - padding * 2);
+    final cellWidth = columns == 0
+        ? available
+        : (available - spacing * (columns - 1)) / columns;
+    final naturalHeight = cellWidth / phoneAspectRatio;
+    final cellHeight = math.min(naturalHeight, tabletPillHeight);
+    return CategoryChannelsLayout(
+      columns: columns,
+      padding: padding,
+      spacing: spacing,
+      childAspectRatio: cellWidth <= 0
+          ? phoneAspectRatio
+          : cellWidth / cellHeight,
+      contentWidth: contentWidth,
+      isTablet: isTablet,
+    );
+  }
+
+  /// 目标单元格约 110pt：手机竖屏仍是 4 列，iPad 随宽度 5–8 列。
+  @visibleForTesting
+  static int columnCount(
+    double width, {
+    required double padding,
+    required double spacing,
+  }) {
+    final available = width - padding * 2;
+    final count = ((available + spacing) / (minCellWidth + spacing)).floor();
+    return count.clamp(4, 8);
+  }
+}
+
+/// 「全部频道」全屏页面：我的频道自适应网格 + 全部分类分组。
 /// 编辑模式支持增删与长按拖拽排序；增删排序与持久化由首页回调处理，
 /// 页面本地维护 _myIds 副本保证即时刷新。
 class CategoryChannelsPage extends StatefulWidget {
@@ -79,6 +159,7 @@ class CategoryChannelsPage extends StatefulWidget {
 class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
   late List<int> _myIds;
   bool _editing = false;
+  late CategoryChannelsLayout _layout;
 
   @override
   void initState() {
@@ -137,40 +218,63 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
     key: const ValueKey('category-channels-page'),
     backgroundColor: AppColors.background,
     body: SafeArea(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-            child: _titleBar(),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          _layout = CategoryChannelsLayout.resolve(
+            viewportWidth: constraints.maxWidth,
+            shortestSide: MediaQuery.sizeOf(context).shortestSide,
+          );
+          return Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: _layout.contentWidth),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _myChannelsSection(),
-                  for (final root in widget.roots) ...[
-                    const SizedBox(height: 20),
-                    _rootSection(root),
-                  ],
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      _layout.padding,
+                      _layout.isTablet ? 12 : 8,
+                      8,
+                      0,
+                    ),
+                    child: _titleBar(),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(
+                        _layout.padding,
+                        _layout.isTablet ? 12 : 8,
+                        _layout.padding,
+                        _layout.isTablet ? 32 : 24,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _myChannelsSection(),
+                          for (final root in widget.roots) ...[
+                            SizedBox(height: _layout.sectionGap),
+                            _rootSection(root),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     ),
   );
 
   Widget _titleBar() => Row(
     children: [
-      const Text(
+      Text(
         '全部频道',
         style: TextStyle(
           color: AppColors.text,
-          fontSize: 17,
+          fontSize: _layout.titleSize,
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -179,7 +283,11 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
         key: const ValueKey('category-channels-close'),
         tooltip: '关闭',
         visualDensity: VisualDensity.compact,
-        icon: const Icon(Icons.close_rounded, color: AppColors.secondary),
+        icon: Icon(
+          Icons.close_rounded,
+          color: AppColors.secondary,
+          size: _layout.isTablet ? 26 : 24,
+        ),
         onPressed: () => Navigator.of(context).pop(),
       ),
     ],
@@ -189,9 +297,9 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
     children: [
       Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           color: AppColors.text,
-          fontSize: 14,
+          fontSize: _layout.sectionSize,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -205,10 +313,17 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.only(left: 16, top: 4, bottom: 4),
+          padding: EdgeInsets.only(
+            left: 16,
+            top: _layout.isTablet ? 8 : 4,
+            bottom: _layout.isTablet ? 8 : 4,
+          ),
           child: Text(
             label,
-            style: TextStyle(color: color ?? AppColors.secondary, fontSize: 13),
+            style: TextStyle(
+              color: color ?? AppColors.secondary,
+              fontSize: _layout.actionSize,
+            ),
           ),
         ),
       );
@@ -236,16 +351,16 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
                   ),
                 ],
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: _layout.isTablet ? 12 : 8),
         if (_editing)
           // 「最新」放在 header 占首格：不参与拖拽也不可移除。
           ReorderableGridView.count(
-            crossAxisCount: 4,
+            crossAxisCount: _layout.columns,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 2.4,
+            mainAxisSpacing: _layout.spacing,
+            crossAxisSpacing: _layout.spacing,
+            childAspectRatio: _layout.childAspectRatio,
             onReorder: _reorder,
             header: [
               _pill(
@@ -283,7 +398,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
     );
   }
 
-  /// 有子分类：根分类名作小标题，子分类排 4 列网格；
+  /// 有子分类：根分类名作小标题，子分类排自适应网格；
   /// 无子分类：根分类自身占一格。编辑态区头带「+ 添加 / 已添加」。
   Widget _rootSection(VideoCategory root) {
     final kids = widget.children[root.id] ?? const <VideoCategory>[];
@@ -306,7 +421,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
                     ),
                 ],
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: _layout.isTablet ? 12 : 8),
         IgnorePointer(
           ignoring: _editing,
           child: Opacity(
@@ -334,12 +449,12 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
   }
 
   Widget _grid(List<Widget> items) => GridView.count(
-    crossAxisCount: 4,
+    crossAxisCount: _layout.columns,
     shrinkWrap: true,
     physics: const NeverScrollableScrollPhysics(),
-    mainAxisSpacing: 8,
-    crossAxisSpacing: 8,
-    childAspectRatio: 2.4,
+    mainAxisSpacing: _layout.spacing,
+    crossAxisSpacing: _layout.spacing,
+    childAspectRatio: _layout.childAspectRatio,
     children: items,
   );
 
@@ -374,7 +489,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
             color: selected
                 ? AppColors.onAccent
                 : (dimmed ? AppColors.tertiary : AppColors.text),
-            fontSize: 13,
+            fontSize: _layout.pillSize,
             fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
           ),
         ),

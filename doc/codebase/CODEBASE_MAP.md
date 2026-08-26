@@ -132,7 +132,7 @@ lib/data/download/
 lib/features/
 ├── home/
 │   ├── home_page.dart                 # 首页：两级分类导航、视频网格、选源入口、返回顶部
-│   ├── category_channels_page.dart    # 「全部频道」全屏页：我的频道 4 列网格、编辑模式增删与拖拽排序、全部分类分组
+│   ├── category_channels_page.dart    # 「全部频道」全屏页：我的频道自适应网格（手机 4 列、平板 5–8 列）、编辑模式增删与拖拽排序、全部分类分组
 │   └── paged_video_controller.dart    # 首页分页控制器：加载更多、错误态、首页结果 2 分钟快照缓存
 ├── search/
 │   ├── search_page.dart               # 搜索页：输入防抖、跟随全局切源、多源结果聚合展示
