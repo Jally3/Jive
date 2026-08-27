@@ -1286,6 +1286,77 @@ void main() {
     await _unmountPlayerPage(tester);
   });
 
+  testWidgets('phone landscape fullscreen hides the fill-screen button', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    videoPlatform.videoSize = const Size(160, 90);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    await tester.tap(find.byTooltip('进入全屏'));
+    await tester.pump();
+    // 模拟系统转到横屏：宽度 ≥ 430 时 compactControls 关闭，原先会露出「铺满」。
+    tester.view.physicalSize = const Size(844, 390);
+    await tester.pump();
+
+    expect(find.byTooltip('铺满'), findsNothing);
+    expect(find.byTooltip('适应'), findsNothing);
+    expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets('exiting landscape fullscreen on phone locks portrait', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    videoPlatform.videoSize = const Size(160, 90);
+    final orientations = _capturePreferredOrientations(tester);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    await tester.tap(find.byTooltip('进入全屏'));
+    await tester.pump();
+    await tester.pump();
+    expect(orientations.last, [
+      'DeviceOrientation.landscapeLeft',
+      'DeviceOrientation.landscapeRight',
+    ]);
+
+    await tester.tap(find.byKey(const ValueKey('fullscreen-back')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(orientations.last, ['DeviceOrientation.portraitUp']);
+    expect(find.byKey(const ValueKey('fake-video-0')), findsOneWidget);
+    expect(find.byType(PlayerInfoPanel), findsOneWidget);
+    await _unmountPlayerPage(tester);
+  });
+
   group('remote control key mapping (TV)', () {
     testWidgets('OK reveals hidden controls first, then toggles playback', (
       tester,

@@ -139,6 +139,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   /// 手机端不拦截任何键盘事件，保持既有触摸路径。
   bool _isTv = false;
 
+  /// 手机端退出全屏/离开播放页时锁回竖屏；平板和电视保持自由旋转。
+  bool _lockPortraitOnExit = true;
+
   /// 当前预取目标（领先播放位置的时长），由 prefetchAheadProvider 驱动
   /// （网络类型/开关变化）。
   Duration _prefetchAhead = Duration.zero;
@@ -905,6 +908,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final isTv = ref
         .read(isTvProvider)
         .maybeWhen(data: (v) => v, orElse: () => false);
+    if (mounted) {
+      _lockPortraitOnExit =
+          !isTv && MediaQuery.sizeOf(context).shortestSide < 600;
+    }
     final portraitVideo = _isPortraitVideo && !isTv;
     await SystemChrome.setPreferredOrientations(
       enabled
@@ -914,13 +921,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                     DeviceOrientation.landscapeLeft,
                     DeviceOrientation.landscapeRight,
                   ])
-          : DeviceOrientation.values,
+          : _idlePreferredOrientations(),
     );
     _fullScreenLockedPortrait = enabled && portraitVideo;
     await SystemChrome.setEnabledSystemUIMode(
       enabled ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
     );
   }
+
+  List<DeviceOrientation> _idlePreferredOrientations() => _lockPortraitOnExit
+      ? const [DeviceOrientation.portraitUp]
+      : DeviceOrientation.values;
 
   Future<void> _switchEpisode(Episode next) async {
     if (_isSameEpisode(next, episode)) return;
@@ -1421,7 +1432,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       try {
         await _systemUiTransition;
       } catch (_) {}
-      await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+      await SystemChrome.setPreferredOrientations(_idlePreferredOrientations());
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }());
     unawaited(_resetScreenBrightness());
@@ -1435,6 +1446,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     // 退出横屏全屏时旋转动画有几帧延迟，期间 MediaQuery 仍可能是横屏尺寸，
     // 用 overlay 避免竖屏 Column 在横屏尺寸下溢出。
     final overlayLayout = _overlayLayoutOf(context);
+    _lockPortraitOnExit =
+        !_isTv && MediaQuery.sizeOf(context).shortestSide < 600;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -1518,6 +1531,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     if (!mounted) {
       _savedBeforePop = false;
       return;
+    }
+    if (_lockPortraitOnExit) {
+      unawaited(
+        SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.portraitUp,
+        ]),
+      );
     }
     Navigator.of(context).pop<Episode>(episode);
   }

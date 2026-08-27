@@ -148,6 +148,8 @@ class PlayerControlsBar extends StatelessWidget {
                       builder: (_, _) {
                         final clock =
                             seekClock.value ?? controller.value.duration;
+                        final isPhone =
+                            MediaQuery.sizeOf(context).shortestSide < 600;
                         final timeAboveScrubber =
                             fullScreen &&
                             MediaQuery.orientationOf(context) ==
@@ -404,9 +406,11 @@ class PlayerControlsBar extends StatelessWidget {
                                         ),
                                       ),
                                     ),
+                                  // 铺满只给平板/横窗用；手机全屏已经铺满屏幕，不再给这个入口。
                                   if (overlayLayout &&
                                       !compactControls &&
-                                      !(fullScreen && isPortraitVideo))
+                                      !(fullScreen && isPortraitVideo) &&
+                                      !(fullScreen && isPhone))
                                     IconButton(
                                       onPressed: onFillScreenToggle,
                                       tooltip: fillScreen ? '适应' : '铺满',
