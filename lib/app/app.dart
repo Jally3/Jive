@@ -9,33 +9,65 @@ import '../data/vod_source/vod_source_registry.dart';
 import '../features/home/home_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/search/search_page.dart';
+import '../features/splash/splash_page.dart';
 import 'theme.dart';
 
 class JiveApp extends ConsumerWidget {
   const JiveApp({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final sourceState = ref.watch(selectedVodSourceProvider);
     return _DownloadLifecycle(
       child: MaterialApp(
         title: 'Jive',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
-        home: sourceState.when(
-          loading: () => const Scaffold(
-            backgroundColor: AppColors.background,
-            body: Center(child: CircularProgressIndicator()),
-          ),
-          error: (error, _) => Scaffold(
-            backgroundColor: AppColors.background,
-            body: AppErrorView(
-              message: '$error',
-              onRetry: () => ref.invalidate(vodSourceRegistryProvider),
-            ),
-          ),
-          data: (_) => const AppShell(),
+        home: const _StartupGate(),
+      ),
+    );
+  }
+}
+
+/// 源就绪且满最短展示后才进首页，避免 pop 回闪屏。
+class _StartupGate extends ConsumerStatefulWidget {
+  const _StartupGate();
+
+  @override
+  ConsumerState<_StartupGate> createState() => _StartupGateState();
+}
+
+class _StartupGateState extends ConsumerState<_StartupGate> {
+  bool _holdElapsed = false;
+  Timer? _holdTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _holdTimer = Timer(splashMinHold, () {
+      if (mounted) setState(() => _holdElapsed = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _holdTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sourceState = ref.watch(selectedVodSourceProvider);
+    final skipHold = MediaQuery.disableAnimationsOf(context);
+    return sourceState.when(
+      loading: () => const SplashPage(),
+      error: (error, _) => Scaffold(
+        backgroundColor: AppColors.background,
+        body: AppErrorView(
+          message: '$error',
+          onRetry: () => ref.invalidate(vodSourceRegistryProvider),
         ),
       ),
+      data: (_) =>
+          (skipHold || _holdElapsed) ? const AppShell() : const SplashPage(),
     );
   }
 }

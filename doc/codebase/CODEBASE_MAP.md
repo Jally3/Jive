@@ -8,7 +8,7 @@
 lib/
 ├── main.dart                          # 应用入口：设置状态栏样式，启动 ProviderScope/JiveApp
 └── app/
-    ├── app.dart                       # 根组件 JiveApp 与 AppShell：主题、三页底部导航壳、源加载闸门、下载生命周期联动
+    ├── app.dart                       # 根组件 JiveApp 与 AppShell：主题、闪屏最短展示+源加载闸门、三页底部导航壳、下载生命周期联动
     └── theme.dart                     # 「夜幕影院」深色主题：AppColors 色板与 buildTheme()
 ```
 
@@ -130,6 +130,8 @@ lib/data/download/
 
 ```text
 lib/features/
+├── splash/
+│   └── splash_page.dart               # 冷启动品牌页：居中 Logo + 「Jive」词标、底部轻量加载；最短展示常量 splashMinHold
 ├── home/
 │   ├── home_page.dart                 # 首页：两级分类导航、视频网格、选源入口、返回顶部
 │   ├── category_channels_page.dart    # 「全部频道」全屏页：我的频道自适应网格（手机 4 列、平板 5–8 列）、编辑模式增删与拖拽排序、全部分类分组

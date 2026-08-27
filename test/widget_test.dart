@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
 import 'package:jive/app/theme.dart';
+import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/video_repository.dart';
@@ -105,6 +106,17 @@ final _testOverrides = [
   ),
 ];
 
+Future<void> _pumpReadyApp(
+  WidgetTester tester,
+  ProviderContainer container,
+) async {
+  await tester.pumpWidget(
+    UncontrolledProviderScope(container: container, child: const JiveApp()),
+  );
+  await tester.pump();
+  await tester.pump(splashMinHold);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -120,10 +132,7 @@ void main() {
     final container = ProviderContainer(overrides: _testOverrides);
     await container.read(vodSourceRegistryProvider.future);
     addTearDown(container.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const JiveApp()),
-    );
-    await tester.pump();
+    await _pumpReadyApp(tester, container);
 
     final nav = find.byKey(const ValueKey('floating-nav-bar'));
     final surface = find.byKey(const ValueKey('floating-nav-surface'));
@@ -169,10 +178,7 @@ void main() {
     final container = ProviderContainer(overrides: _testOverrides);
     await container.read(vodSourceRegistryProvider.future);
     addTearDown(container.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const JiveApp()),
-    );
-    await tester.pump();
+    await _pumpReadyApp(tester, container);
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Jive'), findsOneWidget);
     expect(find.text('我的'), findsOneWidget);
@@ -192,10 +198,7 @@ void main() {
     final container = ProviderContainer(overrides: _testOverrides);
     await container.read(vodSourceRegistryProvider.future);
     addTearDown(container.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const JiveApp()),
-    );
-    await tester.pump();
+    await _pumpReadyApp(tester, container);
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('测试影片'), findsOneWidget);
     await tester.tap(find.text('测试源 ▾'));
@@ -216,10 +219,7 @@ void main() {
     final container = ProviderContainer(overrides: _testOverrides);
     await container.read(vodSourceRegistryProvider.future);
     addTearDown(container.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const JiveApp()),
-    );
-    await tester.pump();
+    await _pumpReadyApp(tester, container);
     await tester.pump(const Duration(milliseconds: 500));
     await tester.tap(find.text('我的'));
     await tester.pump();
@@ -245,10 +245,7 @@ void main() {
     final container = ProviderContainer(overrides: _testOverrides);
     await container.read(vodSourceRegistryProvider.future);
     addTearDown(container.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const JiveApp()),
-    );
-    await tester.pump();
+    await _pumpReadyApp(tester, container);
     await tester.pump(const Duration(milliseconds: 500));
     await tester.tap(find.widgetWithText(ChoiceChip, '电影片'));
     await tester.pump();
@@ -268,10 +265,7 @@ void main() {
     final container = ProviderContainer(overrides: _testOverrides);
     await container.read(vodSourceRegistryProvider.future);
     addTearDown(container.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const JiveApp()),
-    );
-    await tester.pump();
+    await _pumpReadyApp(tester, container);
     await tester.tap(find.text('搜索'));
     await tester.pump();
     expect(find.text('输入片名开始搜索'), findsOneWidget);
@@ -291,10 +285,7 @@ void main() {
     final container = ProviderContainer(overrides: _testOverrides);
     await container.read(vodSourceRegistryProvider.future);
     addTearDown(container.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const JiveApp()),
-    );
-    await tester.pump();
+    await _pumpReadyApp(tester, container);
     await tester.tap(find.text('搜索'));
     await tester.pump();
     await tester.enterText(find.byType(TextField), '不存在');
@@ -326,10 +317,7 @@ void main() {
     );
     await container.read(vodSourceRegistryProvider.future);
     addTearDown(container.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const JiveApp()),
-    );
-    await tester.pump();
+    await _pumpReadyApp(tester, container);
     await tester.pump(const Duration(milliseconds: 500));
     // 初始只展示顶级分类 tab，子分类不展示。
     expect(find.widgetWithText(ChoiceChip, '电影片'), findsOneWidget);
@@ -383,10 +371,7 @@ void main() {
       final container = ProviderContainer(overrides: _testOverrides);
       await container.read(vodSourceRegistryProvider.future);
       addTearDown(container.dispose);
-      await tester.pumpWidget(
-        UncontrolledProviderScope(container: container, child: const JiveApp()),
-      );
-      await tester.pump();
+      await _pumpReadyApp(tester, container);
       await tester.tap(find.text('我的'));
       await tester.pump();
       await tester.tap(find.text('最近观看'));

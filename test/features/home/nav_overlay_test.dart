@@ -7,6 +7,7 @@ import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/features/home/home_page.dart';
+import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/shared/video_card.dart';
 import 'package:jive/shared/video_grid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -114,6 +115,7 @@ Future<void> _pumpHome(
     UncontrolledProviderScope(container: container, child: const JiveApp()),
   );
   await tester.pump();
+  await tester.pump(splashMinHold);
   await tester.pump(const Duration(milliseconds: 500));
 }
 
