@@ -20,6 +20,79 @@ import './detail_more_sources_sheet.dart';
 import '../download/download_management_page.dart';
 import '../player/player_page.dart';
 
+/// 详情页宽屏布局：手机保持原密度；平板加大封面、限制主按钮宽度、剧集改等宽网格。
+@visibleForTesting
+class DetailPageLayout {
+  const DetailPageLayout({
+    required this.isTablet,
+    required this.contentWidth,
+    required this.pagePadding,
+    required this.posterWidth,
+    required this.titleSize,
+    required this.appBarTitleSize,
+    required this.descMaxLines,
+    required this.actionRowMaxWidth,
+    required this.episodeColumns,
+  });
+
+  static const double tabletBreakpoint = 600;
+  static const double maxContentWidth = 960;
+  static const double tabletActionRowMaxWidth = 560;
+  static const double tabletPosterWidth = 168;
+  static const double phonePosterWidth = 120;
+  static const double episodePillHeight = 48;
+
+  final bool isTablet;
+  final double contentWidth;
+  final double pagePadding;
+  final double posterWidth;
+  final double titleSize;
+  final double appBarTitleSize;
+  final int descMaxLines;
+  final double actionRowMaxWidth;
+  final int episodeColumns;
+
+  bool get useEpisodeGrid => isTablet && episodeColumns >= 5;
+
+  double get episodeAspectRatio {
+    if (episodeColumns <= 0) return 2.4;
+    final inner = math.max(0.0, contentWidth - pagePadding * 2);
+    final cell = (inner - 8 * (episodeColumns - 1)) / episodeColumns;
+    return cell <= 0 ? 2.4 : cell / episodePillHeight;
+  }
+
+  factory DetailPageLayout.resolve({
+    required double viewportWidth,
+    required double shortestSide,
+  }) {
+    final isTablet = shortestSide >= tabletBreakpoint;
+    final contentWidth = isTablet
+        ? math.min(viewportWidth, maxContentWidth)
+        : viewportWidth;
+    final padding = isTablet ? 24.0 : 16.0;
+    final inner = math.max(0.0, contentWidth - padding * 2);
+    return DetailPageLayout(
+      isTablet: isTablet,
+      contentWidth: contentWidth,
+      pagePadding: padding,
+      posterWidth: isTablet ? tabletPosterWidth : phonePosterWidth,
+      titleSize: isTablet ? 28 : 22,
+      appBarTitleSize: isTablet ? 22 : 17,
+      descMaxLines: isTablet ? 8 : 4,
+      actionRowMaxWidth: isTablet ? tabletActionRowMaxWidth : double.infinity,
+      episodeColumns: _episodeColumns(inner, isTablet: isTablet),
+    );
+  }
+
+  static int _episodeColumns(double inner, {required bool isTablet}) {
+    if (!isTablet) return 0;
+    const minCell = 110.0;
+    const spacing = 8.0;
+    final count = ((inner + spacing) / (minCell + spacing)).floor();
+    return count.clamp(5, 8);
+  }
+}
+
 class VideoDetailPage extends ConsumerStatefulWidget {
   const VideoDetailPage({super.key, required this.video});
   final Video video;
@@ -44,6 +117,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   /// 仅 isTvProvider 为 true 时请求一次，手机端不抢焦点、无视觉变化。
   final FocusNode _playFocusNode = FocusNode();
   bool _didFocusPlay = false;
+  late DetailPageLayout _layout;
 
   @override
   void dispose() {
@@ -461,9 +535,20 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   @override
   Widget build(BuildContext context) {
     final rs = ref.watch(vodSourceRegistryProvider);
+    final size = MediaQuery.sizeOf(context);
+    final barLayout = DetailPageLayout.resolve(
+      viewportWidth: size.width,
+      shortestSide: size.shortestSide,
+    );
     return Scaffold(
       appBar: AppBar(
-        title: const Text('视频详情'),
+        title: Text(
+          '视频详情',
+          style: TextStyle(
+            fontSize: barLayout.appBarTitleSize,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         actions: [
           IconButton(
             tooltip: '下载管理',
@@ -505,15 +590,18 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
 
   Widget _content(Video v) {
     _focusPlayOnTv();
-    // 宽屏（平板/电视横屏）下收敛内容宽度居中，避免按钮与文本行被拉满。
     return LayoutBuilder(
       builder: (context, constraints) {
+        _layout = DetailPageLayout.resolve(
+          viewportWidth: constraints.maxWidth,
+          shortestSide: MediaQuery.sizeOf(context).shortestSide,
+        );
         final list = _contentList(v);
-        if (constraints.maxWidth < 700) return list;
+        if (_layout.contentWidth >= constraints.maxWidth) return list;
         return Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
+            constraints: BoxConstraints(maxWidth: _layout.contentWidth),
             child: list,
           ),
         );
@@ -534,21 +622,17 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   }
 
   Widget _contentList(Video v) => ListView(
-    padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+    padding: EdgeInsets.fromLTRB(
+      _layout.pagePadding,
+      _layout.isTablet ? 12 : 8,
+      _layout.pagePadding,
+      32,
+    ),
     // section 间距统一为 24/28，模块内部 4/8/12（8pt 体系）。
     children: [
       _header(v),
       const SizedBox(height: 24),
-      Row(
-        children: [
-          // 播放 : 下载 ≈ 65 : 35，收藏收起为同高图标按钮。
-          Expanded(flex: 13, child: _playBtn(v)),
-          const SizedBox(width: 8),
-          Expanded(flex: 7, child: _downloadBtn(v)),
-          const SizedBox(width: 8),
-          _favBtn(v),
-        ],
-      ),
+      _actionRow(v),
       const SizedBox(height: 28),
       _sourceSection(),
       const SizedBox(height: 28),
@@ -557,6 +641,27 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       _eps(v),
     ],
   );
+
+  Widget _actionRow(Video v) {
+    final row = Row(
+      children: [
+        // 播放 : 下载 ≈ 65 : 35，收藏收起为同高图标按钮。
+        Expanded(flex: 13, child: _playBtn(v)),
+        const SizedBox(width: 8),
+        Expanded(flex: 7, child: _downloadBtn(v)),
+        const SizedBox(width: 8),
+        _favBtn(v),
+      ],
+    );
+    if (!_layout.isTablet) return row;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: _layout.actionRowMaxWidth),
+        child: row,
+      ),
+    );
+  }
 
   Widget _header(Video v) {
     // 元信息合并为少量纯文本行，不用图标，避免与封面争夺视觉焦点。
@@ -578,7 +683,8 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: SizedBox(
-            width: 120,
+            key: const ValueKey('detail-poster'),
+            width: _layout.posterWidth,
             child: AspectRatio(
               aspectRatio: 3 / 4,
               child: ColoredBox(
@@ -608,8 +714,8 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             children: [
               Text(
                 v.title,
-                style: const TextStyle(
-                  fontSize: 22,
+                style: TextStyle(
+                  fontSize: _layout.titleSize,
                   height: 1.35,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1035,7 +1141,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       const SizedBox(height: 8),
       Text(
         v.description.isEmpty ? '暂无简介' : v.description,
-        maxLines: expanded ? null : 4,
+        maxLines: expanded ? null : _layout.descMaxLines,
         overflow: expanded ? null : TextOverflow.ellipsis,
         style: const TextStyle(
           color: AppColors.secondary,
@@ -1182,26 +1288,75 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   /// 渲染显示顺序区间 [start, end) 内的剧集按钮。
   Widget _epsWrap(Video v, int start, int end) {
     final total = v.episodes.length;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: List.generate(end - start, (i) {
-        final idx = reversed ? total - 1 - (start + i) : start + i;
-        final episode = v.episodes[idx];
-        return ChoiceChip(
-          label: Text(episode.name),
-          selected: selected == idx,
-          selectedColor: AppColors.accent,
-          labelStyle: TextStyle(
-            color: selected == idx ? AppColors.onAccent : AppColors.secondary,
+    final items = [
+      for (var i = 0; i < end - start; i++)
+        _episodeChip(v, reversed ? total - 1 - (start + i) : start + i),
+    ];
+    if (!_layout.useEpisodeGrid) {
+      return Wrap(spacing: 8, runSpacing: 8, children: items);
+    }
+    return GridView.count(
+      crossAxisCount: _layout.episodeColumns,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: _layout.episodeAspectRatio,
+      children: items,
+    );
+  }
+
+  Widget _episodeChip(Video v, int idx) {
+    final episode = v.episodes[idx];
+    final isSelected = selected == idx;
+    if (!_layout.useEpisodeGrid) {
+      return ChoiceChip(
+        label: Text(episode.name),
+        selected: isSelected,
+        selectedColor: AppColors.accent,
+        labelStyle: TextStyle(
+          color: isSelected ? AppColors.onAccent : AppColors.secondary,
+        ),
+        showCheckmark: false,
+        onSelected: (_) {
+          setState(() => selected = idx);
+          _play(episodeIndex: idx);
+        },
+      );
+    }
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: () {
+          setState(() => selected = idx);
+          _play(episodeIndex: idx);
+        },
+        child: Ink(
+          decoration: ShapeDecoration(
+            color: isSelected
+                ? AppColors.accent
+                : AppColors.elevated.withValues(alpha: 0.6),
+            shape: StadiumBorder(
+              side: isSelected
+                  ? BorderSide.none
+                  : const BorderSide(color: AppColors.divider),
+            ),
           ),
-          showCheckmark: false,
-          onSelected: (_) {
-            setState(() => selected = idx);
-            _play(episodeIndex: idx);
-          },
-        );
-      }),
+          child: Center(
+            child: Text(
+              episode.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isSelected ? AppColors.onAccent : AppColors.secondary,
+                fontSize: 15,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

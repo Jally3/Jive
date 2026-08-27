@@ -407,19 +407,29 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
 
-    Text chipLabel(int i) =>
-        tester.widget<ChoiceChip>(find.byType(ChoiceChip).at(i)).label as Text;
+    List<String> episodeNames() {
+      final container = find.byType(GridView).evaluate().isNotEmpty
+          ? find.byType(GridView)
+          : find.byType(Wrap);
+      return tester
+          .widgetList<Text>(
+            find.descendant(of: container, matching: find.byType(Text)),
+          )
+          .map((text) => text.data ?? '')
+          .where((label) => RegExp(r'^第\d+集$').hasMatch(label))
+          .toList();
+    }
 
-    expect(chipLabel(0).data, '第1集');
+    expect(episodeNames().first, '第1集');
 
     await tester.tap(find.text('倒序'));
     await tester.pump();
-    expect(chipLabel(0).data, '第36集');
-    expect(chipLabel(35).data, '第1集');
+    expect(episodeNames().first, '第36集');
+    expect(episodeNames().last, '第1集');
 
     await tester.tap(find.text('正序'));
     await tester.pump();
-    expect(chipLabel(0).data, '第1集');
+    expect(episodeNames().first, '第1集');
   });
 
   testWidgets('episodes over 100 are grouped and collapsible', (tester) async {
@@ -580,4 +590,68 @@ void main() {
       expect(find.text('第1集', skipOffstage: false), findsNothing);
     },
   );
+
+  group('iPad layout', () {
+    test('phone portrait keeps compact metrics', () {
+      final layout = DetailPageLayout.resolve(
+        viewportWidth: 390,
+        shortestSide: 390,
+      );
+      expect(layout.isTablet, isFalse);
+      expect(layout.posterWidth, 120);
+      expect(layout.actionRowMaxWidth, double.infinity);
+      expect(layout.useEpisodeGrid, isFalse);
+      expect(layout.descMaxLines, 4);
+    });
+
+    test(
+      'iPad 11 portrait uses larger poster, capped actions and episode grid',
+      () {
+        final layout = DetailPageLayout.resolve(
+          viewportWidth: 834,
+          shortestSide: 834,
+        );
+        expect(layout.isTablet, isTrue);
+        expect(layout.posterWidth, 168);
+        expect(layout.actionRowMaxWidth, 560);
+        expect(layout.contentWidth, 834);
+        expect(layout.useEpisodeGrid, isTrue);
+        expect(layout.episodeColumns, inInclusiveRange(5, 8));
+        expect(layout.descMaxLines, 8);
+        expect(layout.titleSize, 28);
+      },
+    );
+
+    test('iPad landscape caps content width at 960', () {
+      final layout = DetailPageLayout.resolve(
+        viewportWidth: 1194,
+        shortestSide: 834,
+      );
+      expect(layout.contentWidth, 960);
+      expect(layout.episodeColumns, 7);
+    });
+
+    testWidgets('iPad page caps the play button and enlarges the poster', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(834, 1210);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final container = _container(_FakeDetailRepository());
+      await container.read(vodSourceRegistryProvider.future);
+      addTearDown(container.dispose);
+      await _pumpDetailPage(tester, container);
+      await tester.pump();
+
+      expect(
+        tester.getSize(find.byKey(const ValueKey('detail-poster'))).width,
+        168,
+      );
+      final play = tester.getSize(find.bySubtype<FilledButton>());
+      expect(play.width, lessThan(400));
+      expect(find.byType(GridView), findsOneWidget);
+    });
+  });
 }

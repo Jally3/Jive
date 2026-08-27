@@ -138,7 +138,7 @@ lib/features/
 │   ├── search_page.dart               # 搜索页：输入防抖、跟随全局切源、多源结果聚合展示
 │   └── multi_source_search_controller.dart  # 多源搜索控制器：并行探测各可搜索源、逐源分页与状态聚合
 ├── detail/
-│   ├── detail_page.dart               # 详情页 VideoDetailPage：详情加载、线路/选集分组、收藏、下载与切源入口
+│   ├── detail_page.dart               # 详情页 VideoDetailPage：详情加载、线路/选集分组、收藏、下载与切源入口；平板加大封面、限制主按钮宽度、剧集等宽网格
 │   ├── detail_source_controller.dart  # 详情页跨源探测 DetailSourceController：备用源搜索匹配与状态机
 │   └── detail_more_sources_sheet.dart # 「全部来源」底栏：备用源状态列表与一键探测
 ├── player/
