@@ -21,6 +21,7 @@ lib/shared/
 ├── is_tv.dart                         # isTvProvider：经 jive/device 通道判断是否 Android TV（iOS/失败恒 false）
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
 ├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
+├── skip_settings.dart                 # 跳过片头/片尾芯片选择：详情页与非全屏播放器底部共用
 ├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、观看进度条、TV 焦点描边
 └── video_grid.dart                    # 自适应视频网格 VideoGrid：两列/四列 sliver 布局、动态卡片比例
 ```
@@ -47,7 +48,8 @@ lib/domain/
 lib/data/
 ├── video_repository.dart              # 内容访问门面 VideoRepository(Impl)：按 adapterType 分发请求、详情 2 分钟短缓存、敏感内容过滤
 ├── library_repository.dart            # 收藏持久化：SharedPreferences 存储，写操作串行队列防并发损坏
-└── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取
+├── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取、单条删除、watchHistoryProvider
+└── search_history_store.dart          # 搜索关键词本地历史：去重、最近优先、最多 20 条
 ```
 
 ## VOD 源接入（`lib/data/vod_source/`）
@@ -91,7 +93,8 @@ lib/data/playback/
 ├── hls_parser.dart                    # HLS manifest 解析与代理改写：HlsParser / HlsProxyPlan / HlsDecision 可缓存性判定
 ├── ad_filter.dart                     # 广告分片识别与剔除 AdFilter（adfilter-v3：夹心中插 + 节奏侏儒 + AdFilterReport）；TimelineMapping 负责源时间轴 ↔ 过滤后时间轴换算
 ├── content_type_sniffer.dart          # 播放格式嗅探：HEAD content-type 优先、魔数回退，带 TTL 缓存
-└── prefetch_policy.dart               # 预取策略：Wi-Fi/蜂窝预取窗口时长，prefetchModeProvider 开关持久化
+├── prefetch_policy.dart               # 预取策略：Wi-Fi/蜂窝预取窗口时长，prefetchModeProvider 开关持久化
+└── skip_policy.dart                   # 按影片缓存跳过片头/片尾时长（默认关闭；30/60/90/自定义）
 ```
 
 ## 缓存（`lib/data/cache/`）
@@ -135,17 +138,19 @@ lib/features/
 ├── home/
 │   ├── home_page.dart                 # 首页：两级分类导航、视频网格、选源入口、返回顶部
 │   ├── category_channels_page.dart    # 「全部频道」全屏页：我的频道自适应网格（手机 4 列、平板 5–8 列）、编辑模式增删与拖拽排序、全部分类分组
+│   ├── continue_watching_row.dart     # 首页续播条：只展示最近一条（剧集完播仍挂、电影过 2/3 不挂）；关闭或点其他影片后本进程隐藏
 │   └── paged_video_controller.dart    # 首页分页控制器：加载更多、错误态、首页结果 2 分钟快照缓存
 ├── search/
-│   ├── search_page.dart               # 搜索页：输入防抖、跟随全局切源、多源结果聚合展示
+│   ├── search_page.dart               # 搜索页：输入防抖、本地搜索历史、跟随全局切源、多源结果聚合展示
 │   └── multi_source_search_controller.dart  # 多源搜索控制器：并行探测各可搜索源、逐源分页与状态聚合
 ├── detail/
-│   ├── detail_page.dart               # 详情页 VideoDetailPage：详情加载、线路/选集分组、收藏、下载与切源入口；平板加大封面、限制主按钮宽度、剧集等宽网格
+│   ├── detail_page.dart               # 详情页 VideoDetailPage：详情加载、线路/选集分组、收藏、下载、切源与按影片跳过片头/片尾；平板加大封面、限制主按钮宽度、剧集等宽网格
 │   ├── detail_source_controller.dart  # 详情页跨源探测 DetailSourceController：备用源搜索匹配与状态机
 │   └── detail_more_sources_sheet.dart # 「全部来源」底栏：备用源状态列表与一键探测
 ├── player/
 │   ├── player_page.dart               # 播放器主页 PlayerPage：会话建立与降级、手势亮度/音量、进度记忆、TTL 退出清理
 │   ├── playback_seek_clock.dart       # 拖动/seek 稳定时钟：记住可播时长、冻结尺子、判断 native 落点是否被断点吸附
+│   ├── resume_watch.dart              # 按 WatchRecord 续播（离线优先）与单条历史删除确认
 │   └── widgets/
 │       ├── player_controls_bar.dart       # 底部控制条：进度、播放/暂停、上下集、下载、倍速、选集、全屏
 │       ├── player_top_bar.dart            # 沉浸式顶栏：返回按钮与标题
@@ -154,7 +159,7 @@ lib/features/
 │       ├── player_indicators.dart         # 指示器：缓冲菊花等播放中状态
 │       ├── player_error_view.dart         # 播放失败视图：错误文案与「重新获取并重试」
 │       ├── playback_status_indicator.dart # 播放链路状态圆点：颜色区分边下边播/缓存/代理/直连，长按看详情
-│       └── player_info_panel.dart         # 竖屏播放器下方信息面板：简介与分组选集
+│       └── player_info_panel.dart         # 竖屏播放器下方信息面板：跳过片头/片尾、简介与分组选集
 ├── profile/
 │   └── profile_page.dart              # 「我的」页：收藏/历史双 tab 网格，设置/下载/源管理入口
 ├── cache/

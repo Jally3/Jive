@@ -15,6 +15,7 @@ import '../../domain/playback_selection.dart';
 import '../../domain/vod_source.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/is_tv.dart';
+import '../../shared/skip_settings.dart';
 import './detail_source_controller.dart';
 import './detail_more_sources_sheet.dart';
 import '../download/download_management_page.dart';
@@ -633,6 +634,8 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       _header(v),
       const SizedBox(height: 24),
       _actionRow(v),
+      const SizedBox(height: 28),
+      SkipSettingsBlock(videoGlobalId: v.globalId),
       const SizedBox(height: 28),
       _sourceSection(),
       const SizedBox(height: 28),

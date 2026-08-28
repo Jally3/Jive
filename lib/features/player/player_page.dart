@@ -20,6 +20,7 @@ import '../../data/playback/local_proxy.dart';
 import '../../data/playback/playback_session.dart';
 import '../../data/playback/playback_url_resolver.dart';
 import '../../data/playback/prefetch_policy.dart';
+import '../../data/playback/skip_policy.dart';
 import '../../data/vod_source/adapters/age_adapter.dart';
 import '../../data/history_repository.dart';
 import '../../data/video_repository.dart';
@@ -150,6 +151,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   /// 设置未加载完成前保守起见不清理（默认项是 1 小时后，不退出即清）。
   bool _cleanCacheOnExit = false;
 
+  SkipPolicy _skipPolicy = const SkipPolicy();
+  bool _introSkipped = false;
+  bool _outroSkipped = false;
+
   @override
   void initState() {
     super.initState();
@@ -180,6 +185,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     ref.listenManual(isTvProvider, (_, next) {
       _isTv = next.maybeWhen(data: (value) => value, orElse: () => false);
     });
+    _skipPolicy =
+        ref.read(skipPolicyProvider(widget.video.globalId)).value ??
+        const SkipPolicy();
+    ref.listenManual(skipPolicyProvider(widget.video.globalId), (_, next) {
+      final policy = next.value;
+      if (policy == null || policy == _skipPolicy) return;
+      if (!mounted) return;
+      setState(() => _skipPolicy = policy);
+      _maybeSkipIntro();
+    });
     WidgetsBinding.instance.addObserver(this);
     episode = widget.episode;
     _selection = widget.selection ?? selectionFor(widget.video, widget.episode);
@@ -189,6 +204,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   Future<void> _setup(Duration resume) async {
     _observedDuration = Duration.zero;
+    _introSkipped = false;
+    _outroSkipped = false;
     _resetSeekState();
     final generation = ++setupGeneration;
     _selection = _bindPlaybackHeaders(_selection);
@@ -399,7 +416,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     // 先完成所有准备（seek/倍速/播放），每次 await 后校验 generation，
     // 最后一次性提交，避免旧任务在提交后反向覆盖新任务。
     final mapping = session?.timelineMapping;
-    final target = mapping == null ? resume : mapping.sourceToFiltered(resume);
+    var target = mapping == null ? resume : mapping.sourceToFiltered(resume);
+    if (shouldSkipIntro(
+      introSeconds: _skipPolicy.introSeconds,
+      position: target,
+      duration: next.value.duration,
+    )) {
+      target = Duration(seconds: _skipPolicy.introSeconds);
+      _introSkipped = true;
+    }
     if (target > Duration.zero && target < next.value.duration) {
       try {
         await next.seekTo(target);
@@ -722,6 +747,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         value.isInitialized &&
         _isPortraitVideo != _fullScreenLockedPortrait) {
       unawaited(_syncFullScreenOrientation());
+    }
+    if (!failed &&
+        !isSeeking &&
+        !seekCommitting.value &&
+        value.isPlaying &&
+        !_outroSkipped &&
+        shouldSkipOutro(
+          outroSeconds: _skipPolicy.outroSeconds,
+          position: value.position,
+          duration: value.duration,
+        )) {
+      _outroSkipped = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _skipOutro();
+      });
+      return;
     }
     if (value.isCompleted && !_completionHandled) {
       _completionHandled = true;
@@ -1243,6 +1285,64 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  void _maybeSkipIntro() {
+    final current = controller;
+    if (current == null ||
+        !current.value.isInitialized ||
+        _introSkipped ||
+        failed ||
+        isSeeking ||
+        seekCommitting.value) {
+      return;
+    }
+    if (!shouldSkipIntro(
+      introSeconds: _skipPolicy.introSeconds,
+      position: current.value.position,
+      duration: current.value.duration,
+    )) {
+      return;
+    }
+    _introSkipped = true;
+    _seekToAbsolute(Duration(seconds: _skipPolicy.introSeconds));
+  }
+
+  void _skipOutro() {
+    final nextEpisode = _adjacentEpisode(1);
+    if (nextEpisode != null) {
+      unawaited(_switchEpisode(nextEpisode));
+      return;
+    }
+    final current = controller;
+    if (current == null || !current.value.isInitialized) return;
+    _notePlaybackDuration(current.value.duration);
+    final clock = freezeSeekClock(
+      playerDuration: current.value.duration,
+      observedDuration: _observedDuration,
+    );
+    _seekToAbsolute(clock);
+  }
+
+  void _seekToAbsolute(Duration target) {
+    final current = controller;
+    if (current == null ||
+        !current.value.isInitialized ||
+        failed ||
+        isSeeking ||
+        seekCommitting.value ||
+        current.value.duration <= Duration.zero) {
+      return;
+    }
+    _notePlaybackDuration(current.value.duration);
+    final clock = freezeSeekClock(
+      playerDuration: current.value.duration,
+      observedDuration: _observedDuration,
+    );
+    final clamped = _clampSeekTarget(target, clock);
+    _showControls();
+    _seekStart(clamped);
+    unawaited(_seekEnd(clamped));
   }
 
   /// 遥控器左右键：以当前播放位置为基准快退/快进 [delta]，

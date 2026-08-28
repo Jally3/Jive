@@ -156,6 +156,95 @@ void main() {
     expect(record.timelineVersion, 0);
   });
 
+  test('classifies movies and series from category or episode name', () {
+    WatchRecord record({String category = '', String episodeName = ''}) =>
+        WatchRecord(
+          video: Video(id: '1', title: '片', category: category),
+          episodeId: '1',
+          episodeName: episodeName,
+          positionMs: 1000,
+          durationMs: 10000,
+          updatedAt: DateTime(2026),
+        );
+    expect(isMovieWatchRecord(record(category: '电影片')), isTrue);
+    expect(isMovieWatchRecord(record(episodeName: '正片')), isTrue);
+    expect(isMovieWatchRecord(record(category: '连续剧')), isFalse);
+    expect(isMovieWatchRecord(record(category: '电视剧')), isFalse);
+    expect(isMovieWatchRecord(record(episodeName: '第3集')), isFalse);
+    expect(isMovieWatchRecord(record(category: '动漫')), isFalse);
+  });
+
+  test('home continue watching picks one eligible record', () {
+    final movieMid = WatchRecord(
+      video: const Video(id: '1', title: '进行中电影', category: '电影片'),
+      episodeId: '1',
+      episodeName: '正片',
+      positionMs: 5000,
+      durationMs: 10000,
+      updatedAt: DateTime(2026, 3),
+    );
+    final seriesDone = WatchRecord(
+      video: const Video(id: '2', title: '已播完剧', category: '连续剧'),
+      episodeId: '1',
+      episodeName: '第1集',
+      positionMs: 10000,
+      durationMs: 10000,
+      updatedAt: DateTime(2026, 2),
+      completed: true,
+    );
+    final movieLate = WatchRecord(
+      video: const Video(id: '3', title: '快看完的电影', category: '电影片'),
+      episodeId: '1',
+      episodeName: '正片',
+      positionMs: 8000,
+      durationMs: 10000,
+      updatedAt: DateTime(2026, 4),
+    );
+    final noProgress = WatchRecord(
+      video: const Video(id: '4', title: '无进度', category: '连续剧'),
+      episodeId: '1',
+      episodeName: '第1集',
+      positionMs: 0,
+      durationMs: 10000,
+      updatedAt: DateTime(2026, 5),
+    );
+    expect(homeContinueWatchingRecord([movieLate])?.video.id, isNull);
+    expect(homeContinueWatchingRecord([noProgress])?.video.id, isNull);
+    expect(homeContinueWatchingRecord([seriesDone])?.video.id, '2');
+    expect(
+      homeContinueWatchingRecord([movieLate, movieMid, seriesDone])?.video.id,
+      '1',
+    );
+  });
+
+  test('removes a single video without clearing the rest', () async {
+    final repository = HistoryRepository();
+    await repository.save(
+      WatchRecord(
+        video: const Video(id: '1', title: '影片1'),
+        episodeId: '1',
+        episodeName: '第1集',
+        positionMs: 1000,
+        durationMs: 10000,
+        updatedAt: DateTime(2026, 1),
+      ),
+    );
+    await repository.save(
+      WatchRecord(
+        video: const Video(id: '2', title: '影片2'),
+        episodeId: '1',
+        episodeName: '第1集',
+        positionMs: 2000,
+        durationMs: 10000,
+        updatedAt: DateTime(2026, 2),
+      ),
+    );
+    await repository.remove(const Video(id: '1', title: '影片1').globalId);
+    final records = await repository.load();
+    expect(records, hasLength(1));
+    expect(records.single.video.id, '2');
+  });
+
   test('one corrupt or unknown-version record does not wipe history', () async {
     SharedPreferences.setMockInitialValues({
       'watch_history_v1':

@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/playback/prefetch_policy.dart';
+import 'package:jive/data/playback/skip_policy.dart';
 import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
@@ -159,6 +160,9 @@ class _FakeHistoryRepository extends HistoryRepository {
 
   @override
   Future<void> save(WatchRecord record) async {}
+
+  @override
+  Future<void> remove(String globalId) async {}
 
   @override
   Future<void> clear() async {}
@@ -535,21 +539,28 @@ void main() {
       final video = _video();
       Episode? tapped;
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PlayerInfoPanel(
-              video: video,
-              current: video.episodes[1],
-              onEpisodeTap: (e) => tapped = e,
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: PlayerInfoPanel(
+                video: video,
+                current: video.episodes[1],
+                onEpisodeTap: (e) => tapped = e,
+              ),
             ),
           ),
         ),
       );
+      await tester.pump();
 
       expect(find.text('简介'), findsOneWidget);
       expect(find.text('这是一部测试剧集的简介。'), findsOneWidget);
       expect(find.text('选集（3）'), findsOneWidget);
-      expect(find.byType(ChoiceChip), findsNWidgets(3));
+      expect(find.text('跳过片头'), findsOneWidget);
+      expect(find.text('跳过片尾'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '第1集'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '第2集'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '第3集'), findsOneWidget);
 
       final current = tester.widget<ChoiceChip>(
         find.widgetWithText(ChoiceChip, '第2集'),
@@ -569,20 +580,23 @@ void main() {
   ) async {
     final video = _video();
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PlayerInfoPanel(
-            video: Video(
-              id: video.id,
-              title: video.title,
-              episodes: video.episodes,
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: PlayerInfoPanel(
+              video: Video(
+                id: video.id,
+                title: video.title,
+                episodes: video.episodes,
+              ),
+              current: video.episodes.first,
+              onEpisodeTap: (_) {},
             ),
-            current: video.episodes.first,
-            onEpisodeTap: (_) {},
           ),
         ),
       ),
     );
+    await tester.pump();
 
     expect(find.text('暂无简介'), findsOneWidget);
   });
@@ -608,16 +622,19 @@ void main() {
         ),
       );
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PlayerInfoPanel(
-              video: video,
-              current: video.episodes[119],
-              onEpisodeTap: (_) {},
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: PlayerInfoPanel(
+                video: video,
+                current: video.episodes[119],
+                onEpisodeTap: (_) {},
+              ),
             ),
           ),
         ),
       );
+      await tester.pump();
 
       expect(find.text('选集（250）'), findsOneWidget);
       expect(find.text('第 1–100 集'), findsOneWidget);
@@ -1354,6 +1371,28 @@ void main() {
     expect(orientations.last, ['DeviceOrientation.portraitUp']);
     expect(find.byKey(const ValueKey('fake-video-0')), findsOneWidget);
     expect(find.byType(PlayerInfoPanel), findsOneWidget);
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets('skips intro using the cached duration for this video', (
+    tester,
+  ) async {
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    SharedPreferences.setMockInitialValues({
+      skipPolicyStoreKey:
+          '{"${video.globalId}":{"introSeconds":90,"outroSeconds":0}}',
+    });
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => videoPlatform.seekPositions.contains(const Duration(seconds: 90)),
+      reason: 'intro skip did not seek to the cached duration',
+    );
+    expect(find.byKey(const ValueKey('player-skip-intro')), findsNothing);
     await _unmountPlayerPage(tester);
   });
 

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/playback/prefetch_policy.dart';
+import 'package:jive/data/playback/skip_policy.dart';
 import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
@@ -137,6 +138,9 @@ class _FakeHistoryRepository extends HistoryRepository {
 
   @override
   Future<void> save(WatchRecord record) async {}
+
+  @override
+  Future<void> remove(String globalId) async {}
 
   @override
   Future<void> clear() async {}
@@ -283,6 +287,30 @@ void main() {
     );
     expect(find.text('播放 第1集'), findsOneWidget);
     expect(playButton.focusNode?.hasFocus, isFalse);
+  });
+
+  testWidgets('skip settings persist for the current video', (tester) async {
+    final container = _container(_FakeDetailRepository());
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('跳过片头'), findsOneWidget);
+    expect(find.text('跳过片尾'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('skip-intro-90')));
+    await tester.tap(find.byKey(const ValueKey('skip-intro-90')));
+    await tester.pump();
+    await tester.pump();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.byKey(const ValueKey('skip-intro-90')))
+          .selected,
+      isTrue,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(skipPolicyStoreKey), contains(_entryVideo.globalId));
+    expect(prefs.getString(skipPolicyStoreKey), contains('"introSeconds":90'));
   });
 
   testWidgets('opens without setState during build when registry resolves', (

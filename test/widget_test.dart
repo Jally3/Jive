@@ -390,4 +390,155 @@ void main() {
       expect(find.text('还没有观看记录\n播放视频后可以从这里继续'), findsOneWidget);
     },
   );
+
+  testWidgets('home continue watching dismisses for the session only', (
+    tester,
+  ) async {
+    final record = WatchRecord(
+      video: const Video(id: '1', title: '历史影片', category: '电影片'),
+      episodeId: '1',
+      episodeName: '正片',
+      positionMs: 65000,
+      durationMs: 120000,
+      updatedAt: DateTime(2026, 8, 12),
+    );
+    SharedPreferences.setMockInitialValues({
+      'watch_history_v1': jsonEncode([record.toJson()]),
+    });
+    final container = ProviderContainer(overrides: _testOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('continue-watching-bar')), findsOneWidget);
+    expect(find.text('继续 正片 · 1:05'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('continue-watching-dismiss')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('continue-watching-bar')), findsNothing);
+    expect(find.text('删除观看记录？'), findsNothing);
+    await tester.tap(find.text('我的'));
+    await tester.pump();
+    await tester.tap(find.text('最近观看'));
+    await tester.pumpAndSettle();
+    expect(find.text('历史影片'), findsOneWidget);
+  });
+
+  testWidgets('home hides continue watching after opening another video', (
+    tester,
+  ) async {
+    final record = WatchRecord(
+      video: const Video(id: '99', title: '历史影片', category: '连续剧'),
+      episodeId: '1',
+      episodeName: '第1集',
+      positionMs: 10000,
+      durationMs: 10000,
+      updatedAt: DateTime(2026, 8, 12),
+      completed: true,
+    );
+    SharedPreferences.setMockInitialValues({
+      'watch_history_v1': jsonEncode([record.toJson()]),
+    });
+    final container = ProviderContainer(overrides: _testOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('continue-watching-bar')), findsOneWidget);
+    await tester.drag(
+      find.byType(CustomScrollView).first,
+      const Offset(0, -80),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('continue-watching-bar')), findsOneWidget);
+    await tester.tap(find.text('测试影片'));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('continue-watching-bar')), findsNothing);
+  });
+
+  testWidgets('home hides movies past two thirds watched', (tester) async {
+    final record = WatchRecord(
+      video: const Video(id: '1', title: '快看完的电影', category: '电影片'),
+      episodeId: '1',
+      episodeName: '正片',
+      positionMs: 80000,
+      durationMs: 100000,
+      updatedAt: DateTime(2026, 8, 12),
+    );
+    SharedPreferences.setMockInitialValues({
+      'watch_history_v1': jsonEncode([record.toJson()]),
+    });
+    final container = ProviderContainer(overrides: _testOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('continue-watching-bar')), findsNothing);
+    expect(find.text('快看完的电影'), findsNothing);
+  });
+
+  testWidgets('profile history can delete a single record', (tester) async {
+    final keep = WatchRecord(
+      video: const Video(id: '1', title: '留下的影片', category: '电影片'),
+      episodeId: '1',
+      episodeName: '第1集',
+      positionMs: 10000,
+      durationMs: 120000,
+      updatedAt: DateTime(2026, 8, 12),
+    );
+    final remove = WatchRecord(
+      video: const Video(id: '2', title: '删掉的影片', category: '电影片'),
+      episodeId: '1',
+      episodeName: '第2集',
+      positionMs: 20000,
+      durationMs: 120000,
+      updatedAt: DateTime(2026, 8, 11),
+    );
+    SharedPreferences.setMockInitialValues({
+      'watch_history_v1': jsonEncode([keep.toJson(), remove.toJson()]),
+    });
+    final container = ProviderContainer(overrides: _testOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.tap(find.text('我的'));
+    await tester.pump();
+    await tester.tap(find.text('最近观看'));
+    await tester.pumpAndSettle();
+    expect(find.text('留下的影片'), findsOneWidget);
+    expect(find.text('删掉的影片'), findsOneWidget);
+    await tester.tap(
+      find.byKey(ValueKey('history-delete-${remove.video.globalId}')),
+    );
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('留下的影片'), findsOneWidget);
+    expect(find.text('删掉的影片'), findsNothing);
+  });
+
+  testWidgets('search remembers submitted keywords', (tester) async {
+    final container = ProviderContainer(overrides: _testOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.tap(find.text('搜索'));
+    await tester.pump();
+    expect(find.text('输入片名开始搜索'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '测试');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('测试影片'), findsOneWidget);
+    await tester.tap(find.byTooltip('清空'));
+    await tester.pump();
+    expect(find.text('最近搜索'), findsOneWidget);
+    expect(find.text('测试'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('search-history-测试')));
+    await tester.pump();
+    expect(find.text('测试影片'), findsOneWidget);
+  });
 }

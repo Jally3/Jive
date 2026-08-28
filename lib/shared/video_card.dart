@@ -8,10 +8,12 @@ class VideoCard extends StatefulWidget {
     super.key,
     required this.video,
     required this.onTap,
+    this.onLongPress,
     this.progress,
   });
   final Video video;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final double? progress;
 
   @override
@@ -52,6 +54,7 @@ class _VideoCardState extends State<VideoCard> {
           // 焦点由外层 FocusableActionDetector 管理，避免双重焦点节点。
           canRequestFocus: false,
           onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
           child: _cardContent(),
         ),
       ),

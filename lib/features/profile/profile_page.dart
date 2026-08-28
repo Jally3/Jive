@@ -6,19 +6,14 @@ import '../../data/download/download_providers.dart';
 import '../../data/download/download_task_manager.dart';
 import '../../data/history_repository.dart';
 import '../../data/library_repository.dart';
-import '../../data/video_repository.dart';
-import '../../data/vod_source/vod_source_registry.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
-import '../../domain/playback_progress.dart';
-import '../../domain/video.dart';
 import '../../domain/watch_record.dart';
-import '../../shared/app_toast.dart';
 import '../../shared/video_card.dart';
 import '../../shared/video_grid.dart';
 import '../detail/detail_page.dart';
 import '../download/download_management_page.dart';
 import '../settings/more_settings_page.dart';
-import '../player/player_page.dart';
+import '../player/resume_watch.dart';
 import '../settings/source_management_page.dart';
 
 class ProfilePage extends ConsumerWidget {
@@ -289,261 +284,161 @@ class _FavoritesTab extends ConsumerWidget {
       );
 }
 
-class _HistoryTab extends ConsumerStatefulWidget {
+class _HistoryTab extends ConsumerWidget {
   const _HistoryTab();
-  @override
-  ConsumerState<_HistoryTab> createState() => _HistoryTabState();
-}
 
-class _HistoryTabState extends ConsumerState<_HistoryTab> {
-  List<WatchRecord>? records;
-  String? error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final value = await ref.read(historyRepositoryProvider).load();
-      if (mounted) {
-        setState(() {
-          records = value;
-          error = null;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    }
-  }
-
-  Future<void> _clear() async {
+  Future<void> _clear(BuildContext context, WidgetRef ref) async {
     final accepted = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('清空观看记录？'),
         content: const Text('此操作只会清除本机记录。'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('清空'),
           ),
         ],
       ),
     );
     if (accepted == true) {
-      await ref.read(historyRepositoryProvider).clear();
-      await _load();
+      await ref.read(watchHistoryProvider.notifier).clear();
     }
-  }
-
-  Future<void> _resume(WatchRecord record) async {
-    final overlay = Overlay.of(context);
-    var dialogOpen = true;
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-    try {
-      final downloadManager = await ref.read(downloadManagerProvider.future);
-      final downloadedTask = downloadManager.tasks
-          .where(
-            (task) =>
-                task.status == DownloadTaskStatus.completed &&
-                task.sourceId == record.video.sourceId &&
-                task.sourceVideoId == record.video.sourceVideoId &&
-                (record.episodeIdentity.isNotEmpty
-                    ? task.episodeIdentity == record.episodeIdentity
-                    : task.episodeId == record.episodeId ||
-                          task.episodeName == record.episodeName),
-          )
-          .firstOrNull;
-      if (downloadedTask != null) {
-        final selection = await downloadManager.selectionForTask(
-          downloadedTask,
-        );
-        if (selection != null && mounted) {
-          Navigator.pop(context);
-          dialogOpen = false;
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => PlayerPage(
-                video: record.video,
-                episode: selection.episode,
-                selection: selection,
-                resumePosition: PlaybackProgress(
-                  positionMs: record.positionMs,
-                  durationMs: record.durationMs,
-                  completed: record.completed,
-                ).resumePosition(),
-              ),
-            ),
-          );
-          await _load();
-          return;
-        }
-      }
-      final source = ref
-          .read(vodSourceRegistryProvider)
-          .maybeWhen(
-            data: (r) => r.findById(record.video.sourceId),
-            orElse: () => null,
-          );
-      if (source == null) throw const VideoDataException('未知来源');
-      final detail = await ref
-          .read(videoRepositoryProvider)
-          .resolvePlayback(source, record.video.ref);
-      if (!mounted) return;
-      Navigator.pop(context);
-      dialogOpen = false;
-      if (detail.episodes.isEmpty) {
-        throw const VideoDataException('播放地址已失效且无法重新获取');
-      }
-      // 优先按稳定线路/剧集 identity 定位，再退回默认线路内 name/id，不跨线路。
-      Episode episode;
-      final line = record.playbackLineIdentity.isEmpty
-          ? null
-          : detail.playbackLines
-                .where((l) => l.identity == record.playbackLineIdentity)
-                .toList()
-                .firstOrNull;
-      final candidates = line?.episodes ?? detail.episodes;
-      if (record.episodeIdentity.isNotEmpty) {
-        final byIdentity = candidates.where(
-          (item) => item.identity == record.episodeIdentity,
-        );
-        if (byIdentity.isNotEmpty) {
-          episode = byIdentity.first;
-        } else {
-          episode = _fallbackEpisode(candidates, record);
-        }
-      } else {
-        episode = _fallbackEpisode(candidates, record);
-      }
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PlayerPage(
-            video: detail,
-            episode: episode,
-            resumePosition: PlaybackProgress(
-              positionMs: record.positionMs,
-              durationMs: record.durationMs,
-              completed: record.completed,
-            ).resumePosition(),
-          ),
-        ),
-      );
-      await _load();
-    } catch (e) {
-      if (mounted && dialogOpen && Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
-      if (mounted) {
-        showAppToastVia(overlay, e.toString());
-      }
-    }
-  }
-
-  Episode _fallbackEpisode(List<Episode> candidates, WatchRecord record) {
-    final matched = candidates.where(
-      (item) => item.name == record.episodeName || item.id == record.episodeId,
-    );
-    return matched.isEmpty ? candidates.first : matched.first;
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (error != null) return AppErrorView(message: error!, onRetry: _load);
-    if (records == null) return const AppLoadingView();
-    if (records!.isEmpty) {
-      return const AppEmptyView(
-        icon: Icons.history,
-        message: '还没有观看记录\n播放视频后可以从这里继续',
-      );
-    }
-    return Column(
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: TextButton(onPressed: _clear, child: const Text('清空')),
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ref
+        .watch(watchHistoryProvider)
+        .when(
+          loading: () => const AppLoadingView(),
+          error: (error, _) => AppErrorView(
+            message: '$error',
+            onRetry: () => ref.invalidate(watchHistoryProvider),
           ),
-        ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final crossAxisCount = constraints.maxWidth >= 700 ? 4 : 2;
-              const horizontalPadding = 32.0;
-              const crossAxisSpacing = 12.0;
-              // 海报为 4:5；其下为 VideoCard 信息区约 52，观看进度行约 20。
-              // 按实际卡宽计算单元格高度，避免固定比例把两段信息撑开。
-              const infoHeight = 72.0;
-              final cardWidth =
-                  (constraints.maxWidth -
-                      horizontalPadding -
-                      crossAxisSpacing * (crossAxisCount - 1)) /
-                  crossAxisCount;
-              return GridView.builder(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                itemCount: records!.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  crossAxisSpacing: crossAxisSpacing,
-                  mainAxisSpacing: 20,
-                  childAspectRatio:
-                      cardWidth / (cardWidth * 5 / 4 + infoHeight),
-                ),
-                itemBuilder: (_, i) => _HistoryCard(
-                  record: records![i],
-                  onTap: () => _resume(records![i]),
-                ),
+          data: (records) {
+            if (records.isEmpty) {
+              return const AppEmptyView(
+                icon: Icons.history,
+                message: '还没有观看记录\n播放视频后可以从这里继续',
               );
-            },
-          ),
-        ),
-      ],
-    );
+            }
+            return Column(
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: TextButton(
+                      onPressed: () => _clear(context, ref),
+                      child: const Text('清空'),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final crossAxisCount = constraints.maxWidth >= 700
+                          ? 4
+                          : 2;
+                      const horizontalPadding = 32.0;
+                      const crossAxisSpacing = 12.0;
+                      // 海报为 4:5；其下为 VideoCard 信息区约 52，观看进度行约 20。
+                      // 按实际卡宽计算单元格高度，避免固定比例把两段信息撑开。
+                      const infoHeight = 72.0;
+                      final cardWidth =
+                          (constraints.maxWidth -
+                              horizontalPadding -
+                              crossAxisSpacing * (crossAxisCount - 1)) /
+                          crossAxisCount;
+                      return GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                        itemCount: records.length,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          crossAxisSpacing: crossAxisSpacing,
+                          mainAxisSpacing: 20,
+                          childAspectRatio:
+                              cardWidth / (cardWidth * 5 / 4 + infoHeight),
+                        ),
+                        itemBuilder: (_, index) => _HistoryCard(
+                          record: records[index],
+                          onTap: () => resumeWatchRecord(
+                            context: context,
+                            ref: ref,
+                            record: records[index],
+                          ),
+                          onDelete: () => deleteWatchRecord(
+                            context: context,
+                            ref: ref,
+                            record: records[index],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        );
   }
 }
 
 class _HistoryCard extends StatelessWidget {
-  const _HistoryCard({required this.record, required this.onTap});
+  const _HistoryCard({
+    required this.record,
+    required this.onTap,
+    required this.onDelete,
+  });
   final WatchRecord record;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Expanded(
-        child: VideoCard(
-          video: record.video,
-          progress: record.progress,
-          onTap: onTap,
+        child: Stack(
+          children: [
+            VideoCard(
+              video: record.video,
+              progress: record.progress,
+              onTap: onTap,
+              onLongPress: onDelete,
+            ),
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Material(
+                color: AppColors.scrim,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  key: ValueKey('history-delete-${record.video.globalId}'),
+                  customBorder: const CircleBorder(),
+                  onTap: onDelete,
+                  child: const SizedBox.square(
+                    dimension: 28,
+                    child: Icon(Icons.close, size: 16, color: AppColors.text),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
       const SizedBox(height: 4),
       Text(
-        record.completed
-            ? '${record.episodeName} · 已播完'
-            : '继续 ${record.episodeName} · ${_duration(record.positionMs)}',
+        record.resumeLabel,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(color: AppColors.secondary, fontSize: 12),
       ),
     ],
   );
-
-  String _duration(int ms) {
-    final d = Duration(milliseconds: ms);
-    return '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
-  }
 }

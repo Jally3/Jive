@@ -36,6 +36,14 @@ class WatchRecord {
   double get progress =>
       durationMs <= 0 ? 0 : (positionMs / durationMs).clamp(0.0, 1.0);
 
+  String get resumeLabel {
+    if (completed) return '$episodeName · 已播完';
+    final elapsed = Duration(milliseconds: positionMs);
+    final clock =
+        '${elapsed.inMinutes}:${(elapsed.inSeconds % 60).toString().padLeft(2, '0')}';
+    return '继续 $episodeName · $clock';
+  }
+
   Map<String, dynamic> toJson() => {
     'schemaVersion': schemaVersion,
     'video': video.toJson(),

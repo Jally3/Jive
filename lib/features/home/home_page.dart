@@ -7,6 +7,7 @@ import '../../shared/app_states.dart';
 import '../../data/content/category_nav.dart';
 import '../../data/content/content_filter_policy.dart';
 import '../../data/content/my_channels_store.dart';
+import '../../data/history_repository.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
 import '../../domain/video.dart';
@@ -15,6 +16,7 @@ import '../../shared/source_selector.dart';
 import '../../shared/video_grid.dart';
 import '../detail/detail_page.dart';
 import './category_channels_page.dart';
+import './continue_watching_row.dart';
 import './paged_video_controller.dart';
 
 class HomePage extends ConsumerStatefulWidget {
@@ -231,9 +233,17 @@ class _HomePageState extends ConsumerState<HomePage> {
     await MyChannelsStore.reset(source.id);
   }
 
-  void _open(Video video) => Navigator.of(
-    context,
-  ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
+  void _open(Video video) {
+    final current = homeContinueWatchingRecord(
+      ref.read(watchHistoryProvider).value ?? const [],
+    );
+    if (current != null && current.video.globalId != video.globalId) {
+      ref.read(continueWatchingSessionHiddenProvider.notifier).hide();
+    }
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
+  }
 
   List<VideoCategory> get _selectedRootChildren =>
       _children[_selectedRootId] ?? const [];
@@ -346,6 +356,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         mainRowHeight + (hasSubcategories ? subRowHeight : 0) + 1;
     return [
       SliverToBoxAdapter(child: _introHeader()),
+      const SliverToBoxAdapter(child: ContinueWatchingSection()),
       SliverPersistentHeader(
         pinned: true,
         delegate: _PinnedHeaderDelegate(

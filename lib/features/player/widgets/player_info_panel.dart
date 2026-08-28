@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../app/theme.dart';
 import '../../../domain/playback_selection.dart';
 import '../../../domain/video.dart';
+import '../../../shared/skip_settings.dart';
 
 /// 竖屏（非全屏）状态下播放器下方的信息面板：整部简介 + 选集列表。
 class PlayerInfoPanel extends StatefulWidget {
@@ -61,6 +62,8 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
+        SkipSettingsBlock(videoGlobalId: video.globalId),
+        const SizedBox(height: 20),
         const Text(
           '简介',
           style: TextStyle(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../shared/app_states.dart';
+import '../../data/search_history_store.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
 import '../../data/vod_source/vod_source_registry.dart';
@@ -95,15 +96,40 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     controller?.search(value);
   }
 
+  void _submit(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return;
+    unawaited(ref.read(searchHistoryProvider.notifier).add(trimmed));
+    controller?.search(trimmed, immediate: true);
+  }
+
   void _clear() {
     input.clear();
     controller?.clear();
     setState(() {});
   }
 
-  void _open(Video video) => Navigator.of(
-    context,
-  ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
+  void _rememberKeyword() {
+    final keyword = input.text.trim();
+    if (keyword.isEmpty) return;
+    unawaited(ref.read(searchHistoryProvider.notifier).add(keyword));
+  }
+
+  void _applyHistoryKeyword(String keyword) {
+    input
+      ..text = keyword
+      ..selection = TextSelection.collapsed(offset: keyword.length);
+    unawaited(ref.read(searchHistoryProvider.notifier).add(keyword));
+    controller?.search(keyword, immediate: true);
+    setState(() {});
+  }
+
+  void _open(Video video) {
+    _rememberKeyword();
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -143,6 +169,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           controller: input,
           focusNode: widget.focusNode,
           onChanged: _onInputChanged,
+          onSubmitted: _submit,
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.search),
@@ -313,7 +340,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Widget _body() {
     final state = controller!.state;
     if (state.keyword.isEmpty) {
-      return const AppEmptyView(icon: Icons.search, message: '输入片名开始搜索');
+      return _SearchIdleView(onSelect: _applyHistoryKeyword);
     }
     final activeState = state.sources[state.activeSourceId];
     if (activeState == null ||
@@ -345,6 +372,54 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           bottomPadding: activeState.loading ? 168 : 96,
         ),
       ),
+    );
+  }
+}
+
+class _SearchIdleView extends ConsumerWidget {
+  const _SearchIdleView({required this.onSelect});
+
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final history = ref.watch(searchHistoryProvider).value ?? const <String>[];
+    if (history.isEmpty) {
+      return const AppEmptyView(icon: Icons.search, message: '输入片名开始搜索');
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 96),
+      children: [
+        Row(
+          children: [
+            const Text(
+              '最近搜索',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: () => ref.read(searchHistoryProvider.notifier).clear(),
+              child: const Text('清空'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final keyword in history)
+              InputChip(
+                key: ValueKey('search-history-$keyword'),
+                label: Text(keyword),
+                onPressed: () => onSelect(keyword),
+                onDeleted: () =>
+                    ref.read(searchHistoryProvider.notifier).remove(keyword),
+                deleteIcon: const Icon(Icons.close, size: 16),
+              ),
+          ],
+        ),
+      ],
     );
   }
 }

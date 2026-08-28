@@ -214,12 +214,16 @@ class MultiSourceSearchController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void search(String keyword) {
+  void search(String keyword, {bool immediate = false}) {
     _debounce?.cancel();
     _backupDelay?.cancel();
     final trimmed = keyword.trim();
     if (trimmed.isEmpty) {
       clear();
+      return;
+    }
+    if (immediate) {
+      _doSearch(trimmed);
       return;
     }
     _debounce = Timer(const Duration(milliseconds: 600), () {
