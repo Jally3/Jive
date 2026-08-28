@@ -262,6 +262,7 @@ Future<ProviderContainer> _pumpPlayerPage(
   required Video video,
   required _FakeVideoRepository repository,
   Episode? episode,
+  Duration resumePosition = Duration.zero,
   double textScale = 1,
   bool isTv = false,
 }) async {
@@ -294,6 +295,7 @@ Future<ProviderContainer> _pumpPlayerPage(
         home: PlayerPage(
           video: video,
           episode: episode ?? video.episodes.first,
+          resumePosition: resumePosition,
         ),
       ),
     ),
@@ -1393,6 +1395,34 @@ void main() {
       reason: 'intro skip did not seek to the cached duration',
     );
     expect(find.byKey(const ValueKey('player-skip-intro')), findsNothing);
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets('does not skip intro when resuming past the intro window', (
+    tester,
+  ) async {
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    SharedPreferences.setMockInitialValues({
+      skipPolicyStoreKey:
+          '{"${video.globalId}":{"introSeconds":90,"outroSeconds":0}}',
+    });
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+      resumePosition: const Duration(minutes: 5),
+    );
+    await _pumpUntil(
+      tester,
+      () => videoPlatform.seekPositions.contains(const Duration(minutes: 5)),
+      reason: 'resume seek did not land at 5 minutes',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      videoPlatform.seekPositions,
+      isNot(contains(const Duration(seconds: 90))),
+    );
     await _unmountPlayerPage(tester);
   });
 

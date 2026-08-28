@@ -75,6 +75,12 @@ bool shouldSkipIntro({
   return position < intro - const Duration(seconds: 1);
 }
 
+/// 片头判断用续播锚点，避免起播瞬间 native position 仍为 0 而误跳。
+Duration skipIntroDecisionPosition({
+  required Duration resumePosition,
+  required Duration playerPosition,
+}) => resumePosition > playerPosition ? resumePosition : playerPosition;
+
 /// 剩余时长落入片尾窗口，应跳到片尾结束或下一集。
 bool shouldSkipOutro({
   required int outroSeconds,

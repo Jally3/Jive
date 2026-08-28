@@ -40,13 +40,49 @@ void main() {
       expect(
         shouldSkipIntro(
           introSeconds: 90,
-          position: const Duration(seconds: 89),
-          duration: const Duration(minutes: 10),
+          position: const Duration(seconds: 88),
+          duration: const Duration(minutes: 40),
+        ),
+        isTrue,
+      );
+      expect(
+        shouldSkipIntro(
+          introSeconds: 90,
+          position: const Duration(seconds: 90),
+          duration: const Duration(minutes: 40),
+        ),
+        isFalse,
+      );
+      expect(
+        shouldSkipIntro(
+          introSeconds: 90,
+          position: const Duration(minutes: 10),
+          duration: const Duration(minutes: 40),
         ),
         isFalse,
       );
     });
   });
+
+  test(
+    'skipIntroDecisionPosition prefers the resume anchor over a zero native position',
+    () {
+      expect(
+        skipIntroDecisionPosition(
+          resumePosition: const Duration(minutes: 10),
+          playerPosition: Duration.zero,
+        ),
+        const Duration(minutes: 10),
+      );
+      expect(
+        skipIntroDecisionPosition(
+          resumePosition: Duration.zero,
+          playerPosition: const Duration(seconds: 20),
+        ),
+        const Duration(seconds: 20),
+      );
+    },
+  );
 
   group('shouldSkipOutro', () {
     test('applies in the outro window and not when too close to the end', () {

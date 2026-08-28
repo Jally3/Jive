@@ -155,6 +155,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   bool _introSkipped = false;
   bool _outroSkipped = false;
 
+  /// 本集起播/续播的目标位置（广告过滤后时间轴）。片头是否跳过看它，
+  /// 不看起播瞬间可能仍为 0 的 native position。
+  Duration _introDecisionPosition = Duration.zero;
+
   @override
   void initState() {
     super.initState();
@@ -206,9 +210,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     _observedDuration = Duration.zero;
     _introSkipped = false;
     _outroSkipped = false;
+    _introDecisionPosition = Duration.zero;
     _resetSeekState();
     final generation = ++setupGeneration;
     _selection = _bindPlaybackHeaders(_selection);
+    await _loadSkipPolicy();
+    if (!mounted || generation != setupGeneration) return;
     if (mounted) {
       setState(() {
         failed = false;
@@ -417,12 +424,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     // 最后一次性提交，避免旧任务在提交后反向覆盖新任务。
     final mapping = session?.timelineMapping;
     var target = mapping == null ? resume : mapping.sourceToFiltered(resume);
+    _introDecisionPosition = target;
     if (shouldSkipIntro(
       introSeconds: _skipPolicy.introSeconds,
       position: target,
       duration: next.value.duration,
     )) {
       target = Duration(seconds: _skipPolicy.introSeconds);
+      _introSkipped = true;
+    } else if (_skipPolicy.introEnabled) {
+      // 续播已过片头窗口：钉死本集不再补跳，避免策略晚到时 position 仍为 0。
       _introSkipped = true;
     }
     if (target > Duration.zero && target < next.value.duration) {
@@ -1287,6 +1298,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     return KeyEventResult.ignored;
   }
 
+  Future<void> _loadSkipPolicy() async {
+    try {
+      final policy = await ref.read(
+        skipPolicyProvider(widget.video.globalId).future,
+      );
+      if (mounted) _skipPolicy = policy;
+    } catch (_) {}
+  }
+
   void _maybeSkipIntro() {
     final current = controller;
     if (current == null ||
@@ -1297,11 +1317,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         seekCommitting.value) {
       return;
     }
+    final position = skipIntroDecisionPosition(
+      resumePosition: _introDecisionPosition,
+      playerPosition: current.value.position,
+    );
     if (!shouldSkipIntro(
       introSeconds: _skipPolicy.introSeconds,
-      position: current.value.position,
+      position: position,
       duration: current.value.duration,
     )) {
+      if (_skipPolicy.introEnabled) _introSkipped = true;
       return;
     }
     _introSkipped = true;
