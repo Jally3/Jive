@@ -109,7 +109,7 @@ lib/data/cache/
 ├── content_key.dart                   # ContentKey 构建：源+视频+线路+剧集身份编码后的 sha256 寻址
 ├── url_normalizer.dart                # URL 归一化：剔除时效签名参数，保证缓存寻址稳定
 ├── single_flight.dart                 # 并发原语：AsyncMutex 串行锁与 SingleFlight 在飞请求去重
-├── cache_ttl_policy.dart              # 缓存 TTL 选项 cacheTtlProvider：退出清理 / 1 小时 / 5 小时 / 1 天
+├── cache_ttl_policy.dart              # 缓存 TTL 选项 cacheTtlProvider：不自动清理 / 退出清理 / 1 小时 / 5 小时 / 1/3/7 天
 ├── cache_providers.dart               # 缓存装配：持久目录（含旧临时目录迁移）、diskSpaceProvider、cacheManagerProvider
 ├── cache_repository.dart              # CacheManager 的薄封装 CacheRepository，供 UI 层依赖
 └── cache_controller.dart              # 缓存页状态 cacheControllerProvider：统计刷新、单条删除、批量清理播放缓存

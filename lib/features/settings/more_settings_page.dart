@@ -20,10 +20,13 @@ String _formatBytes(int bytes) {
 }
 
 String _ttlLabel(CacheTtlOption option) => switch (option) {
+  CacheTtlOption.never => '不自动清理',
   CacheTtlOption.onExit => '退出播放时清理',
   CacheTtlOption.hours1 => '1 小时后',
   CacheTtlOption.hours5 => '5 小时后',
   CacheTtlOption.days1 => '1 天后',
+  CacheTtlOption.days3 => '3 天后',
+  CacheTtlOption.days7 => '7 天后',
 };
 
 Future<void> _selectTtl(
@@ -36,18 +39,20 @@ Future<void> _selectTtl(
     // 宽屏（电视/平板横屏）下收敛宽度居中。
     constraints: const BoxConstraints(maxWidth: 600),
     builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final option in CacheTtlOption.values)
-            ListTile(
-              title: Text(_ttlLabel(option)),
-              trailing: option == current
-                  ? const Icon(Icons.check, color: AppColors.accent)
-                  : null,
-              onTap: () => Navigator.pop(sheetContext, option),
-            ),
-        ],
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final option in CacheTtlOption.values)
+              ListTile(
+                title: Text(_ttlLabel(option)),
+                trailing: option == current
+                    ? const Icon(Icons.check, color: AppColors.accent)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, option),
+              ),
+          ],
+        ),
       ),
     ),
   );
