@@ -17,8 +17,8 @@ class SplashPage extends StatelessWidget {
         ? 120.0
         : 96.0;
     return Scaffold(
-      key: const ValueKey('splash-page'),
-      backgroundColor: AppColors.background,
+      key: ValueKey('splash-page'),
+      backgroundColor: context.appColors.background,
       body: SafeArea(
         child: Stack(
           children: [
@@ -30,32 +30,30 @@ class SplashPage extends StatelessWidget {
                   children: [
                     Image.asset(
                       logoAsset,
-                      key: const ValueKey('splash-logo'),
+                      key: ValueKey('splash-logo'),
                       width: logoSize,
                       height: logoSize,
                       fit: BoxFit.contain,
                       filterQuality: FilterQuality.medium,
                       errorBuilder: (_, _, _) => ColoredBox(
-                        color: AppColors.elevated,
+                        color: context.appColors.elevated,
                         child: SizedBox(width: logoSize, height: logoSize),
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    const Text(
+                    SizedBox(height: 16),
+                    Text(
                       'Jive',
                       style: TextStyle(
                         fontSize: 28,
                         height: 36 / 28,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.text,
+                        color: context.appColors.text,
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-           
-            
           ],
         ),
       ),

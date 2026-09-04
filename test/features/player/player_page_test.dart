@@ -265,6 +265,7 @@ Future<ProviderContainer> _pumpPlayerPage(
   Duration resumePosition = Duration.zero,
   double textScale = 1,
   bool isTv = false,
+  ThemeData? theme,
 }) async {
   final container = ProviderContainer(
     overrides: [
@@ -286,6 +287,7 @@ Future<ProviderContainer> _pumpPlayerPage(
     UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
+        theme: theme ?? buildDarkTheme(),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(
             context,
@@ -577,6 +579,37 @@ void main() {
     },
   );
 
+  testWidgets(
+    'PlayerInfoPanel uses the light palette outside the video surface',
+    (tester) async {
+      final video = _video();
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            theme: buildLightTheme(),
+            home: Scaffold(
+              body: PlayerInfoPanel(
+                video: video,
+                current: video.episodes.first,
+                onEpisodeTap: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final heading = tester.widget<Text>(find.text('简介'));
+      final skipHeading = tester.widget<Text>(find.text('跳过片头'));
+      final unselected = tester.widget<ChoiceChip>(
+        find.widgetWithText(ChoiceChip, '第2集'),
+      );
+      expect(heading.style?.color, AppPalette.light.text);
+      expect(skipHeading.style?.color, AppPalette.light.text);
+      expect(unselected.labelStyle?.color, AppPalette.light.secondary);
+    },
+  );
+
   testWidgets('PlayerInfoPanel shows fallback when description is empty', (
     tester,
   ) async {
@@ -679,6 +712,34 @@ void main() {
     expect(title.dx, greaterThan(back.dx));
     expect(title.dx, lessThan(tester.getSize(find.byType(AppBar)).width / 2));
     expect((title.dy - back.dy).abs(), lessThan(16));
+
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets('light portrait player keeps only the video surface dark', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final video = _playableVideo('https://example.com/1.mp4');
+
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+      theme: buildLightTheme(),
+    );
+
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
+    final videoSurface = find.byKey(const ValueKey('player-video-surface'));
+    expect(scaffold.backgroundColor, AppPalette.light.background);
+    expect(Theme.of(tester.element(videoSurface)).brightness, Brightness.dark);
+    expect(
+      tester.widget<Text>(find.text('简介')).style?.color,
+      AppPalette.light.text,
+    );
 
     await _unmountPlayerPage(tester);
   });
@@ -982,7 +1043,9 @@ void main() {
         findsNothing,
       );
       expect(find.byKey(const ValueKey('player-next-episode')), findsNothing);
-      expect(find.byType(ChoiceChip), findsNWidgets(3));
+      expect(find.widgetWithText(ChoiceChip, '第1集'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '第2集'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '第3集'), findsOneWidget);
       await _unmountPlayerPage(tester);
     },
   );

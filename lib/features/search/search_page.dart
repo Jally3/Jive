@@ -138,7 +138,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       // bottom: false：让结果网格延伸到底部毛玻璃导航栏下方透出。
       bottom: false,
       child: sourceState.when(
-        loading: () => const AppLoadingView(label: '正在加载来源…'),
+        loading: () => AppLoadingView(label: '正在加载来源…'),
         error: (error, _) => AppErrorView(
           message: '$error',
           onRetry: () => ref.invalidate(selectedVodSourceProvider),
@@ -147,7 +147,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           // 初始值同步：后续全局切源由 initState 中的 listener 处理。
           _globalSourceId ??= source.id;
           _ensureController();
-          if (controller == null) return const AppLoadingView();
+          if (controller == null) return AppLoadingView();
           return _buildContent();
         },
       ),
@@ -155,16 +155,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   Widget _buildContent() => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+    padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 8),
-        const Text(
-          '搜索',
-          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 16),
+        SizedBox(height: 8),
+        Text('搜索', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
+        SizedBox(height: 16),
         TextField(
           controller: input,
           focusNode: widget.focusNode,
@@ -172,20 +169,20 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           onSubmitted: _submit,
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.search),
+            prefixIcon: Icon(Icons.search),
             hintText: '搜索视频',
             suffixIcon: input.text.isEmpty
                 ? null
                 : IconButton(
-                    icon: const Icon(Icons.close),
+                    icon: Icon(Icons.close),
                     tooltip: '清空',
                     onPressed: _clear,
                   ),
           ),
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: 8),
         if (controller!.state.keyword.isNotEmpty) _sourceLabelBar(),
-        const SizedBox(height: 4),
+        SizedBox(height: 4),
         Expanded(child: _body()),
       ],
     ),
@@ -196,7 +193,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final registry = ref
         .read(vodSourceRegistryProvider)
         .maybeWhen(data: (r) => r, orElse: () => null);
-    if (registry == null) return const SizedBox.shrink();
+    if (registry == null) return SizedBox.shrink();
     final activeId = state.activeSourceId;
     final backupIds = state.sources.keys
         .where((id) => id != activeId && state.sources[id]?.queried == true)
@@ -228,9 +225,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
     labels.add(
       Padding(
-        padding: const EdgeInsets.only(right: 6),
+        padding: EdgeInsets.only(right: 6),
         child: ActionChip(
-          label: const Text('更多 ▾'),
+          label: Text('更多 ▾'),
           onPressed: () => _showMoreSources(),
         ),
       ),
@@ -254,18 +251,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final hasError = state?.error != null;
     final label = '$name $count';
     final color = hasError
-        ? AppColors.error
+        ? context.appColors.error
         : isActive
-        ? AppColors.accent
-        : AppColors.secondary;
+        ? context.appColors.accentForeground
+        : context.appColors.secondary;
     return Padding(
-      padding: const EdgeInsets.only(right: 6),
+      padding: EdgeInsets.only(right: 6),
       child: FilterChip(
         label: Text(
           isLoading && state?.items.isEmpty == true ? '$name …' : label,
           style: TextStyle(
             fontSize: 12,
-            color: isActive ? AppColors.onAccent : color,
+            color: isActive ? context.appColors.onAccent : color,
           ),
         ),
         selected: isActive,
@@ -286,7 +283,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     showModalBottomSheet<void>(
       context: context,
       // 宽屏（电视/平板横屏）下收敛宽度居中。
-      constraints: const BoxConstraints(maxWidth: 600),
+      constraints: BoxConstraints(maxWidth: 600),
       builder: (_) => AnimatedBuilder(
         animation: current,
         builder: (_, _) {
@@ -318,16 +315,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       final ok = await showDialog<bool>(
         context: context,
         builder: (_) => AlertDialog(
-          title: const Text('查找全部来源'),
+          title: Text('查找全部来源'),
           content: Text('将向全部 $count 个来源发起请求，可能产生额外流量。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
+              child: Text('取消'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('继续'),
+              child: Text('继续'),
             ),
           ],
         ),
@@ -345,7 +342,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final activeState = state.sources[state.activeSourceId];
     if (activeState == null ||
         (activeState.items.isEmpty && activeState.loading)) {
-      return const AppLoadingView(label: '正在搜索…');
+      return AppLoadingView(label: '正在搜索…');
     }
     if (activeState.items.isEmpty && activeState.error != null) {
       return AppErrorView(
@@ -354,10 +351,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       );
     }
     if (activeState.items.isEmpty) {
-      return const AppEmptyView(
-        icon: Icons.search_off,
-        message: '没有找到结果，换个关键词或来源试试',
-      );
+      return AppEmptyView(icon: Icons.search_off, message: '没有找到结果，换个关键词或来源试试');
     }
     return NotificationListener<ScrollNotification>(
       onNotification: (event) {
@@ -383,27 +377,27 @@ class _SearchIdleView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final history = ref.watch(searchHistoryProvider).value ?? const <String>[];
+    final history = ref.watch(searchHistoryProvider).value ?? <String>[];
     if (history.isEmpty) {
-      return const AppEmptyView(icon: Icons.search, message: '输入片名开始搜索');
+      return AppEmptyView(icon: Icons.search, message: '输入片名开始搜索');
     }
     return ListView(
-      padding: const EdgeInsets.fromLTRB(0, 8, 0, 96),
+      padding: EdgeInsets.fromLTRB(0, 8, 0, 96),
       children: [
         Row(
           children: [
-            const Text(
+            Text(
               '最近搜索',
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
-            const Spacer(),
+            Spacer(),
             TextButton(
               onPressed: () => ref.read(searchHistoryProvider.notifier).clear(),
-              child: const Text('清空'),
+              child: Text('清空'),
             ),
           ],
         ),
-        const SizedBox(height: 4),
+        SizedBox(height: 4),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -415,7 +409,7 @@ class _SearchIdleView extends ConsumerWidget {
                 onPressed: () => onSelect(keyword),
                 onDeleted: () =>
                     ref.read(searchHistoryProvider.notifier).remove(keyword),
-                deleteIcon: const Icon(Icons.close, size: 16),
+                deleteIcon: Icon(Icons.close, size: 16),
               ),
           ],
         ),
@@ -443,28 +437,28 @@ class _MoreSourcesSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: EdgeInsets.symmetric(vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+              padding: EdgeInsets.fromLTRB(20, 12, 20, 8),
               child: Row(
                 children: [
-                  const Text(
+                  Text(
                     '全部来源',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                   ),
-                  const Spacer(),
+                  Spacer(),
                   TextButton.icon(
                     onPressed: onSearchAll,
-                    icon: const Icon(Icons.search, size: 18),
-                    label: const Text('查找全部来源'),
+                    icon: Icon(Icons.search, size: 18),
+                    label: Text('查找全部来源'),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1),
             Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
@@ -490,7 +484,9 @@ class _MoreSourcesSheet extends StatelessWidget {
                   return ListTile(
                     leading: Icon(
                       isActive ? Icons.check_circle : Icons.source_outlined,
-                      color: isActive ? AppColors.accent : AppColors.tertiary,
+                      color: isActive
+                          ? context.appColors.accentForeground
+                          : context.appColors.tertiary,
                     ),
                     title: Text(source.name),
                     subtitle: Text(
@@ -498,12 +494,12 @@ class _MoreSourcesSheet extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 13,
                         color: s?.error != null
-                            ? AppColors.error
-                            : AppColors.secondary,
+                            ? context.appColors.error
+                            : context.appColors.secondary,
                       ),
                     ),
                     trailing: s?.loading == true
-                        ? const SizedBox.square(
+                        ? SizedBox.square(
                             dimension: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )

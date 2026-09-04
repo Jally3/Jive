@@ -132,6 +132,23 @@ Future<void> _pumpDetailPage(
   await tester.pump();
 }
 
+Future<void> _scrollDetailTo(WidgetTester tester, double offset) async {
+  final scrollable = tester
+      .stateList<ScrollableState>(find.byType(Scrollable))
+      .firstWhere(
+        (state) =>
+            state.position.axis == Axis.vertical &&
+            state.position.maxScrollExtent > 0,
+      );
+  scrollable.position.jumpTo(
+    offset.clamp(0, scrollable.position.maxScrollExtent).toDouble(),
+  );
+  await tester.pump();
+}
+
+Future<void> _scrollDetailToBottom(WidgetTester tester) =>
+    _scrollDetailTo(tester, double.infinity);
+
 class _FakeHistoryRepository extends HistoryRepository {
   @override
   Future<List<WatchRecord>> load() async => const [];
@@ -343,6 +360,8 @@ void main() {
     pageState.sc.ensureSourceState(registry.findById('sd')!);
     await tester.pump();
     expect(find.text('来源D —'), findsOneWidget);
+    await _scrollDetailTo(tester, 420);
+    await tester.ensureVisible(find.text('查找其他来源'));
     await tester.tap(find.text('查找其他来源'));
     await tester.pump();
     await tester.pump();
@@ -434,6 +453,7 @@ void main() {
     await _pumpDetailPage(tester, container);
     await tester.pump();
     expect(tester.takeException(), isNull);
+    await _scrollDetailToBottom(tester);
 
     List<String> episodeNames() {
       final container = find.byType(GridView).evaluate().isNotEmpty
@@ -468,6 +488,7 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
 
+    await _scrollDetailToBottom(tester);
     await tester.ensureVisible(find.text('第 1–100 集'));
     await tester.pumpAndSettle();
     expect(find.text('第 101–200 集'), findsOneWidget);
@@ -501,6 +522,7 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
 
+    await _scrollDetailToBottom(tester);
     await tester.ensureVisible(find.text('倒序'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('倒序'));
@@ -613,6 +635,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.byType(PlayerPage), findsNothing);
       expect(find.text('播放 第120集'), findsOneWidget);
+      await _scrollDetailToBottom(tester);
       expect(find.text('第 101–200 集', skipOffstage: false), findsOneWidget);
       expect(find.text('第120集', skipOffstage: false), findsOneWidget);
       expect(find.text('第1集', skipOffstage: false), findsNothing);

@@ -22,16 +22,16 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
     final accepted = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('清理播放缓存？'),
-        content: const Text('将删除观看时自动保存的本地片段以释放空间。离线下载与正在播放的内容会保留。'),
+        title: Text('清理播放缓存？'),
+        content: Text('将删除观看时自动保存的本地片段以释放空间。离线下载与正在播放的内容会保留。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+            child: Text('取消'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('清理'),
+            child: Text('清理'),
           ),
         ],
       ),
@@ -68,7 +68,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
     final accepted = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('删除该缓存？'),
+        title: Text('删除该缓存？'),
         content: Text(
           entry.downloadOrigin
               ? '删除「${entry.episodeName}」的本地文件。下载任务仍在「下载」里，但本集将无法离线播放。'
@@ -77,11 +77,11 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+            child: Text('取消'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除'),
+            child: Text('删除'),
           ),
         ],
       ),
@@ -112,11 +112,11 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('缓存管理')),
+    appBar: AppBar(title: Text('缓存管理')),
     body: ref
         .watch(cacheControllerProvider)
         .when(
-          loading: () => const AppLoadingView(label: '正在统计缓存…'),
+          loading: () => AppLoadingView(label: '正在统计缓存…'),
           error: (error, _) => AppErrorView(
             message: '缓存统计加载失败',
             onRetry: () => ref.invalidate(cacheControllerProvider),
@@ -127,7 +127,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
 
   Widget _content(CacheStats stats) {
     if (stats.entries.isEmpty) {
-      return const AppEmptyView(
+      return AppEmptyView(
         icon: Icons.cleaning_services_outlined,
         message: '还没有播放缓存\n看过的片子会把片段留在这里，方便接着播。主动下载的任务在「下载」里。',
       );
@@ -139,12 +139,12 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
     return RefreshIndicator(
       onRefresh: () => ref.read(cacheControllerProvider.notifier).refresh(),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
           Card(
-            color: AppColors.elevated,
+            color: context.appColors.elevated,
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -159,12 +159,12 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                               value: fraction,
                               strokeWidth: 6,
                               strokeCap: StrokeCap.round,
-                              backgroundColor: AppColors.divider,
-                              color: AppColors.accent,
+                              backgroundColor: context.appColors.divider,
+                              color: context.appColors.accent,
                             ),
                             Text(
                               '${(fraction * 100).round()}%',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -172,33 +172,33 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                           ],
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      SizedBox(width: 16),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               '已用 ${_formatBytes(used)} / ${_formatBytes(quota)}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
-                            const SizedBox(height: 6),
-                            const Text(
+                            SizedBox(height: 6),
+                            Text(
                               '观看时自动保存的片段，占满后会自动清理。离线下载请到「下载」。',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: AppColors.secondary,
+                                color: context.appColors.secondary,
                                 height: 1.4,
                               ),
                             ),
-                            const SizedBox(height: 6),
+                            SizedBox(height: 6),
                             Text(
                               '完整资源 ${_formatBytes(stats.completeBytes)} · 临时文件 ${_formatBytes(stats.partialBytes)} · ${stats.entryCount} 个剧集',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
-                                color: AppColors.secondary,
+                                color: context.appColors.secondary,
                               ),
                             ),
                           ],
@@ -206,20 +206,20 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: _busy ? null : _clearPlaybackCache,
-                      icon: const Icon(Icons.delete_sweep_outlined),
-                      label: const Text('清理播放缓存'),
+                      icon: Icon(Icons.delete_sweep_outlined),
+                      label: Text('清理播放缓存'),
                     ),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: 16),
           for (final group in grouped.entries)
             _groupCard((group.key, group.value)),
         ],
@@ -233,8 +233,8 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
       (sum, e) => sum + e.completeBytes + e.partialBytes,
     );
     return Card(
-      color: AppColors.surface,
-      margin: const EdgeInsets.only(bottom: 12),
+      color: context.appColors.surface,
+      margin: EdgeInsets.only(bottom: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -244,14 +244,14 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
               group.$1,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
             subtitle: Text(
               '${group.$2.length} 个剧集 · ${_formatBytes(used)}',
-              style: const TextStyle(fontSize: 12),
+              style: TextStyle(fontSize: 12),
             ),
           ),
-          const Divider(height: 1, color: AppColors.divider),
+          Divider(height: 1, color: context.appColors.divider),
           for (final entry in group.$2) _entryTile(entry),
         ],
       ),
@@ -267,7 +267,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
     final showProgress =
         !entry.offlinePlayable && entry.status != CacheEntryStatus.failed;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
+      padding: EdgeInsets.fromLTRB(16, 10, 4, 10),
       child: Row(
         children: [
           Expanded(
@@ -281,15 +281,12 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                         entry.episodeName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 14),
+                        style: TextStyle(fontSize: 14),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
+                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: color.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(6),
@@ -305,23 +302,23 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(
                   '$size$accessed',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: AppColors.secondary,
+                    color: context.appColors.secondary,
                   ),
                 ),
                 if (showProgress) ...[
-                  const SizedBox(height: 6),
+                  SizedBox(height: 6),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(3),
                     child: LinearProgressIndicator(
                       value: entry.progress.clamp(0.0, 1.0),
                       minHeight: 4,
-                      backgroundColor: AppColors.divider,
-                      color: AppColors.accent,
+                      backgroundColor: context.appColors.divider,
+                      color: context.appColors.accent,
                     ),
                   ),
                 ],
@@ -331,7 +328,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
           IconButton(
             tooltip: '删除',
             onPressed: _busy ? null : () => _deleteEntry(entry),
-            icon: const Icon(Icons.delete_outline, size: 20),
+            icon: Icon(Icons.delete_outline, size: 20),
           ),
         ],
       ),
@@ -341,12 +338,15 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
   /// 条目状态：离线下载成片 / 观看缓存 / 缓存失败 / 部分缓存百分比。
   (String, Color) _entryStatus(CacheEntry entry) {
     if (entry.offlinePlayable) {
-      return (entry.downloadOrigin ? '离线下载' : '已缓存', AppColors.success);
+      return (entry.downloadOrigin ? '离线下载' : '已缓存', context.appColors.success);
     }
     if (entry.status == CacheEntryStatus.failed) {
-      return ('缓存失败', AppColors.error);
+      return ('缓存失败', context.appColors.error);
     }
-    return ('${(entry.progress * 100).round()}%', AppColors.accent);
+    return (
+      '${(entry.progress * 100).round()}%',
+      context.appColors.accentForeground,
+    );
   }
 
   static Map<String, List<CacheEntry>> _groupByTitle(List<CacheEntry> entries) {

@@ -148,14 +148,18 @@ void main() {
     expect(navIcon(Icons.home).size, 24);
     expect(
       tester.widget<Material>(surface).color,
-      AppColors.surface.withValues(alpha: 0.3),
+      AppPalette.light.surface.withValues(
+        alpha: AppPalette.light.navigationHomeAlpha,
+      ),
     );
 
     await tester.tap(find.descendant(of: nav, matching: find.text('我的')));
     await tester.pump();
     expect(
       tester.widget<Material>(surface).color,
-      AppColors.surface.withValues(alpha: 0.78),
+      AppPalette.light.surface.withValues(
+        alpha: AppPalette.light.navigationPageAlpha,
+      ),
     );
 
     tester.view.physicalSize = const Size(834, 1194);
@@ -168,7 +172,9 @@ void main() {
     await tester.pump();
     expect(
       tester.widget<Material>(surface).color,
-      AppColors.surface.withValues(alpha: 0.3),
+      AppPalette.light.surface.withValues(
+        alpha: AppPalette.light.navigationHomeAlpha,
+      ),
     );
   });
 
@@ -187,8 +193,17 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('视频详情'), findsOneWidget);
-    expect(find.text('完整简介'), findsOneWidget);
     expect(find.text('播放 第1集'), findsOneWidget);
+    final detailScroll = tester
+        .stateList<ScrollableState>(find.byType(Scrollable))
+        .firstWhere(
+          (state) =>
+              state.position.axis == Axis.vertical &&
+              state.position.maxScrollExtent > 0,
+        );
+    detailScroll.position.jumpTo(detailScroll.position.maxScrollExtent);
+    await tester.pump();
+    expect(find.text('完整简介'), findsOneWidget);
     expect(find.text('第2集'), findsOneWidget);
   });
 
@@ -267,7 +282,7 @@ void main() {
     addTearDown(container.dispose);
     await _pumpReadyApp(tester, container);
     await tester.tap(find.text('搜索'));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('输入片名开始搜索'), findsOneWidget);
     await tester.enterText(find.byType(TextField), '测试');
     await tester.pump(const Duration(milliseconds: 599));
@@ -526,7 +541,7 @@ void main() {
     addTearDown(container.dispose);
     await _pumpReadyApp(tester, container);
     await tester.tap(find.text('搜索'));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('输入片名开始搜索'), findsOneWidget);
     await tester.enterText(find.byType(TextField), '测试');
     await tester.testTextInput.receiveAction(TextInputAction.search);

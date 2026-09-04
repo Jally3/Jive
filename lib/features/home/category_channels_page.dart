@@ -7,29 +7,29 @@ import '../../app/theme.dart';
 import '../../domain/video.dart';
 
 /// 分类 chip 的通用样式：主分类行与子分类行（copyWith 调整）共用。
-ChipThemeData get categoryChipTheme => ChipThemeData(
-  backgroundColor: AppColors.elevated.withValues(alpha: 0.6),
-  selectedColor: AppColors.accent,
-  disabledColor: AppColors.surface,
-  side: const BorderSide(color: AppColors.divider),
-  shape: const StadiumBorder(),
-  labelStyle: const TextStyle(color: AppColors.text, fontSize: 14),
-  secondaryLabelStyle: const TextStyle(
-    color: AppColors.onAccent,
+ChipThemeData categoryChipTheme(BuildContext context) => ChipThemeData(
+  backgroundColor: context.appColors.elevated.withValues(alpha: 0.6),
+  selectedColor: context.appColors.accent,
+  disabledColor: context.appColors.surface,
+  side: BorderSide(color: context.appColors.divider),
+  shape: StadiumBorder(),
+  labelStyle: TextStyle(color: context.appColors.text, fontSize: 14),
+  secondaryLabelStyle: TextStyle(
+    color: context.appColors.onAccent,
     fontSize: 14,
     fontWeight: FontWeight.w600,
   ),
-  checkmarkColor: AppColors.onAccent,
-  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+  checkmarkColor: context.appColors.onAccent,
+  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
   // 选中态是 accent 实心底，focusColor 洗上去不可见，聚焦时加深区分。
   // 触摸点击不会持有焦点（仅方向键/键盘），手机端无变化。
   color: WidgetStateProperty.resolveWith((states) {
     if (states.contains(WidgetState.selected)) {
       return states.contains(WidgetState.focused)
-          ? AppColors.accentPressed
-          : AppColors.accent;
+          ? context.appColors.accentPressed
+          : context.appColors.accent;
     }
-    return AppColors.elevated.withValues(alpha: 0.6);
+    return context.appColors.elevated.withValues(alpha: 0.6);
   }),
 );
 
@@ -215,8 +215,8 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    key: const ValueKey('category-channels-page'),
-    backgroundColor: AppColors.background,
+    key: ValueKey('category-channels-page'),
+    backgroundColor: context.appColors.background,
     body: SafeArea(
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -273,19 +273,19 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
       Text(
         '全部频道',
         style: TextStyle(
-          color: AppColors.text,
+          color: context.appColors.text,
           fontSize: _layout.titleSize,
           fontWeight: FontWeight.w700,
         ),
       ),
-      const Spacer(),
+      Spacer(),
       IconButton(
-        key: const ValueKey('category-channels-close'),
+        key: ValueKey('category-channels-close'),
         tooltip: '关闭',
         visualDensity: VisualDensity.compact,
         icon: Icon(
           Icons.close_rounded,
-          color: AppColors.secondary,
+          color: context.appColors.secondary,
           size: _layout.isTablet ? 26 : 24,
         ),
         onPressed: () => Navigator.of(context).pop(),
@@ -298,12 +298,12 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
       Text(
         title,
         style: TextStyle(
-          color: AppColors.text,
+          color: context.appColors.text,
           fontSize: _layout.sectionSize,
           fontWeight: FontWeight.w600,
         ),
       ),
-      const Spacer(),
+      Spacer(),
       ...actions,
     ],
   );
@@ -321,7 +321,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
           child: Text(
             label,
             style: TextStyle(
-              color: color ?? AppColors.secondary,
+              color: color ?? context.appColors.secondary,
               fontSize: _layout.actionSize,
             ),
           ),
@@ -339,7 +339,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
               ? [
                   _headerAction(
                     '完成',
-                    color: AppColors.accent,
+                    color: context.appColors.accentForeground,
                     onTap: () => setState(() => _editing = false),
                   ),
                 ]
@@ -357,7 +357,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
           ReorderableGridView.count(
             crossAxisCount: _layout.columns,
             shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
+            physics: NeverScrollableScrollPhysics(),
             mainAxisSpacing: _layout.spacing,
             crossAxisSpacing: _layout.spacing,
             childAspectRatio: _layout.childAspectRatio,
@@ -401,7 +401,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
   /// 有子分类：根分类名作小标题，子分类排自适应网格；
   /// 无子分类：根分类自身占一格。编辑态区头带「+ 添加 / 已添加」。
   Widget _rootSection(VideoCategory root) {
-    final kids = widget.children[root.id] ?? const <VideoCategory>[];
+    final kids = widget.children[root.id] ?? <VideoCategory>[];
     final inMine = _myIds.contains(root.id);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,14 +409,14 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
         _sectionHeader(
           root.name,
           actions: !_editing
-              ? const []
+              ? []
               : [
                   if (inMine)
-                    _headerAction('已添加', color: AppColors.tertiary)
+                    _headerAction('已添加', color: context.appColors.tertiary)
                   else
                     _headerAction(
                       '+ 添加',
-                      color: AppColors.accent,
+                      color: context.appColors.accentForeground,
                       onTap: () => _add(root.id),
                     ),
                 ],
@@ -451,7 +451,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
   Widget _grid(List<Widget> items) => GridView.count(
     crossAxisCount: _layout.columns,
     shrinkWrap: true,
-    physics: const NeverScrollableScrollPhysics(),
+    physics: NeverScrollableScrollPhysics(),
     mainAxisSpacing: _layout.spacing,
     crossAxisSpacing: _layout.spacing,
     childAspectRatio: _layout.childAspectRatio,
@@ -473,12 +473,14 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
         alignment: Alignment.center,
         decoration: ShapeDecoration(
           color: selected
-              ? AppColors.accent
-              : AppColors.elevated.withValues(alpha: dimmed ? 0.35 : 0.6),
+              ? context.appColors.accent
+              : context.appColors.elevated.withValues(
+                  alpha: dimmed ? 0.35 : 0.6,
+                ),
           shape: StadiumBorder(
             side: selected
                 ? BorderSide.none
-                : const BorderSide(color: AppColors.divider),
+                : BorderSide(color: context.appColors.divider),
           ),
         ),
         child: Text(
@@ -487,8 +489,10 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: selected
-                ? AppColors.onAccent
-                : (dimmed ? AppColors.tertiary : AppColors.text),
+                ? context.appColors.onAccent
+                : (dimmed
+                      ? context.appColors.tertiary
+                      : context.appColors.text),
             fontSize: _layout.pillSize,
             fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
           ),
@@ -502,7 +506,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
       clipBehavior: Clip.none,
       children: [
         Positioned.fill(child: pill),
-        const Positioned(top: -5, right: -3, child: _RemoveBadge()),
+        Positioned(top: -5, right: -3, child: _RemoveBadge()),
       ],
     );
   }
@@ -516,11 +520,15 @@ class _RemoveBadge extends StatelessWidget {
     child: Container(
       width: 16,
       height: 16,
-      decoration: const BoxDecoration(
-        color: AppColors.tertiary,
+      decoration: BoxDecoration(
+        color: context.appColors.tertiary,
         shape: BoxShape.circle,
       ),
-      child: const Icon(Icons.remove_rounded, size: 12, color: AppColors.text),
+      child: Icon(
+        Icons.remove_rounded,
+        size: 12,
+        color: context.appColors.text,
+      ),
     ),
   );
 }

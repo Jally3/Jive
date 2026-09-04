@@ -44,7 +44,10 @@ class _VideoCardState extends State<VideoCard> {
         // foregroundDecoration 不影响布局，仅在聚焦时叠一层描边。
         foregroundDecoration: _focused
             ? BoxDecoration(
-                border: Border.all(color: AppColors.accent, width: 2),
+                border: Border.all(
+                  color: context.appColors.accentForeground,
+                  width: 2,
+                ),
                 borderRadius: BorderRadius.circular(12),
               )
             : null,
@@ -72,22 +75,22 @@ class _VideoCardState extends State<VideoCard> {
             fit: StackFit.expand,
             children: [
               ColoredBox(
-                color: AppColors.elevated,
+                color: context.appColors.elevated,
                 child: widget.video.posterUrl.isEmpty
-                    ? const Icon(
+                    ? Icon(
                         Icons.movie_outlined,
                         size: 44,
-                        color: AppColors.tertiary,
+                        color: context.appColors.tertiary,
                       )
                     : CachedNetworkImage(
                         imageUrl: widget.video.posterUrl,
                         fit: BoxFit.cover,
                         placeholder: (_, _) =>
-                            const ColoredBox(color: AppColors.surface),
-                        errorWidget: (_, _, _) => const Icon(
+                            ColoredBox(color: context.appColors.surface),
+                        errorWidget: (_, _, _) => Icon(
                           Icons.movie_outlined,
                           size: 44,
-                          color: AppColors.tertiary,
+                          color: context.appColors.tertiary,
                         ),
                       ),
               ),
@@ -97,34 +100,34 @@ class _VideoCardState extends State<VideoCard> {
                   child: LinearProgressIndicator(
                     value: widget.progress!.clamp(0, 1),
                     minHeight: 3,
-                    backgroundColor: AppColors.divider,
-                    color: AppColors.accent,
+                    backgroundColor: context.appColors.divider,
+                    color: context.appColors.accent,
                   ),
                 ),
             ],
           ),
         ),
       ),
-      const SizedBox(height: 8),
+      SizedBox(height: 8),
       Text(
         widget.video.title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 16,
           height: 1.3,
           fontWeight: FontWeight.w600,
         ),
       ),
-      const SizedBox(height: 4),
+      SizedBox(height: 4),
       Text(
         _meta,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 12,
           height: 1.3,
-          color: AppColors.secondary,
+          color: context.appColors.secondary,
         ),
       ),
     ],

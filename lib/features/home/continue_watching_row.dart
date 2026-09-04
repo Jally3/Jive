@@ -29,16 +29,16 @@ class ContinueWatchingSection extends ConsumerWidget {
     final record = hidden
         ? null
         : homeContinueWatchingRecord(
-            ref.watch(watchHistoryProvider).value ?? const [],
+            ref.watch(watchHistoryProvider).value ?? [],
           );
     return AnimatedSize(
-      duration: const Duration(milliseconds: 200),
+      duration: Duration(milliseconds: 200),
       curve: Curves.easeOutCubic,
       alignment: Alignment.topCenter,
       child: record == null
-          ? const SizedBox(width: double.infinity)
+          ? SizedBox(width: double.infinity)
           : Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
+              padding: EdgeInsets.fromLTRB(16, 0, 8, 8),
               child: _ContinueWatchingBar(record: record),
             ),
     );
@@ -65,13 +65,15 @@ class _ContinueWatchingBar extends ConsumerWidget {
         button: true,
         label: '继续观看 ${record.video.title}',
         child: Material(
-          color: AppColors.surface,
+          color: context.appColors.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: AppColors.divider.withValues(alpha: 0.8)),
+            side: BorderSide(
+              color: context.appColors.divider.withValues(alpha: 0.8),
+            ),
           ),
           child: InkWell(
-            key: const ValueKey('continue-watching-bar'),
+            key: ValueKey('continue-watching-bar'),
             borderRadius: BorderRadius.circular(12),
             onTap: () =>
                 resumeWatchRecord(context: context, ref: ref, record: record),
@@ -79,12 +81,12 @@ class _ContinueWatchingBar extends ConsumerWidget {
               height: 72,
               child: Row(
                 children: [
-                  const SizedBox(width: 4),
+                  SizedBox(width: 4),
                   _Poster(url: record.video.posterUrl),
-                  const SizedBox(width: 10),
+                  SizedBox(width: 10),
                   Expanded(
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      padding: EdgeInsets.symmetric(vertical: 8),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -92,31 +94,31 @@ class _ContinueWatchingBar extends ConsumerWidget {
                             record.video.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 14,
                               height: 1.3,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          const SizedBox(height: 2),
+                          SizedBox(height: 2),
                           Text(
                             record.resumeLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.secondary,
+                            style: TextStyle(
+                              color: context.appColors.secondary,
                               fontSize: 12,
                               height: 1.3,
                             ),
                           ),
-                          const Spacer(),
+                          Spacer(),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(1),
                             child: LinearProgressIndicator(
                               value: record.progress.clamp(0.0, 1.0),
                               minHeight: 3,
-                              backgroundColor: AppColors.divider,
-                              color: AppColors.accent,
+                              backgroundColor: context.appColors.divider,
+                              color: context.appColors.accent,
                             ),
                           ),
                         ],
@@ -124,13 +126,13 @@ class _ContinueWatchingBar extends ConsumerWidget {
                     ),
                   ),
                   IconButton(
-                    key: const ValueKey('continue-watching-dismiss'),
+                    key: ValueKey('continue-watching-dismiss'),
                     tooltip: '关闭',
                     visualDensity: VisualDensity.compact,
                     onPressed: () => ref
                         .read(continueWatchingSessionHiddenProvider.notifier)
                         .hide(),
-                    icon: const Icon(Icons.close, size: 18),
+                    icon: Icon(Icons.close, size: 18),
                   ),
                 ],
               ),
@@ -155,22 +157,22 @@ class _Poster extends StatelessWidget {
         width: 48,
         height: 64,
         child: ColoredBox(
-          color: AppColors.elevated,
+          color: context.appColors.elevated,
           child: url.isEmpty
-              ? const Icon(
+              ? Icon(
                   Icons.movie_outlined,
                   size: 22,
-                  color: AppColors.tertiary,
+                  color: context.appColors.tertiary,
                 )
               : CachedNetworkImage(
                   imageUrl: url,
                   fit: BoxFit.cover,
                   placeholder: (_, _) =>
-                      const ColoredBox(color: AppColors.surface),
-                  errorWidget: (_, _, _) => const Icon(
+                      ColoredBox(color: context.appColors.surface),
+                  errorWidget: (_, _, _) => Icon(
                     Icons.movie_outlined,
                     size: 22,
-                    color: AppColors.tertiary,
+                    color: context.appColors.tertiary,
                   ),
                 ),
         ),

@@ -24,7 +24,7 @@ class SourceSelectorSheet extends ConsumerStatefulWidget {
       context: context,
       isScrollControlled: true,
       // 宽屏（电视/平板横屏）下收敛宽度居中。
-      constraints: const BoxConstraints(maxWidth: 600),
+      constraints: BoxConstraints(maxWidth: 600),
       builder: (_) => SourceSelectorSheet(selectedId: selectedId),
     );
   }
@@ -36,7 +36,7 @@ class SourceSelectorSheet extends ConsumerStatefulWidget {
 
 class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
   /// 固定行高，保证初始滚动定位精确。
-  static const double _itemExtent = 72;
+  static final double _itemExtent = 72;
 
   final _collectionScroll = ScrollController();
   final _siteScroll = ScrollController();
@@ -68,7 +68,7 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
         .watch(vodSourceRegistryProvider)
         .maybeWhen(data: (r) => r, orElse: () => null);
     if (registry == null) {
-      return const SizedBox(
+      return SizedBox(
         height: 200,
         child: Center(child: CircularProgressIndicator()),
       );
@@ -102,31 +102,31 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                padding: EdgeInsets.fromLTRB(20, 12, 20, 8),
                 child: Row(
                   children: [
-                    const Text(
+                    Text(
                       '选择来源',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const Spacer(),
+                    Spacer(),
                     Text(
                       '${SourceSelectorSheet.collectionTabLabel} ${collection.length} · ${SourceSelectorSheet.siteTabLabel} ${sites.length}',
-                      style: const TextStyle(
-                        color: AppColors.secondary,
+                      style: TextStyle(
+                        color: context.appColors.secondary,
                         fontSize: 13,
                       ),
                     ),
                   ],
                 ),
               ),
-              const TabBar(
-                labelColor: AppColors.accent,
-                unselectedLabelColor: AppColors.secondary,
-                indicatorColor: AppColors.accent,
+              TabBar(
+                labelColor: context.appColors.accentForeground,
+                unselectedLabelColor: context.appColors.secondary,
+                indicatorColor: context.appColors.accentForeground,
                 tabs: [
                   Tab(text: SourceSelectorSheet.collectionTabLabel),
                   Tab(text: SourceSelectorSheet.siteTabLabel),
@@ -136,7 +136,7 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
                 child: TabBarView(
                   children: [
                     _sourceList(
-                      key: const ValueKey('source-list-collection'),
+                      key: ValueKey('source-list-collection'),
                       sources: collection,
                       currentId: currentId,
                       controller: _collectionScroll,
@@ -144,7 +144,7 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
                     ),
                     Column(
                       children: [
-                        const Padding(
+                        Padding(
                           padding: EdgeInsets.fromLTRB(16, 10, 16, 6),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -152,7 +152,7 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
                               Icon(
                                 Icons.info_outline,
                                 size: 16,
-                                color: AppColors.secondary,
+                                color: context.appColors.secondary,
                               ),
                               SizedBox(width: 8),
                               Expanded(
@@ -160,7 +160,7 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
                                   SourceSelectorSheet.siteTabHint,
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: AppColors.secondary,
+                                    color: context.appColors.secondary,
                                     height: 1.4,
                                   ),
                                 ),
@@ -170,7 +170,7 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
                         ),
                         Expanded(
                           child: _sourceList(
-                            key: const ValueKey('source-list-sites'),
+                            key: ValueKey('source-list-sites'),
                             sources: sites,
                             currentId: currentId,
                             controller: _siteScroll,
@@ -221,7 +221,9 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
           },
           leading: Icon(
             isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-            color: isSelected ? AppColors.accent : AppColors.tertiary,
+            color: isSelected
+                ? context.appColors.accentForeground
+                : context.appColors.tertiary,
           ),
           title: Text(source.name),
           subtitle: Text(
@@ -231,13 +233,11 @@ class _SourceSelectorSheetState extends ConsumerState<SourceSelectorSheet> {
             style: TextStyle(
               fontSize: 12,
               color: source.isHttps
-                  ? AppColors.tertiary
-                  : AppColors.error.withValues(alpha: .7),
+                  ? context.appColors.tertiary
+                  : context.appColors.error.withValues(alpha: .7),
             ),
           ),
-          trailing: isSelected
-              ? const Icon(Icons.chevron_right, size: 18)
-              : null,
+          trailing: isSelected ? Icon(Icons.chevron_right, size: 18) : null,
         );
       },
     );
@@ -263,10 +263,10 @@ class SourceIndicatorButton extends ConsumerWidget {
     return TextButton.icon(
       onPressed: () =>
           SourceSelectorSheet.show(context, selectedId: overrideSelectedId),
-      icon: const Icon(Icons.source_outlined, size: 18),
+      icon: Icon(Icons.source_outlined, size: 18),
       label: Text(
         '$name ▾',
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
       ),
     );
   }

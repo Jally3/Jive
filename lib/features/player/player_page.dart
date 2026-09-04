@@ -1571,78 +1571,93 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     // 退出横屏全屏时旋转动画有几帧延迟，期间 MediaQuery 仍可能是横屏尺寸，
     // 用 overlay 避免竖屏 Column 在横屏尺寸下溢出。
     final overlayLayout = _overlayLayoutOf(context);
+    final colors = context.appColors;
+    final appBrightness = Theme.of(context).brightness;
     _lockPortraitOnExit =
         !_isTv && MediaQuery.sizeOf(context).shortestSide < 600;
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        if (fullScreen) {
-          unawaited(_toggleFullScreen());
-          return;
-        }
-        unawaited(_saveAndPop());
-      },
-      child: Focus(
-        focusNode: _remoteKeyFocusNode,
-        autofocus: true,
-        onKeyEvent: _handleRemoteKeyEvent,
-        child: Scaffold(
-          backgroundColor: Colors.black,
-          appBar: overlayLayout
-              ? null
-              : AppBar(
-                  centerTitle: false,
-                  titleSpacing: 0,
-                  leading: IconButton(
-                    tooltip: '返回',
-                    onPressed: () => unawaited(_saveAndPop()),
-                    icon: const Icon(Icons.arrow_back),
-                  ),
-                  toolbarHeight:
-                      56 +
-                      12 *
-                          (MediaQuery.textScalerOf(context).scale(1) - 1).clamp(
-                            0.0,
-                            1.0,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayLayout || appBrightness == Brightness.dark
+          ? SystemUiOverlayStyle.light
+          : SystemUiOverlayStyle.dark,
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          if (fullScreen) {
+            unawaited(_toggleFullScreen());
+            return;
+          }
+          unawaited(_saveAndPop());
+        },
+        child: Focus(
+          focusNode: _remoteKeyFocusNode,
+          autofocus: true,
+          onKeyEvent: _handleRemoteKeyEvent,
+          child: Scaffold(
+            backgroundColor: overlayLayout ? Colors.black : colors.background,
+            appBar: overlayLayout
+                ? null
+                : AppBar(
+                    centerTitle: false,
+                    titleSpacing: 0,
+                    leading: IconButton(
+                      tooltip: '返回',
+                      onPressed: () => unawaited(_saveAndPop()),
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                    toolbarHeight:
+                        56 +
+                        12 *
+                            (MediaQuery.textScalerOf(context).scale(1) - 1)
+                                .clamp(0.0, 1.0),
+                    title: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.video.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          episode.name,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.secondary,
                           ),
-                  title: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                        ),
+                      ],
+                    ),
+                  ),
+            body: overlayLayout
+                ? _darkPlayerSurface(_overlayBody())
+                : Column(
                     children: [
-                      Text(
-                        widget.video.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        episode.name,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.secondary,
+                      _darkPlayerSurface(_portraitPlayer()),
+                      Expanded(
+                        child: SafeArea(
+                          top: false,
+                          child: PlayerInfoPanel(
+                            video: widget.video,
+                            current: episode,
+                            onEpisodeTap: (e) => unawaited(_switchEpisode(e)),
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  backgroundColor: Colors.black,
-                ),
-          body: overlayLayout
-              ? _overlayBody()
-              : Column(
-                  children: [
-                    _portraitPlayer(),
-                    Expanded(
-                      child: SafeArea(
-                        top: false,
-                        child: PlayerInfoPanel(
-                          video: widget.video,
-                          current: episode,
-                          onEpisodeTap: (e) => unawaited(_switchEpisode(e)),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _darkPlayerSurface(Widget child) {
+    return Theme(
+      data: buildDarkTheme(),
+      child: ColoredBox(
+        key: const ValueKey('player-video-surface'),
+        color: Colors.black,
+        child: child,
       ),
     );
   }

@@ -59,15 +59,16 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
   @override
   Widget build(BuildContext context) {
     final video = widget.video;
+    final colors = context.appColors;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
         SkipSettingsBlock(videoGlobalId: video.globalId),
         const SizedBox(height: 20),
-        const Text(
+        Text(
           '简介',
           style: TextStyle(
-            color: Colors.white,
+            color: colors.text,
             fontSize: 16,
             fontWeight: FontWeight.w700,
           ),
@@ -77,11 +78,7 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
           video.description.isEmpty ? '暂无简介' : video.description,
           maxLines: expanded ? null : 4,
           overflow: expanded ? null : TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 14,
-            height: 1.55,
-          ),
+          style: TextStyle(color: colors.secondary, fontSize: 14, height: 1.55),
         ),
         if (video.description.length > 100)
           Align(
@@ -94,8 +91,8 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
         const SizedBox(height: 16),
         Text(
           '选集（${video.episodes.length}）',
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: colors.text,
             fontSize: 16,
             fontWeight: FontWeight.w700,
           ),
@@ -131,6 +128,7 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
   }
 
   Widget _epsGroupHeader(int total, int group) {
+    final colors = context.appColors;
     final start = group * _epsGroupSize;
     final end = math.min(start + _epsGroupSize, total);
     final isExpanded = _expandedEpsGroups.contains(group);
@@ -149,17 +147,17 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
             Expanded(
               child: Text(
                 '第 ${start + 1}–$end 集',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.secondary,
+                  color: colors.secondary,
                 ),
               ),
             ),
             Icon(
               isExpanded ? Icons.expand_less : Icons.expand_more,
               size: 20,
-              color: AppColors.secondary,
+              color: colors.secondary,
             ),
           ],
         ),
@@ -168,6 +166,7 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
   }
 
   Widget _epsWrap(List<Episode> episodes, int start, int end) {
+    final colors = context.appColors;
     final selectedIndex = _currentIndex;
     return Wrap(
       spacing: 8,
@@ -177,11 +176,9 @@ class _PlayerInfoPanelState extends State<PlayerInfoPanel> {
           ChoiceChip(
             label: Text(episodes[idx].name),
             selected: idx == selectedIndex,
-            selectedColor: AppColors.accent,
+            selectedColor: colors.accent,
             labelStyle: TextStyle(
-              color: idx == selectedIndex
-                  ? AppColors.onAccent
-                  : AppColors.secondary,
+              color: idx == selectedIndex ? colors.onAccent : colors.secondary,
             ),
             showCheckmark: false,
             onSelected: (_) => widget.onEpisodeTap(episodes[idx]),

@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../shared/app_states.dart';
 import '../data/download/download_providers.dart';
+import '../data/theme_mode_preferences.dart';
 import '../data/vod_source/vod_source_preferences.dart';
 import '../data/vod_source/vod_source_registry.dart';
 import '../features/home/home_page.dart';
@@ -16,11 +18,20 @@ class JiveApp extends ConsumerWidget {
   const JiveApp({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeModeProvider);
     return _DownloadLifecycle(
       child: MaterialApp(
         title: 'Jive',
         debugShowCheckedModeBanner: false,
-        theme: buildTheme(),
+        theme: buildLightTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: themeMode,
+        builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+          value: Theme.of(context).brightness == Brightness.dark
+              ? SystemUiOverlayStyle.light
+              : SystemUiOverlayStyle.dark,
+          child: child ?? const SizedBox.shrink(),
+        ),
         home: const _StartupGate(),
       ),
     );
@@ -58,16 +69,15 @@ class _StartupGateState extends ConsumerState<_StartupGate> {
     final sourceState = ref.watch(selectedVodSourceProvider);
     final skipHold = MediaQuery.disableAnimationsOf(context);
     return sourceState.when(
-      loading: () => const SplashPage(),
+      loading: () => SplashPage(),
       error: (error, _) => Scaffold(
-        backgroundColor: AppColors.background,
+        backgroundColor: context.appColors.background,
         body: AppErrorView(
           message: '$error',
           onRetry: () => ref.invalidate(vodSourceRegistryProvider),
         ),
       ),
-      data: (_) =>
-          (skipHold || _holdElapsed) ? const AppShell() : const SplashPage(),
+      data: (_) => (skipHold || _holdElapsed) ? AppShell() : SplashPage(),
     );
   }
 }
@@ -129,7 +139,7 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     pages = List<Widget?>.filled(3, null);
-    pages[0] = const HomePage();
+    pages[0] = HomePage();
     // 预建搜索页：首次构建开销挪到启动阶段，避免首次切换 tab 时
     // 在同一帧内建整棵子树造成卡顿。
     pages[1] = SearchPage(focusNode: _searchFocusNode);
@@ -145,7 +155,7 @@ class _AppShellState extends State<AppShell> {
     0 => const HomePage(),
     1 => SearchPage(focusNode: _searchFocusNode),
     2 => ProfilePage(key: ValueKey(profileRevision)),
-    _ => const SizedBox.shrink(),
+    _ => SizedBox.shrink(),
   };
 
   void _onSelect(int value) => setState(() {
@@ -158,7 +168,7 @@ class _AppShellState extends State<AppShell> {
     }
     if (value == 1) {
       // 等 tab 切换动画结束再弹键盘，避免键盘动画与首帧绘制抢资源。
-      Future.delayed(const Duration(milliseconds: 300), () {
+      Future.delayed(Duration(milliseconds: 300), () {
         if (mounted && index == 1) _searchFocusNode.requestFocus();
       });
     }
@@ -169,10 +179,7 @@ class _AppShellState extends State<AppShell> {
     extendBody: true,
     body: IndexedStack(
       index: index,
-      children: List.generate(
-        3,
-        (value) => pages[value] ?? const SizedBox.shrink(),
-      ),
+      children: List.generate(3, (value) => pages[value] ?? SizedBox.shrink()),
     ),
     bottomNavigationBar: SafeArea(
       child: Row(
@@ -187,7 +194,7 @@ class _AppShellState extends State<AppShell> {
                     : 480,
               ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: _FloatingNavBar(index: index, onSelect: _onSelect),
               ),
             ),
@@ -217,15 +224,17 @@ class _FloatingNavBar extends StatelessWidget {
     final radius = height / 2;
     // 首页保留更通透的毛玻璃；其他页面提高底色不透明度，
     // 避免图标和文字被页面内容干扰。
-    final surfaceAlpha = index == 0 ? 0.3 : 0.78;
+    final surfaceAlpha = index == 0
+        ? context.appColors.navigationHomeAlpha
+        : context.appColors.navigationPageAlpha;
     return Container(
-      key: const ValueKey('floating-nav-bar'),
+      key: ValueKey('floating-nav-bar'),
       height: height,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.all(Radius.circular(radius)),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
-            color: AppColors.scrim,
+            color: context.appColors.scrim,
             blurRadius: 24,
             offset: Offset(0, 6),
           ),
@@ -236,15 +245,15 @@ class _FloatingNavBar extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Material(
-            key: const ValueKey('floating-nav-surface'),
-            color: AppColors.surface.withValues(alpha: surfaceAlpha),
+            key: ValueKey('floating-nav-surface'),
+            color: context.appColors.surface.withValues(alpha: surfaceAlpha),
             clipBehavior: Clip.antiAlias,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(radius),
               side: BorderSide(
                 color: isTablet
-                    ? AppColors.secondary.withValues(alpha: 0.25)
-                    : AppColors.divider,
+                    ? context.appColors.secondary.withValues(alpha: 0.25)
+                    : context.appColors.divider,
               ),
             ),
             child: Row(
@@ -288,18 +297,20 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? AppColors.accent : AppColors.secondary;
+    final color = selected
+        ? context.appColors.accentForeground
+        : context.appColors.secondary;
     return InkWell(
       borderRadius: BorderRadius.circular(isTablet ? 30 : 32),
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
+        duration: Duration(milliseconds: 180),
         margin: isTablet
-            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 6)
+            ? EdgeInsets.symmetric(horizontal: 8, vertical: 6)
             : EdgeInsets.zero,
         decoration: BoxDecoration(
           color: isTablet && selected
-              ? AppColors.accent.withValues(alpha: 0.12)
+              ? context.appColors.accent.withValues(alpha: 0.12)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(30),
         ),
@@ -311,7 +322,7 @@ class _NavItem extends StatelessWidget {
               color: color,
               size: isTablet ? 26 : 24,
             ),
-            const SizedBox(height: 2),
+            SizedBox(height: 2),
             Text(
               label,
               style: TextStyle(

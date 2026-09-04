@@ -9,9 +9,9 @@ class AppLoadingView extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const CircularProgressIndicator(),
-        const SizedBox(height: 12),
-        Text(label, style: const TextStyle(color: AppColors.secondary)),
+        CircularProgressIndicator(),
+        SizedBox(height: 12),
+        Text(label, style: TextStyle(color: context.appColors.secondary)),
       ],
     ),
   );
@@ -71,19 +71,19 @@ class _StateContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: SingleChildScrollView(
-      padding: const EdgeInsets.all(32),
+      padding: EdgeInsets.all(32),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 48, color: AppColors.tertiary),
-          const SizedBox(height: 12),
+          Icon(icon, size: 48, color: context.appColors.tertiary),
+          SizedBox(height: 12),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.secondary, height: 1.5),
+            style: TextStyle(color: context.appColors.secondary, height: 1.5),
           ),
           if (action != null) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: 8),
             TextButton(onPressed: onTap, child: Text(action!)),
           ],
           if (secondaryAction != null)
@@ -91,7 +91,7 @@ class _StateContent extends StatelessWidget {
               onPressed: onSecondaryTap,
               child: Text(
                 secondaryAction!,
-                style: const TextStyle(color: AppColors.secondary),
+                style: TextStyle(color: context.appColors.secondary),
               ),
             ),
         ],

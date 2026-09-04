@@ -2,6 +2,6 @@
 <resources>
     <!-- 取自应用图标夜幕底色（tool/generate_app_icon.py 的 FALLBACK_BACKGROUND） -->
     <color name="banner_background">#131930</color>
-    <!-- 与 AppColors.background 同值，原生启动图 / 窗口背景消白闪 -->
-    <color name="splash_background">#0B0D10</color>
+    <!-- 日间模式启动背景；values-night 中覆盖为夜间色。 -->
+    <color name="splash_background">#F7F5F0</color>
 </resources>

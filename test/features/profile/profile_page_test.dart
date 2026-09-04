@@ -91,6 +91,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('更多设置'), findsOneWidget);
+    expect(find.text('外观'), findsOneWidget);
+    expect(find.text('主题模式'), findsOneWidget);
+    expect(find.text('跟随系统'), findsOneWidget);
     expect(find.text('播放'), findsOneWidget);
     expect(find.text('预加载'), findsOneWidget);
     expect(find.text('存储'), findsOneWidget);
@@ -98,6 +101,11 @@ void main() {
     expect(find.textContaining('已用 1.0 KB / 配额 2.0 KB'), findsOneWidget);
     expect(find.text('自动清理缓存'), findsOneWidget);
     expect(find.text('1 小时后'), findsOneWidget);
+    await tester.tap(find.text('主题模式'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('日间模式'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('自动清理缓存'));
     await tester.tap(find.text('自动清理缓存'));
     await tester.pumpAndSettle();
     expect(find.text('3 天后'), findsOneWidget);
@@ -110,5 +118,6 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('prefetch_mode'), 'off');
     expect(prefs.getString('cache_ttl_option'), 'never');
+    expect(prefs.getString('app_theme_mode'), 'light');
   });
 }

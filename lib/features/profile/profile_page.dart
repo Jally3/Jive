@@ -29,14 +29,14 @@ class ProfilePage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(16, 24, 16, 12),
               child: Text(
                 '我的',
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
               ),
             ),
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: _QuickActions(),
             ),
@@ -46,19 +46,19 @@ class ProfilePage extends ConsumerWidget {
                 constraints: BoxConstraints(
                   maxWidth: expanded ? 360 : double.infinity,
                 ),
-                child: const TabBar(
+                child: TabBar(
                   isScrollable: true,
                   tabAlignment: TabAlignment.start,
                   padding: EdgeInsets.only(left: 16),
-                  labelColor: AppColors.text,
-                  unselectedLabelColor: AppColors.tertiary,
+                  labelColor: context.appColors.text,
+                  unselectedLabelColor: context.appColors.tertiary,
                   labelStyle: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
                   ),
                   unselectedLabelStyle: TextStyle(fontSize: 15),
                   labelPadding: EdgeInsets.only(right: 28),
-                  indicatorColor: AppColors.accent,
+                  indicatorColor: context.appColors.accentForeground,
                   indicatorSize: TabBarIndicatorSize.label,
                   indicatorWeight: 3,
                   dividerColor: Colors.transparent,
@@ -69,7 +69,7 @@ class ProfilePage extends ConsumerWidget {
                 ),
               ),
             ),
-            const Expanded(
+            Expanded(
               child: TabBarView(children: [_FavoritesTab(), _HistoryTab()]),
             ),
           ],
@@ -112,9 +112,7 @@ class _QuickActions extends ConsumerWidget {
                 subtitle: downloadSubtitle,
                 compact: compact,
                 onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const DownloadManagementPage(),
-                  ),
+                  MaterialPageRoute(builder: (_) => DownloadManagementPage()),
                 ),
               ),
             ),
@@ -126,9 +124,7 @@ class _QuickActions extends ConsumerWidget {
                 subtitle: sourceSubtitle,
                 compact: compact,
                 onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const SourceManagementPage(),
-                  ),
+                  MaterialPageRoute(builder: (_) => SourceManagementPage()),
                 ),
               ),
             ),
@@ -139,9 +135,9 @@ class _QuickActions extends ConsumerWidget {
                 title: expanded ? '更多设置' : '更多',
                 subtitle: expanded ? '播放与存储' : '播放设置',
                 compact: compact,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const MoreSettingsPage()),
-                ),
+                onTap: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => MoreSettingsPage())),
               ),
             ),
           ],
@@ -206,10 +202,12 @@ class _QuickActionCard extends StatelessWidget {
   Widget build(BuildContext context) => SizedBox(
     height: compact ? 56 : 60,
     child: Material(
-      color: AppColors.surface,
+      color: context.appColors.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.divider.withValues(alpha: 0.8)),
+        side: BorderSide(
+          color: context.appColors.divider.withValues(alpha: 0.8),
+        ),
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -218,8 +216,12 @@ class _QuickActionCard extends StatelessWidget {
           padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 12),
           child: Row(
             children: [
-              Icon(icon, size: compact ? 18 : 20, color: AppColors.secondary),
-              const SizedBox(width: 8),
+              Icon(
+                icon,
+                size: compact ? 18 : 20,
+                color: context.appColors.secondary,
+              ),
+              SizedBox(width: 8),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -234,14 +236,14 @@ class _QuickActionCard extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    SizedBox(height: 2),
                     Text(
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: compact ? 10 : 11,
-                        color: AppColors.tertiary,
+                        color: context.appColors.tertiary,
                       ),
                     ),
                   ],
@@ -261,13 +263,13 @@ class _FavoritesTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) => ref
       .watch(favoriteControllerProvider)
       .when(
-        loading: () => const AppLoadingView(),
+        loading: () => AppLoadingView(),
         error: (error, _) => AppErrorView(
           message: '收藏加载失败',
           onRetry: () => ref.invalidate(favoriteControllerProvider),
         ),
         data: (records) => records.isEmpty
-            ? const AppEmptyView(
+            ? AppEmptyView(
                 icon: Icons.favorite_outline,
                 message: '还没有收藏\n去首页或搜索页收藏喜欢的视频',
               )
@@ -291,16 +293,16 @@ class _HistoryTab extends ConsumerWidget {
     final accepted = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('清空观看记录？'),
-        content: const Text('此操作只会清除本机记录。'),
+        title: Text('清空观看记录？'),
+        content: Text('此操作只会清除本机记录。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
+            child: Text('取消'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('清空'),
+            child: Text('清空'),
           ),
         ],
       ),
@@ -315,14 +317,14 @@ class _HistoryTab extends ConsumerWidget {
     return ref
         .watch(watchHistoryProvider)
         .when(
-          loading: () => const AppLoadingView(),
+          loading: () => AppLoadingView(),
           error: (error, _) => AppErrorView(
             message: '$error',
             onRetry: () => ref.invalidate(watchHistoryProvider),
           ),
           data: (records) {
             if (records.isEmpty) {
-              return const AppEmptyView(
+              return AppEmptyView(
                 icon: Icons.history,
                 message: '还没有观看记录\n播放视频后可以从这里继续',
               );
@@ -332,10 +334,10 @@ class _HistoryTab extends ConsumerWidget {
                 Align(
                   alignment: Alignment.centerRight,
                   child: Padding(
-                    padding: const EdgeInsets.only(right: 8),
+                    padding: EdgeInsets.only(right: 8),
                     child: TextButton(
                       onPressed: () => _clear(context, ref),
-                      child: const Text('清空'),
+                      child: Text('清空'),
                     ),
                   ),
                 ),
@@ -356,7 +358,7 @@ class _HistoryTab extends ConsumerWidget {
                               crossAxisSpacing * (crossAxisCount - 1)) /
                           crossAxisCount;
                       return GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                        padding: EdgeInsets.fromLTRB(16, 0, 16, 96),
                         itemCount: records.length,
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxisCount,
@@ -416,15 +418,19 @@ class _HistoryCard extends StatelessWidget {
               top: 6,
               right: 6,
               child: Material(
-                color: AppColors.scrim,
-                shape: const CircleBorder(),
+                color: context.appColors.scrim,
+                shape: CircleBorder(),
                 child: InkWell(
                   key: ValueKey('history-delete-${record.video.globalId}'),
-                  customBorder: const CircleBorder(),
+                  customBorder: CircleBorder(),
                   onTap: onDelete,
-                  child: const SizedBox.square(
+                  child: SizedBox.square(
                     dimension: 28,
-                    child: Icon(Icons.close, size: 16, color: AppColors.text),
+                    child: Icon(
+                      Icons.close,
+                      size: 16,
+                      color: context.appColors.text,
+                    ),
                   ),
                 ),
               ),
@@ -432,12 +438,12 @@ class _HistoryCard extends StatelessWidget {
           ],
         ),
       ),
-      const SizedBox(height: 4),
+      SizedBox(height: 4),
       Text(
         record.resumeLabel,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: AppColors.secondary, fontSize: 12),
+        style: TextStyle(color: context.appColors.secondary, fontSize: 12),
       ),
     ],
   );

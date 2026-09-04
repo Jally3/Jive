@@ -157,7 +157,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     });
     try {
       final source = _src(sc!.activeVideo.sourceId);
-      if (source == null) throw const VideoDataException('未知来源');
+      if (source == null) throw VideoDataException('未知来源');
       final v = await ref
           .read(videoRepositoryProvider)
           .fetchDetail(source, sc!.activeVideo.ref);
@@ -220,7 +220,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         return;
       }
       final source = _src(sc!.activeVideo.sourceId);
-      if (source == null) throw const VideoDataException('未知来源');
+      if (source == null) throw VideoDataException('未知来源');
       final fresh = await ref
           .read(videoRepositoryProvider)
           .resolvePlayback(source, sc!.activeVideo.ref);
@@ -228,7 +228,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           .read(favoriteControllerProvider.notifier)
           .refreshSnapshot(fresh);
       if (fresh.episodes.isEmpty) {
-        throw const VideoDataException('该视频暂时没有可用播放地址');
+        throw VideoDataException('该视频暂时没有可用播放地址');
       }
       final prior = detail != null && detail!.episodes.length > selected
           ? detail!.episodes[selected].name
@@ -312,23 +312,23 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       context: context,
       isScrollControlled: true,
       // 宽屏（电视/平板横屏）下收敛宽度居中，不随屏幕拉满。
-      constraints: const BoxConstraints(maxWidth: 600),
+      constraints: BoxConstraints(maxWidth: 600),
       builder: (context) {
         final checked = <int>{current};
         return StatefulBuilder(
           builder: (context, setSheetState) => Consumer(
             builder: (context, ref, _) {
-              final tasks = ref.watch(downloadTasksProvider).value ?? const [];
+              final tasks = ref.watch(downloadTasksProvider).value ?? [];
               return SafeArea(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 16),
                   child: SizedBox(
                     height: MediaQuery.sizeOf(context).height * 0.7,
                     child: Column(
                       children: [
                         Row(
                           children: [
-                            const Expanded(
+                            Expanded(
                               child: Text(
                                 '选择下载剧集',
                                 style: TextStyle(
@@ -362,14 +362,14 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                             ),
                           ],
                         ),
-                        const Text(
+                        Text(
                           '下载时自动跳过广告片段',
                           style: TextStyle(
                             fontSize: 12,
-                            color: AppColors.secondary,
+                            color: context.appColors.secondary,
                           ),
                         ),
-                        const Divider(),
+                        Divider(),
                         Expanded(
                           child: ListView.builder(
                             itemCount: sc!.activeVideo.episodes.length,
@@ -383,9 +383,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                                     ? null
                                     : Text(
                                         _downloadTaskSummary(task),
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 12,
-                                          color: AppColors.secondary,
+                                          color: context.appColors.secondary,
                                         ),
                                       ),
                                 onChanged: (value) {
@@ -408,7 +408,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                                 ? null
                                 : () =>
                                       Navigator.pop(context, checked.toList()),
-                            icon: const Icon(Icons.download),
+                            icon: Icon(Icons.download),
                             label: Text('确认下载（${checked.length} 集）'),
                           ),
                         ),
@@ -485,12 +485,12 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     setState(() => downloadResolving = true);
     try {
       final source = _src(sc!.activeVideo.sourceId);
-      if (source == null) throw const VideoDataException('未知来源');
+      if (source == null) throw VideoDataException('未知来源');
       final fresh = await ref
           .read(videoRepositoryProvider)
           .resolvePlayback(source, sc!.activeVideo.ref);
       if (fresh.episodes.isEmpty) {
-        throw const VideoDataException('该视频暂时没有可下载剧集');
+        throw VideoDataException('该视频暂时没有可下载剧集');
       }
       final manager = await ref.read(downloadManagerProvider.future);
       var created = 0;
@@ -511,16 +511,16 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         created++;
       }
       if (created == 0) {
-        throw const VideoDataException('选中的剧集缺少稳定身份，无法下载');
+        throw VideoDataException('选中的剧集缺少稳定身份，无法下载');
       }
       if (mounted) {
         showAppToast(
           context,
           '已开始下载 $created 集（自动跳过广告片段）',
           actionLabel: '查看',
-          onAction: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const DownloadManagementPage()),
-          ),
+          onAction: () => Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => DownloadManagementPage())),
         );
       }
     } catch (e) {
@@ -553,15 +553,15 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         actions: [
           IconButton(
             tooltip: '下载管理',
-            icon: const Icon(Icons.download_done_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const DownloadManagementPage()),
-            ),
+            icon: Icon(Icons.download_done_outlined),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => DownloadManagementPage())),
           ),
         ],
       ),
       body: rs.when(
-        loading: () => const AppLoadingView(label: '正在加载…'),
+        loading: () => AppLoadingView(label: '正在加载…'),
         error: (e, _) => AppErrorView(
           message: '$e',
           onRetry: () => ref.invalidate(vodSourceRegistryProvider),
@@ -571,15 +571,15 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) _init();
             });
-            return const AppLoadingView();
+            return AppLoadingView();
           }
-          if (loading) return const AppLoadingView(label: '正在加载详情…');
+          if (loading) return AppLoadingView(label: '正在加载详情…');
           if (error != null) {
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 AppErrorView(message: error!, onRetry: _load),
-                TextButton(onPressed: _moreSources, child: const Text('切换来源')),
+                TextButton(onPressed: _moreSources, child: Text('切换来源')),
               ],
             );
           }
@@ -632,15 +632,15 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     // section 间距统一为 24/28，模块内部 4/8/12（8pt 体系）。
     children: [
       _header(v),
-      const SizedBox(height: 24),
+      SizedBox(height: 24),
       _actionRow(v),
-      const SizedBox(height: 28),
+      SizedBox(height: 28),
       SkipSettingsBlock(videoGlobalId: v.globalId),
-      const SizedBox(height: 28),
+      SizedBox(height: 28),
       _sourceSection(),
-      const SizedBox(height: 28),
+      SizedBox(height: 28),
       _desc(v),
-      const SizedBox(height: 28),
+      SizedBox(height: 28),
       _eps(v),
     ],
   );
@@ -650,9 +650,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       children: [
         // 播放 : 下载 ≈ 65 : 35，收藏收起为同高图标按钮。
         Expanded(flex: 13, child: _playBtn(v)),
-        const SizedBox(width: 8),
+        SizedBox(width: 8),
         Expanded(flex: 7, child: _downloadBtn(v)),
-        const SizedBox(width: 8),
+        SizedBox(width: 8),
         _favBtn(v),
       ],
     );
@@ -675,8 +675,8 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       if (v.episodes.isNotEmpty)
         v.episodes.length == 1 ? '正片' : '${v.episodes.length}集',
     ].where((e) => e.isNotEmpty).join(' · ');
-    const metaStyle = TextStyle(
-      color: AppColors.secondary,
+    final metaStyle = TextStyle(
+      color: context.appColors.secondary,
       fontSize: 13,
       height: 1.5,
     );
@@ -686,31 +686,31 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: SizedBox(
-            key: const ValueKey('detail-poster'),
+            key: ValueKey('detail-poster'),
             width: _layout.posterWidth,
             child: AspectRatio(
               aspectRatio: 3 / 4,
               child: ColoredBox(
-                color: AppColors.elevated,
+                color: context.appColors.elevated,
                 child: v.posterUrl.isEmpty
-                    ? const Icon(
+                    ? Icon(
                         Icons.movie_outlined,
                         size: 44,
-                        color: AppColors.tertiary,
+                        color: context.appColors.tertiary,
                       )
                     : CachedNetworkImage(
                         imageUrl: v.posterUrl,
                         fit: BoxFit.cover,
-                        errorWidget: (_, _, _) => const Icon(
+                        errorWidget: (_, _, _) => Icon(
                           Icons.movie_outlined,
-                          color: AppColors.tertiary,
+                          color: context.appColors.tertiary,
                         ),
                       ),
               ),
             ),
           ),
         ),
-        const SizedBox(width: 16),
+        SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -724,15 +724,15 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                 ),
               ),
               if (infoLine.isNotEmpty) ...[
-                const SizedBox(height: 8),
+                SizedBox(height: 8),
                 Text(infoLine, style: metaStyle),
               ],
               if (v.remarks.isNotEmpty) ...[
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(v.remarks, style: metaStyle),
               ],
               if (v.actors.isNotEmpty) ...[
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(
                   v.actors,
                   maxLines: 2,
@@ -753,11 +753,11 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       focusNode: _playFocusNode,
       onPressed: v.episodes.isEmpty || resolving ? null : _play,
       icon: resolving
-          ? const SizedBox.square(
+          ? SizedBox.square(
               dimension: 18,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : const Icon(Icons.play_arrow),
+          : Icon(Icons.play_arrow),
       label: Text(
         v.episodes.isEmpty ? '暂无可播放剧集' : '播放 ${v.episodes[selected].name}',
       ),
@@ -773,16 +773,16 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       // 次操作用普通文字色，把琥珀色留给播放主按钮。
       // 窄屏下按钮仅约 78px，收紧横向留白并让标签缩放，避免“下载”折行。
       style: OutlinedButton.styleFrom(
-        foregroundColor: AppColors.text,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        foregroundColor: context.appColors.text,
+        padding: EdgeInsets.symmetric(horizontal: 8),
       ),
       icon: downloadResolving
-          ? const SizedBox.square(
+          ? SizedBox.square(
               dimension: 18,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : const Icon(Icons.download_outlined),
-      label: const FittedBox(
+          : Icon(Icons.download_outlined),
+      label: FittedBox(
         fit: BoxFit.scaleDown,
         child: Text('下载', maxLines: 1, softWrap: false),
       ),
@@ -814,7 +814,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                   }
                 },
           style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.text,
+            foregroundColor: context.appColors.text,
             padding: EdgeInsets.zero,
           ),
           child: Icon(fav ? Icons.favorite : Icons.favorite_outline, size: 20),
@@ -826,11 +826,8 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   Widget _sourceSection() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Text(
-        '播放来源',
-        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-      ),
-      const SizedBox(height: 8),
+      Text('播放来源', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+      SizedBox(height: 8),
       _sourceBar(),
     ],
   );
@@ -850,9 +847,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           for (final s in states) _chip(s),
           if (!hasBackup)
             Padding(
-              padding: const EdgeInsets.only(right: 6),
+              padding: EdgeInsets.only(right: 6),
               child: ActionChip(
-                label: const Text('查找其他来源'),
+                label: Text('查找其他来源'),
                 onPressed: sc!.switching
                     ? null
                     : () => sc!.detectOtherSources(),
@@ -860,9 +857,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             )
           else
             Padding(
-              padding: const EdgeInsets.only(right: 6),
+              padding: EdgeInsets.only(right: 6),
               child: ActionChip(
-                label: const Text('更多 ▾'),
+                label: Text('更多 ▾'),
                 onPressed: () => _moreSources(),
               ),
             ),
@@ -893,13 +890,15 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         label = '$name —';
     }
     return Padding(
-      padding: const EdgeInsets.only(right: 6),
+      padding: EdgeInsets.only(right: 6),
       child: FilterChip(
         label: Text(
           label,
           style: TextStyle(
             fontSize: 12,
-            color: active ? AppColors.onAccent : AppColors.secondary,
+            color: active
+                ? context.appColors.onAccent
+                : context.appColors.secondary,
           ),
         ),
         selected: active,
@@ -946,24 +945,21 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     }
     showModalBottomSheet<void>(
       context: context,
-      constraints: const BoxConstraints(maxWidth: 600),
+      constraints: BoxConstraints(maxWidth: 600),
       builder: (_) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: EdgeInsets.symmetric(vertical: 8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                padding: EdgeInsets.fromLTRB(20, 12, 20, 8),
                 child: Text(
                   '从 ${s.source.name} 选择',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                 ),
               ),
-              const Divider(height: 1),
+              Divider(height: 1),
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
@@ -972,9 +968,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                     final c = s.candidates[i];
                     return ListTile(
                       leading: c.posterUrl.isEmpty
-                          ? const Icon(
+                          ? Icon(
                               Icons.movie_outlined,
-                              color: AppColors.tertiary,
+                              color: context.appColors.tertiary,
                             )
                           : ClipRRect(
                               borderRadius: BorderRadius.circular(6),
@@ -983,9 +979,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                                 width: 40,
                                 height: 60,
                                 fit: BoxFit.cover,
-                                errorWidget: (_, _, _) => const Icon(
+                                errorWidget: (_, _, _) => Icon(
                                   Icons.movie_outlined,
-                                  color: AppColors.tertiary,
+                                  color: context.appColors.tertiary,
                                 ),
                               ),
                             ),
@@ -1004,9 +1000,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                                 ? '正片'
                                 : '${c.episodes.length}集',
                         ].where((e) => e.isNotEmpty).join(' · '),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: AppColors.secondary,
+                          color: context.appColors.secondary,
                         ),
                       ),
                       onTap: () {
@@ -1028,16 +1024,16 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('确认切换来源'),
+        title: Text('确认切换来源'),
         content: Text('将从 ${s.source.name} 加载「${c.title}」的播放信息。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+            child: Text('取消'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('确认'),
+            child: Text('确认'),
           ),
         ],
       ),
@@ -1078,7 +1074,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     if (reg == null) return;
     showModalBottomSheet<void>(
       context: context,
-      constraints: const BoxConstraints(maxWidth: 600),
+      constraints: BoxConstraints(maxWidth: 600),
       builder: (_) => DetailMoreSourcesSheet(
         sources: reg.enabledSources,
         controller: sc!,
@@ -1115,16 +1111,16 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       final ok = await showDialog<bool>(
         context: context,
         builder: (_) => AlertDialog(
-          title: const Text('查找全部来源'),
+          title: Text('查找全部来源'),
           content: Text('将向全部 $count 个来源发起请求，可能产生额外流量。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
+              child: Text('取消'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('继续'),
+              child: Text('继续'),
             ),
           ],
         ),
@@ -1137,17 +1133,14 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   Widget _desc(Video v) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Text(
-        '简介',
-        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-      ),
-      const SizedBox(height: 8),
+      Text('简介', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+      SizedBox(height: 8),
       Text(
         v.description.isEmpty ? '暂无简介' : v.description,
         maxLines: expanded ? null : _layout.descMaxLines,
         overflow: expanded ? null : TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: AppColors.secondary,
+        style: TextStyle(
+          color: context.appColors.secondary,
           fontSize: 15,
           height: 1.55,
         ),
@@ -1157,9 +1150,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         TextButton(
           onPressed: () => setState(() => expanded = !expanded),
           style: TextButton.styleFrom(
-            foregroundColor: AppColors.secondary,
+            foregroundColor: context.appColors.secondary,
             padding: EdgeInsets.zero,
-            minimumSize: const Size(0, 32),
+            minimumSize: Size(0, 32),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
           child: Text(expanded ? '收起' : '展开'),
@@ -1173,7 +1166,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       children: [
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
                 '剧集',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
@@ -1181,22 +1174,22 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             ),
             Text(
               '${v.episodes.length} 集',
-              style: const TextStyle(color: AppColors.secondary),
+              style: TextStyle(color: context.appColors.secondary),
             ),
             if (v.episodes.length > 1)
               TextButton.icon(
                 onPressed: () => _toggleReversed(v),
                 style: TextButton.styleFrom(
-                  foregroundColor: AppColors.secondary,
+                  foregroundColor: context.appColors.secondary,
                 ),
-                icon: const Icon(Icons.swap_vert, size: 18),
+                icon: Icon(Icons.swap_vert, size: 18),
                 label: Text(reversed ? '正序' : '倒序'),
               ),
           ],
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: 12),
         if (v.episodes.isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(vertical: 32),
             child: AppEmptyView(message: '暂时没有可用剧集'),
           )
@@ -1234,7 +1227,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           _epsGroupHeader(total, g),
           if (_expandedEpsGroups.contains(g))
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: EdgeInsets.only(bottom: 8),
               child: _epsWrap(
                 v,
                 g * _epsGroupSize,
@@ -1264,23 +1257,23 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         }
       }),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        padding: EdgeInsets.symmetric(vertical: 10),
         child: Row(
           children: [
             Expanded(
               child: Text(
                 '第 $lo–$hi 集',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.secondary,
+                  color: context.appColors.secondary,
                 ),
               ),
             ),
             Icon(
               isExpanded ? Icons.expand_less : Icons.expand_more,
               size: 20,
-              color: AppColors.secondary,
+              color: context.appColors.secondary,
             ),
           ],
         ),
@@ -1301,7 +1294,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     return GridView.count(
       crossAxisCount: _layout.episodeColumns,
       shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+      physics: NeverScrollableScrollPhysics(),
       mainAxisSpacing: 8,
       crossAxisSpacing: 8,
       childAspectRatio: _layout.episodeAspectRatio,
@@ -1316,9 +1309,11 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       return ChoiceChip(
         label: Text(episode.name),
         selected: isSelected,
-        selectedColor: AppColors.accent,
+        selectedColor: context.appColors.accent,
         labelStyle: TextStyle(
-          color: isSelected ? AppColors.onAccent : AppColors.secondary,
+          color: isSelected
+              ? context.appColors.onAccent
+              : context.appColors.secondary,
         ),
         showCheckmark: false,
         onSelected: (_) {
@@ -1330,7 +1325,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        customBorder: const StadiumBorder(),
+        customBorder: StadiumBorder(),
         onTap: () {
           setState(() => selected = idx);
           _play(episodeIndex: idx);
@@ -1338,12 +1333,12 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         child: Ink(
           decoration: ShapeDecoration(
             color: isSelected
-                ? AppColors.accent
-                : AppColors.elevated.withValues(alpha: 0.6),
+                ? context.appColors.accent
+                : context.appColors.elevated.withValues(alpha: 0.6),
             shape: StadiumBorder(
               side: isSelected
                   ? BorderSide.none
-                  : const BorderSide(color: AppColors.divider),
+                  : BorderSide(color: context.appColors.divider),
             ),
           ),
           child: Center(
@@ -1352,7 +1347,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: isSelected ? AppColors.onAccent : AppColors.secondary,
+                color: isSelected
+                    ? context.appColors.onAccent
+                    : context.appColors.secondary,
                 fontSize: 15,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
               ),

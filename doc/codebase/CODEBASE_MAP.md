@@ -9,7 +9,7 @@ lib/
 ├── main.dart                          # 应用入口：设置状态栏样式，启动 ProviderScope/JiveApp
 └── app/
     ├── app.dart                       # 根组件 JiveApp 与 AppShell：主题、闪屏最短展示+源加载闸门、三页底部导航壳、下载生命周期联动
-    └── theme.dart                     # 「夜幕影院」深色主题：AppColors 色板与 buildTheme()
+    └── theme.dart                     # 「夜幕影院 / 暖昼」双主题：AppPalette 与 ThemeData
 ```
 
 ## 共享组件（`lib/shared/`）
@@ -49,6 +49,7 @@ lib/data/
 ├── video_repository.dart              # 内容访问门面 VideoRepository(Impl)：按 adapterType 分发请求、详情 2 分钟短缓存、敏感内容过滤
 ├── library_repository.dart            # 收藏持久化：SharedPreferences 存储，写操作串行队列防并发损坏
 ├── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取、单条删除、watchHistoryProvider
+├── theme_mode_preferences.dart         # 外观模式持久化：跟随系统/日间/夜间与 themeModeProvider
 └── search_history_store.dart          # 搜索关键词本地历史：去重、最近优先、最多 20 条
 ```
 

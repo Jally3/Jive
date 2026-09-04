@@ -17,7 +17,7 @@ const _healthKeyPrefix = 'source_health_';
 const _checkTimeout = Duration(seconds: 8);
 
 class SourceHealth {
-  const SourceHealth({
+  SourceHealth({
     required this.ok,
     required this.latencyMs,
     required this.checkedAt,
@@ -134,9 +134,9 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
         .watch(selectedVodSourceProvider)
         .maybeWhen(data: (source) => source.id, orElse: () => null);
     return Scaffold(
-      appBar: AppBar(title: const Text('来源管理')),
+      appBar: AppBar(title: Text('来源管理')),
       body: registryState.when(
-        loading: () => const AppLoadingView(label: '正在加载来源…'),
+        loading: () => AppLoadingView(label: '正在加载来源…'),
         error: (error, _) => AppErrorView(
           message: '$error',
           onRetry: () => ref.invalidate(vodSourceRegistryProvider),
@@ -165,15 +165,15 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
             child: Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                  padding: EdgeInsets.fromLTRB(16, 8, 8, 0),
                   child: Row(
                     children: [
                       Expanded(
                         child: Text(
                           '${SourceSelectorSheet.collectionTabLabel} ${collection.length} · '
                           '${SourceSelectorSheet.siteTabLabel} ${sites.length}，点击可设为默认',
-                          style: const TextStyle(
-                            color: AppColors.secondary,
+                          style: TextStyle(
+                            color: context.appColors.secondary,
                             fontSize: 13,
                           ),
                         ),
@@ -182,16 +182,16 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
                         onPressed: _checking.isNotEmpty
                             ? null
                             : () => _checkAll(sources),
-                        icon: const Icon(Icons.network_check, size: 18),
-                        label: const Text('检测全部'),
+                        icon: Icon(Icons.network_check, size: 18),
+                        label: Text('检测全部'),
                       ),
                     ],
                   ),
                 ),
-                const TabBar(
-                  labelColor: AppColors.accent,
-                  unselectedLabelColor: AppColors.secondary,
-                  indicatorColor: AppColors.accent,
+                TabBar(
+                  labelColor: context.appColors.accentForeground,
+                  unselectedLabelColor: context.appColors.secondary,
+                  indicatorColor: context.appColors.accentForeground,
                   tabs: [
                     Tab(text: SourceSelectorSheet.collectionTabLabel),
                     Tab(text: SourceSelectorSheet.siteTabLabel),
@@ -203,7 +203,7 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
                       _sourceList(collection, selectedId, '暂时没有可用的资源站'),
                       Column(
                         children: [
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.fromLTRB(16, 10, 16, 6),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -211,7 +211,7 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
                                 Icon(
                                   Icons.info_outline,
                                   size: 16,
-                                  color: AppColors.secondary,
+                                  color: context.appColors.secondary,
                                 ),
                                 SizedBox(width: 8),
                                 Expanded(
@@ -219,7 +219,7 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
                                     SourceSelectorSheet.siteTabHint,
                                     style: TextStyle(
                                       fontSize: 12,
-                                      color: AppColors.secondary,
+                                      color: context.appColors.secondary,
                                       height: 1.4,
                                     ),
                                   ),
@@ -251,7 +251,7 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
     if (sources.isEmpty) return AppEmptyView(message: emptyMessage);
     return ListView.separated(
       itemCount: sources.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
+      separatorBuilder: (_, _) => Divider(height: 1),
       itemBuilder: (_, index) =>
           _sourceTile(sources[index], sources[index].id == selectedId),
     );
@@ -264,16 +264,21 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
       onTap: isDefault ? null : () => _setDefault(source),
       leading: Icon(
         isDefault ? Icons.check_circle : Icons.radio_button_unchecked,
-        color: isDefault ? AppColors.accent : AppColors.tertiary,
+        color: isDefault
+            ? context.appColors.accentForeground
+            : context.appColors.tertiary,
       ),
       title: Row(
         children: [
           Flexible(child: Text(source.name, overflow: TextOverflow.ellipsis)),
           if (isDefault) ...[
-            const SizedBox(width: 8),
-            const Text(
+            SizedBox(width: 8),
+            Text(
               '默认',
-              style: TextStyle(color: AppColors.accent, fontSize: 12),
+              style: TextStyle(
+                color: context.appColors.accentForeground,
+                fontSize: 12,
+              ),
             ),
           ],
         ],
@@ -287,7 +292,7 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
               if (source.search) '可搜索' else '不可搜索',
               if (source.notification.isNotEmpty) source.notification,
             ].join(' · '),
-            style: const TextStyle(fontSize: 12, color: AppColors.secondary),
+            style: TextStyle(fontSize: 12, color: context.appColors.secondary),
           ),
           if (health != null)
             Text(
@@ -296,26 +301,25 @@ class _SourceManagementPageState extends ConsumerState<SourceManagementPage> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 12,
-                color: health.ok ? AppColors.accent : AppColors.error,
+                color: health.ok
+                    ? context.appColors.accentForeground
+                    : context.appColors.error,
               ),
             )
           else
-            const Text(
+            Text(
               '尚未检测',
-              style: TextStyle(fontSize: 12, color: AppColors.tertiary),
+              style: TextStyle(fontSize: 12, color: context.appColors.tertiary),
             ),
         ],
       ),
       trailing: checking
-          ? const SizedBox(
+          ? SizedBox(
               width: 20,
               height: 20,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : TextButton(
-              onPressed: () => _check(source),
-              child: const Text('检测'),
-            ),
+          : TextButton(onPressed: () => _check(source), child: Text('检测')),
     );
   }
 

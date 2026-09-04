@@ -4,7 +4,7 @@ description: "Jive - a focused mobile video player MVP."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.0.11+5
+version: 1.0.12+5
 
 environment:
   sdk: ^3.9.2

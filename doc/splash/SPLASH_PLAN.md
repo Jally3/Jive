@@ -20,7 +20,7 @@ V1 页面结构以「启动页 → 首页」为根，但当前冷启动是两段
 
 ### 目标（In Scope）
 
-- 原生启动图与 Flutter 闪屏底色均为 `AppColors.background`（`#0B0D10`），冷启动不闪白。
+- 原生启动图与 Flutter 闪屏底色跟随系统日间/夜间外观，分别使用 `#F7F5F0` / `#0B0D10`，冷启动不闪白。
 - Flutter 闪屏居中展示 **Logo** 与 **「Jive」**；源加载期间用轻量指示，不抢品牌。
 - 源就绪且满足最短展示后进入 `AppShell`，不能 pop 回闪屏。
 - 源失败仍用现有 `AppErrorView` + 重试，不卡死在品牌页。
@@ -40,7 +40,7 @@ V1 页面结构以「启动页 → 首页」为根，但当前冷启动是两段
 
 Flutter 引擎画出第一帧前，由系统窗口背景承担。
 
-- Android：`drawable/launch_background.xml` 与 `drawable-v21/launch_background.xml` 的色层改为 `#0B0D10`（抽到 `values/colors.xml` 的 `splash_background`，与 `AppColors.background` 同值）。
+- Android：`drawable/launch_background.xml` 与 `drawable-v21/launch_background.xml` 使用 `splash_background`；`values/colors.xml` 定义日间色，`values-night/colors.xml` 定义夜间色。
 - Android：`LaunchTheme` 与 `NormalTheme` 的 `android:windowBackground` 都指向该 drawable，避免引擎起来后窗口仍是系统浅色。
 - iOS：`LaunchScreen.storyboard` 根视图背景改为 `#0B0D10`。
 - **原生层不放 Logo、不写「Jive」**。原因：原生启动图把 Logo 单独居中，Flutter 首帧改成「Logo + 词标」垂直组居中时，Logo 会向上跳。纯色底最稳，品牌由 Flutter 首帧一次画齐。
@@ -63,7 +63,7 @@ Flutter 引擎画出第一帧前，由系统窗口背景承担。
 
 | 元素 | Token / 规格 | 说明 |
 |---|---|---|
-| 页背景 | `background` `#0B0D10` | 与原生启动图同色 |
+| 页背景 | 当前主题的 `background` | 与系统外观对应的原生启动图同色 |
 | Logo | 见 §5 资源 | 现有 App Icon 图形；**不要**再套一层圆角方底，避免双层夜幕块 |
 | Logo 边长 | 手机 96pt；`shortestSide >= 600` 为 120pt | 4pt 网格 |
 | Logo ↔ 词标间距 | 16 | `pagePadding` |
@@ -72,13 +72,13 @@ Flutter 引擎画出第一帧前，由系统窗口背景承担。
 | 动效 | 进入 `AppShell` 可用 200ms fade；尊重「减少动态效果」则直接切 | 不做缩放、视差 |
 
 - Slogan「今晚，看点好内容」本版**不**上闪屏，避免和首页重复抢词；若后续要加，用 `body` 15 + `secondary`，距词标 8pt。
-- 禁止在 Widget 里写十六进制；颜色走 `AppColors`。
+- 禁止在 Widget 里写十六进制；颜色走 `context.appColors`。
 - 无障碍：`Semantics(label: 'Jive')` 包住 Logo+词标；加载指示 `label: '正在启动'`。
 
 ### FR-3 进入与离开
 
 ```text
-原生 Launch（#0B0D10）
+原生 Launch（跟随系统日间/夜间背景）
         ↓ 引擎首帧
 SplashPage（Logo + Jive + 轻加载）
         ↓ 源就绪 且 已满最短展示
@@ -158,10 +158,10 @@ home: sourceState.when(
 lib/features/splash/splash_page.dart   # SplashPage：无业务，纯展示
 ```
 
-- `Scaffold(backgroundColor: AppColors.background)`
+- `Scaffold(backgroundColor: context.appColors.background)`
 - 不使用 `AppBar`
 - Logo：`Image.asset('assets/branding/splash_logo.png', width: logoSize, height: logoSize, filterQuality: FilterQuality.medium)`
-- 词标：`Text('Jive', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, color: AppColors.text, height: 36/28))`
+- 词标：`Text('Jive', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, color: context.appColors.text, height: 36/28))`
 
 平板 `logoSize` 用 `MediaQuery.sizeOf(context).shortestSide >= 600 ? 120 : 96`。
 
@@ -170,7 +170,7 @@ lib/features/splash/splash_page.dart   # SplashPage：无业务，纯展示
 Android `values/colors.xml` 增加：
 
 ```xml
-<color name="splash_background">#0B0D10</color>
+<color name="splash_background">#F7F5F0</color> <!-- values-night 覆盖为 #0B0D10 -->
 ```
 
 `launch_background.xml` 用 `@color/splash_background`，去掉 `@android:color/white`。

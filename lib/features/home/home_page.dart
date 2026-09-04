@@ -32,7 +32,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// MacCMS 的内容只挂在叶子分类上，所以两级导航：
   /// 选中顶级分类后展示其子分类，实际查询使用叶子分类 id。
   List<VideoCategory>? _roots;
-  Map<int, List<VideoCategory>> _children = const {};
+  Map<int, List<VideoCategory>> _children = {};
   int? _selectedRootId;
   int? selectedCategoryId;
   String? categoryError;
@@ -75,7 +75,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (!_scrollController.hasClients) return;
     _scrollController.animateTo(
       0,
-      duration: const Duration(milliseconds: 300),
+      duration: Duration(milliseconds: 300),
       curve: Curves.easeOutCubic,
     );
   }
@@ -89,7 +89,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       ..addListener(_changed);
     _activeSourceId = source.id;
     _roots = null;
-    _children = const {};
+    _children = {};
     _selectedRootId = null;
     selectedCategoryId = null;
     categoryError = null;
@@ -151,7 +151,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 选中顶级分类：有子分类时展示子分类栏并自动选中第一个子分类；
   /// 无子分类时直接按该分类查询。rootId 为 null 表示"最新"。
   Future<void> _selectRoot(VodSource source, int? rootId) async {
-    final children = _children[rootId] ?? const <VideoCategory>[];
+    final children = _children[rootId] ?? <VideoCategory>[];
     final queryId = rootId == null
         ? null
         : (children.isEmpty ? rootId : children.first.id);
@@ -205,7 +205,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 当前生效的「我的频道」id 列表（未定制时为全部根分类）。
   List<int> _currentMyChannelIds() =>
       _myChannelIds ??
-      [for (final root in _roots ?? const <VideoCategory>[]) root.id];
+      [for (final root in _roots ?? <VideoCategory>[]) root.id];
 
   Future<void> _addMyChannel(VodSource source, int rootId) async {
     final current = _currentMyChannelIds();
@@ -235,7 +235,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _open(Video video) {
     final current = homeContinueWatchingRecord(
-      ref.read(watchHistoryProvider).value ?? const [],
+      ref.read(watchHistoryProvider).value ?? [],
     );
     if (current != null && current.video.globalId != video.globalId) {
       ref.read(continueWatchingSessionHiddenProvider.notifier).hide();
@@ -246,7 +246,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   List<VideoCategory> get _selectedRootChildren =>
-      _children[_selectedRootId] ?? const [];
+      _children[_selectedRootId] ?? [];
 
   /// 主 tab 行实际展示的根分类：按「我的频道」定制过滤并保持顺序；
   /// 未定制或定制全部失效时回退为全部根分类。
@@ -285,7 +285,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       // 若此处消费掉，网格就无法延伸到毛玻璃导航栏下方。
       bottom: false,
       child: sourceState.when(
-        loading: () => const AppLoadingView(label: '正在加载来源…'),
+        loading: () => AppLoadingView(label: '正在加载来源…'),
         error: (error, _) => AppErrorView(
           message: '$error',
           onRetry: () => ref.invalidate(selectedVodSourceProvider),
@@ -310,7 +310,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     valueListenable: _showBackToTop,
     builder: (context, show, _) => AnimatedOpacity(
       opacity: show ? 1 : 0,
-      duration: const Duration(milliseconds: 200),
+      duration: Duration(milliseconds: 200),
       child: IgnorePointer(
         ignoring: !show,
         child: ClipRRect(
@@ -318,19 +318,19 @@ class _HomePageState extends ConsumerState<HomePage> {
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
             child: Material(
-              color: AppColors.surface.withValues(alpha: 0.75),
-              shape: const CircleBorder(
-                side: BorderSide(color: AppColors.divider),
+              color: context.appColors.surface.withValues(alpha: 0.75),
+              shape: CircleBorder(
+                side: BorderSide(color: context.appColors.divider),
               ),
               child: InkWell(
-                customBorder: const CircleBorder(),
+                customBorder: CircleBorder(),
                 onTap: _scrollToTop,
-                child: const SizedBox(
+                child: SizedBox(
                   width: 44,
                   height: 44,
                   child: Icon(
                     Icons.arrow_upward_rounded,
-                    color: AppColors.accent,
+                    color: context.appColors.accentForeground,
                     size: 22,
                   ),
                 ),
@@ -356,7 +356,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         mainRowHeight + (hasSubcategories ? subRowHeight : 0) + 1;
     return [
       SliverToBoxAdapter(child: _introHeader()),
-      const SliverToBoxAdapter(child: ContinueWatchingSection()),
+      SliverToBoxAdapter(child: ContinueWatchingSection()),
       SliverPersistentHeader(
         pinned: true,
         delegate: _PinnedHeaderDelegate(
@@ -372,9 +372,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _introHeader() => Container(
-    constraints: const BoxConstraints(minHeight: 104),
-    color: AppColors.background.withValues(alpha: 0.55),
-    padding: const EdgeInsets.fromLTRB(16, 24, 8, 12),
+    constraints: BoxConstraints(minHeight: 104),
+    color: context.appColors.background.withValues(alpha: 0.55),
+    padding: EdgeInsets.fromLTRB(16, 24, 8, 12),
     child: Row(
       children: [
         Expanded(
@@ -385,15 +385,18 @@ class _HomePageState extends ConsumerState<HomePage> {
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onLongPress: _confirmToggleContentFilter,
-                child: const Text(
+                child: Text(
                   'Jive',
                   style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
                 ),
               ),
-              const SizedBox(height: 4),
-              const Text(
+              SizedBox(height: 4),
+              Text(
                 '今晚，看点好内容',
-                style: TextStyle(color: AppColors.secondary, fontSize: 15),
+                style: TextStyle(
+                  color: context.appColors.secondary,
+                  fontSize: 15,
+                ),
               ),
             ],
           ),
@@ -416,7 +419,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
+            child: Text('取消'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
@@ -435,11 +438,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     required double mainRowHeight,
     required double subRowHeight,
   }) => ClipRect(
-    key: const ValueKey('home-category-header'),
+    key: ValueKey('home-category-header'),
     child: BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
       child: ColoredBox(
-        color: AppColors.background.withValues(alpha: 0.72),
+        color: context.appColors.background.withValues(alpha: 0.72),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -449,18 +452,18 @@ class _HomePageState extends ConsumerState<HomePage> {
                 children: [
                   Expanded(
                     child: ChipTheme(
-                      data: categoryChipTheme,
+                      data: categoryChipTheme(context),
                       child: ListView(
                         key: PageStorageKey<String>(
                           'home-root-category-tabs-${source.id}',
                         ),
-                        padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                        padding: EdgeInsets.fromLTRB(16, 4, 8, 4),
                         scrollDirection: Axis.horizontal,
                         children: [
                           Padding(
-                            padding: const EdgeInsets.only(right: 8),
+                            padding: EdgeInsets.only(right: 8),
                             child: ChoiceChip(
-                              label: const Text('最新'),
+                              label: Text('最新'),
                               selected: _selectedRootId == null,
                               showCheckmark: false,
                               onSelected: (_) => _selectRoot(source, null),
@@ -468,7 +471,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                           ),
                           ...?_visibleRoots?.map(
                             (item) => Padding(
-                              padding: const EdgeInsets.only(right: 8),
+                              padding: EdgeInsets.only(right: 8),
                               child: ChoiceChip(
                                 label: Text(item.name),
                                 selected: _selectedRootId == item.id,
@@ -479,7 +482,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                           ),
                           if (categoryError != null)
                             ActionChip(
-                              label: const Text('重试'),
+                              label: Text('重试'),
                               onPressed: () => _loadCategories(source),
                             ),
                         ],
@@ -489,14 +492,14 @@ class _HomePageState extends ConsumerState<HomePage> {
                   // 固定在横滑列表右侧的「全部频道」入口按钮。
                   if (_visibleRoots?.isNotEmpty ?? false)
                     Padding(
-                      padding: const EdgeInsets.only(right: 8),
+                      padding: EdgeInsets.only(right: 8),
                       child: IconButton(
-                        key: const ValueKey('home-category-expand-button'),
+                        key: ValueKey('home-category-expand-button'),
                         tooltip: '全部频道',
                         visualDensity: VisualDensity.compact,
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.keyboard_arrow_down_rounded,
-                          color: AppColors.secondary,
+                          color: context.appColors.secondary,
                         ),
                         onPressed: () => _openChannelsPage(source),
                       ),
@@ -508,43 +511,42 @@ class _HomePageState extends ConsumerState<HomePage> {
               SizedBox(
                 height: subRowHeight,
                 child: ChipTheme(
-                  data: categoryChipTheme.copyWith(
-                    backgroundColor: AppColors.elevated.withValues(alpha: 0.45),
+                  data: categoryChipTheme(context).copyWith(
+                    backgroundColor: context.appColors.elevated.withValues(
+                      alpha: 0.45,
+                    ),
                     // copyWith 会沿用 categoryChipTheme 的 color 解析器（优先级高于
                     // backgroundColor），这里同步覆盖为 0.45 版本，保持原有底色。
                     color: WidgetStateProperty.resolveWith((states) {
                       if (states.contains(WidgetState.selected)) {
                         return states.contains(WidgetState.focused)
-                            ? AppColors.accentPressed
-                            : AppColors.accent;
+                            ? context.appColors.accentPressed
+                            : context.appColors.accent;
                       }
-                      return AppColors.elevated.withValues(alpha: 0.45);
+                      return context.appColors.elevated.withValues(alpha: 0.45);
                     }),
-                    labelStyle: const TextStyle(
-                      color: AppColors.secondary,
+                    labelStyle: TextStyle(
+                      color: context.appColors.secondary,
                       fontSize: 13,
                     ),
-                    secondaryLabelStyle: const TextStyle(
-                      color: AppColors.onAccent,
+                    secondaryLabelStyle: TextStyle(
+                      color: context.appColors.onAccent,
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   ),
                   child: ListView(
                     key: PageStorageKey<String>(
                       'home-leaf-category-tabs-${source.id}-'
                       '${_selectedRootId ?? 'none'}',
                     ),
-                    padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+                    padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
                     scrollDirection: Axis.horizontal,
                     children: _selectedRootChildren
                         .map(
                           (item) => Padding(
-                            padding: const EdgeInsets.only(right: 8),
+                            padding: EdgeInsets.only(right: 8),
                             child: ChoiceChip(
                               label: Text(item.name),
                               selected: selectedCategoryId == item.id,
@@ -559,7 +561,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               ),
             Container(
               height: 1,
-              color: AppColors.divider.withValues(alpha: 0.6),
+              color: context.appColors.divider.withValues(alpha: 0.6),
             ),
           ],
         ),
@@ -570,10 +572,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget _body(VodSource source) {
     final c = controller;
     if (c == null) {
-      return _stateScrollView(source, const AppLoadingView());
+      return _stateScrollView(source, AppLoadingView());
     }
     if (c.items.isEmpty && c.loading) {
-      return _stateScrollView(source, const AppLoadingView());
+      return _stateScrollView(source, AppLoadingView());
     }
     if (c.items.isEmpty && c.error != null) {
       return _stateScrollView(
@@ -587,7 +589,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       );
     }
     if (c.items.isEmpty) {
-      return _stateScrollView(source, const AppEmptyView(message: '暂时没有内容'));
+      return _stateScrollView(source, AppEmptyView(message: '暂时没有内容'));
     }
     return NotificationListener<ScrollNotification>(
       onNotification: (event) {
@@ -609,23 +611,23 @@ class _HomePageState extends ConsumerState<HomePage> {
           topPadding: 12,
           bottomPadding: 96,
           controller: _scrollController,
-          physics: const AlwaysScrollableScrollPhysics(),
+          physics: AlwaysScrollableScrollPhysics(),
           headerSlivers: _homeHeaderSlivers(source),
           footer: c.loading
-              ? const Padding(
+              ? Padding(
                   padding: EdgeInsets.symmetric(vertical: 20),
                   child: Center(
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
               : (!c.hasMore
-                    ? const Padding(
+                    ? Padding(
                         padding: EdgeInsets.symmetric(vertical: 20),
                         child: Center(
                           child: Text(
                             '没有更多了',
                             style: TextStyle(
-                              color: AppColors.tertiary,
+                              color: context.appColors.tertiary,
                               fontSize: 12,
                             ),
                           ),
@@ -639,7 +641,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   Widget _stateScrollView(VodSource source, Widget state) => CustomScrollView(
     controller: _scrollController,
-    physics: const AlwaysScrollableScrollPhysics(),
+    physics: AlwaysScrollableScrollPhysics(),
     slivers: [
       ..._homeHeaderSlivers(source),
       SliverFillRemaining(hasScrollBody: false, child: state),
@@ -648,7 +650,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 }
 
 class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
-  const _PinnedHeaderDelegate({required this.height, required this.child});
+  _PinnedHeaderDelegate({required this.height, required this.child});
 
   final double height;
   final Widget child;

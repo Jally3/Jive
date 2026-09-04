@@ -57,15 +57,16 @@ class _SkipChipRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final customSelected = current > 0 && !isSkipPreset(current);
+    final colors = context.appColors;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w700,
-            color: AppColors.text,
+            color: colors.text,
           ),
         ),
         const SizedBox(height: 8),

@@ -84,14 +84,14 @@ class _AppToastState extends State<_AppToast>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
-      reverseDuration: const Duration(milliseconds: 150),
+      duration: Duration(milliseconds: 200),
+      reverseDuration: Duration(milliseconds: 150),
     );
     _controller.addStatusListener((status) {
       if (status == AnimationStatus.dismissed) widget.onDismissed();
     });
     unawaited(_controller.forward());
-    _timer = Timer(const Duration(seconds: 2), () {
+    _timer = Timer(Duration(seconds: 2), () {
       if (mounted) unawaited(_controller.reverse());
     });
   }
@@ -110,26 +110,26 @@ class _AppToastState extends State<_AppToast>
       opacity: CurvedAnimation(parent: _controller, curve: Curves.easeOut),
       child: SlideTransition(
         position: Tween<Offset>(
-          begin: const Offset(0, 0.06),
+          begin: Offset(0, 0.06),
           end: Offset.zero,
         ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut)),
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: maxWidth),
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: AppColors.elevated,
+              color: context.appColors.elevated,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.divider),
-              boxShadow: const [
+              border: Border.all(color: context.appColors.divider),
+              boxShadow: [
                 BoxShadow(
-                  color: AppColors.scrim,
+                  color: context.appColors.scrim,
                   blurRadius: 16,
                   offset: Offset(0, 4),
                 ),
               ],
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -138,8 +138,8 @@ class _AppToastState extends State<_AppToast>
                       widget.message,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.text,
+                      style: TextStyle(
+                        color: context.appColors.text,
                         fontSize: 13,
                         height: 18 / 13,
                         fontWeight: FontWeight.w500,
@@ -148,19 +148,19 @@ class _AppToastState extends State<_AppToast>
                   ),
                   if (widget.actionLabel != null &&
                       widget.onAction != null) ...[
-                    const SizedBox(width: 12),
+                    SizedBox(width: 12),
                     GestureDetector(
                       onTap: widget.onAction,
                       behavior: HitTestBehavior.opaque,
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(
+                        padding: EdgeInsets.symmetric(
                           horizontal: 4,
                           vertical: 2,
                         ),
                         child: Text(
                           widget.actionLabel!,
-                          style: const TextStyle(
-                            color: AppColors.accent,
+                          style: TextStyle(
+                            color: context.appColors.accentForeground,
                             fontSize: 13,
                             height: 18 / 13,
                             fontWeight: FontWeight.w600,

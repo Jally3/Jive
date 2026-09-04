@@ -42,7 +42,7 @@ class _DownloadManagementPageState
             ? IconButton(
                 tooltip: '退出编辑',
                 onPressed: _exitEditing,
-                icon: const Icon(Icons.close),
+                icon: Icon(Icons.close),
               )
             : null,
         actions: [
@@ -58,20 +58,20 @@ class _DownloadManagementPageState
             IconButton(
               tooltip: '编辑任务',
               onPressed: _enterEditing,
-              icon: const Icon(Icons.edit_outlined),
+              icon: Icon(Icons.edit_outlined),
             ),
           if (!editing)
             IconButton(
               tooltip: '缓存管理',
-              icon: const Icon(Icons.storage_outlined),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const CacheManagementPage()),
-              ),
+              icon: Icon(Icons.storage_outlined),
+              onPressed: () => Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => CacheManagementPage())),
             ),
         ],
       ),
       body: tasks.when(
-        loading: () => const AppLoadingView(label: '正在加载下载任务…'),
+        loading: () => AppLoadingView(label: '正在加载下载任务…'),
         error: (_, _) => AppErrorView(
           message: '下载任务加载失败',
           onRetry: () => ref.invalidate(downloadTasksProvider),
@@ -99,20 +99,20 @@ class _DownloadManagementPageState
             });
           }
           if (items.isEmpty) {
-            return const AppEmptyView(
+            return AppEmptyView(
               icon: Icons.download_outlined,
               message: '还没有下载任务\n在详情页或播放页点击下载',
             );
           }
           return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 32),
             children: [
               _summary(items),
-              const SizedBox(height: 12),
+              SizedBox(height: 12),
               if (editing) _batchActionBar() else _filterBar(items),
-              const SizedBox(height: 12),
+              SizedBox(height: 12),
               if (visible.isEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
                   child: Center(child: Text('当前筛选下没有任务')),
                 )
@@ -132,7 +132,7 @@ class _DownloadManagementPageState
         data: (tasks) => tasks
             .where((task) => selectedTaskIds.contains(task.taskId))
             .toList(),
-        orElse: () => const <DownloadTask>[],
+        orElse: () => <DownloadTask>[],
       );
 
   bool _batchActionEnabled(String action) {
@@ -166,7 +166,7 @@ class _DownloadManagementPageState
         icon: Icon(icon, size: 18),
         label: Text(name),
         style: action == 'delete'
-            ? TextButton.styleFrom(foregroundColor: AppColors.error)
+            ? TextButton.styleFrom(foregroundColor: context.appColors.error)
             : null,
       );
     }
@@ -180,13 +180,13 @@ class _DownloadManagementPageState
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
+                padding: EdgeInsets.symmetric(horizontal: 4),
                 child: Text(
                   selectedTaskIds.isEmpty
                       ? '请选择'
                       : '${selectedTaskIds.length} 项',
-                  style: const TextStyle(
-                    color: AppColors.secondary,
+                  style: TextStyle(
+                    color: context.appColors.secondary,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -196,7 +196,7 @@ class _DownloadManagementPageState
               action(name: '删除', action: 'delete', icon: Icons.delete_outline),
               TextButton(
                 onPressed: batchBusy ? null : _exitEditing,
-                child: const Text('取消'),
+                child: Text('取消'),
               ),
             ],
           ),
@@ -240,8 +240,8 @@ class _DownloadManagementPageState
         .length;
     final expanded = expandedGroups.contains(groupKey);
     return Card(
-      color: AppColors.surface,
-      margin: const EdgeInsets.only(bottom: 12),
+      color: context.appColors.surface,
+      margin: EdgeInsets.only(bottom: 12),
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
@@ -251,7 +251,7 @@ class _DownloadManagementPageState
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w700),
+              style: TextStyle(fontWeight: FontWeight.w700),
             ),
             subtitle: Text('$completed / ${tasks.length} 集已完成'),
             trailing: Icon(expanded ? Icons.expand_less : Icons.expand_more),
@@ -294,7 +294,7 @@ class _DownloadManagementPageState
       .read(downloadTasksProvider)
       .maybeWhen(
         data: (value) => value.where(_matchesFilter).toList(),
-        orElse: () => const <DownloadTask>[],
+        orElse: () => <DownloadTask>[],
       );
 
   bool _allVisibleSelected() {
@@ -337,7 +337,7 @@ class _DownloadManagementPageState
                 value: deleteCache,
                 onChanged: (value) =>
                     setDialogState(() => deleteCache = value ?? false),
-                title: const Text('同时删除本地文件'),
+                title: Text('同时删除本地文件'),
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
                 dense: true,
@@ -347,11 +347,11 @@ class _DownloadManagementPageState
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
+              child: Text('取消'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('删除'),
+              child: Text('删除'),
             ),
           ],
         ),
@@ -381,7 +381,7 @@ class _DownloadManagementPageState
             data: (value) => value
                 .where((task) => selectedTaskIds.contains(task.taskId))
                 .toList(),
-            orElse: () => const <DownloadTask>[],
+            orElse: () => <DownloadTask>[],
           );
       for (final task in tasks) {
         switch (action) {
@@ -454,7 +454,7 @@ class _DownloadManagementPageState
         children: [
           for (final value in _DownloadFilter.values)
             Padding(
-              padding: const EdgeInsets.only(right: 8),
+              padding: EdgeInsets.only(right: 8),
               child: ChoiceChip(
                 label: Text('${labels[value]} ${_filterCount(tasks, value)}'),
                 selected: filter == value,
@@ -488,10 +488,7 @@ class _DownloadManagementPageState
       final manager = await _manager(ref);
       final tasks = ref
           .read(downloadTasksProvider)
-          .maybeWhen(
-            data: (value) => value,
-            orElse: () => const <DownloadTask>[],
-          );
+          .maybeWhen(data: (value) => value, orElse: () => <DownloadTask>[]);
       for (final task in tasks) {
         if (task.status == DownloadTaskStatus.paused ||
             task.status == DownloadTaskStatus.failed) {
@@ -587,52 +584,52 @@ class _DownloadManagementPageState
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w700,
-              color: valueColor ?? AppColors.text,
+              color: valueColor ?? context.appColors.text,
             ),
           ),
-          const SizedBox(height: 2),
+          SizedBox(height: 2),
           Text(
             label,
-            style: const TextStyle(fontSize: 12, color: AppColors.secondary),
+            style: TextStyle(fontSize: 12, color: context.appColors.secondary),
           ),
         ],
       ),
     );
     return Card(
-      color: AppColors.elevated,
+      color: context.appColors.elevated,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             LayoutBuilder(
               builder: (context, constraints) {
                 final speedView = transferring.isEmpty
-                    ? const Text(
+                    ? Text(
                         '当前没有进行中的下载',
                         style: TextStyle(
                           fontSize: 13,
-                          color: AppColors.secondary,
+                          color: context.appColors.secondary,
                         ),
                       )
                     : Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             '当前速度',
                             style: TextStyle(
                               fontSize: 12,
-                              color: AppColors.secondary,
+                              color: context.appColors.secondary,
                             ),
                           ),
-                          const SizedBox(height: 2),
+                          SizedBox(height: 2),
                           Text(
                             _formatSpeed(speed),
                             maxLines: 1,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w700,
-                              color: AppColors.accent,
+                              color: context.appColors.accentForeground,
                             ),
                           ),
                         ],
@@ -644,14 +641,14 @@ class _DownloadManagementPageState
                     if (resumable > 0)
                       OutlinedButton.icon(
                         onPressed: batchBusy ? null : _resumeAll,
-                        icon: const Icon(Icons.play_arrow, size: 18),
-                        label: const Text('全部继续'),
+                        icon: Icon(Icons.play_arrow, size: 18),
+                        label: Text('全部继续'),
                       ),
                     if (transferring.isNotEmpty)
                       OutlinedButton.icon(
                         onPressed: batchBusy ? null : _pauseAll,
-                        icon: const Icon(Icons.pause, size: 18),
-                        label: const Text('全部暂停'),
+                        icon: Icon(Icons.pause, size: 18),
+                        label: Text('全部暂停'),
                       ),
                   ],
                 );
@@ -661,7 +658,7 @@ class _DownloadManagementPageState
                     children: [
                       speedView,
                       if (transferring.isNotEmpty || resumable > 0) ...[
-                        const SizedBox(height: 12),
+                        SizedBox(height: 12),
                         actions,
                       ],
                     ],
@@ -676,7 +673,7 @@ class _DownloadManagementPageState
                 );
               },
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: 16),
             Row(
               children: [
                 stat('未完成', '$unfinished'),
@@ -684,37 +681,40 @@ class _DownloadManagementPageState
                 stat(
                   '失败/取消',
                   '$failed',
-                  valueColor: failed > 0 ? AppColors.error : null,
+                  valueColor: failed > 0 ? context.appColors.error : null,
                 ),
                 stat('已下载', _formatBytes(downloadedBytes)),
               ],
             ),
             if (overall != null) ...[
-              const SizedBox(height: 16),
+              SizedBox(height: 16),
               Row(
                 children: [
-                  const Text(
+                  Text(
                     '整体进度',
-                    style: TextStyle(fontSize: 12, color: AppColors.secondary),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: context.appColors.secondary,
+                    ),
                   ),
-                  const Spacer(),
+                  Spacer(),
                   Text(
                     '${(overall * 100).round()}%',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
-                      color: AppColors.secondary,
+                      color: context.appColors.secondary,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
+              SizedBox(height: 6),
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
                   value: overall,
                   minHeight: 6,
-                  backgroundColor: AppColors.divider,
+                  backgroundColor: context.appColors.divider,
                 ),
               ),
             ],
@@ -751,8 +751,8 @@ class _DownloadManagementPageState
         ? '${_formatBytes(task.downloadedBytes)} / ${_formatBytes(task.totalBytes)}'
         : '${_formatBytes(task.downloadedBytes)} · ${_resourceProgressText(task)}';
     final statusColor = pausing
-        ? AppColors.secondary
-        : _statusColor(task.status);
+        ? context.appColors.secondary
+        : _statusColor(context, task.status);
     final metaParts = <String>[
       sizeText,
       if (task.status == DownloadTaskStatus.downloading &&
@@ -763,13 +763,13 @@ class _DownloadManagementPageState
         downloadFailureText(task.error),
     ];
     return Card(
-      color: nested ? Colors.transparent : AppColors.surface,
+      color: nested ? Colors.transparent : context.appColors.surface,
       elevation: nested ? 0 : null,
       margin: EdgeInsets.only(bottom: nested ? 0 : 10),
       child: InkWell(
         onTap: editing ? () => _toggleTaskSelection(task) : null,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          padding: EdgeInsets.fromLTRB(16, 12, 8, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -787,10 +787,10 @@ class _DownloadManagementPageState
                           : '${task.title} · ${task.episodeName}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8),
                   // 状态 chip：彩色圆点 + 短状态文字，失败原因放到信息行。
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -803,7 +803,7 @@ class _DownloadManagementPageState
                           shape: BoxShape.circle,
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      SizedBox(width: 6),
                       Text(
                         pausing ? '暂停中' : _statusShort(task),
                         style: TextStyle(
@@ -816,17 +816,17 @@ class _DownloadManagementPageState
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              SizedBox(height: 10),
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
                   value: progress,
                   minHeight: 6,
-                  backgroundColor: AppColors.divider,
+                  backgroundColor: context.appColors.divider,
                   color: statusColor,
                 ),
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: 8),
               Row(
                 children: [
                   Expanded(
@@ -837,9 +837,9 @@ class _DownloadManagementPageState
                         for (final part in metaParts)
                           Text(
                             part,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: AppColors.secondary,
+                              color: context.appColors.secondary,
                             ),
                           ),
                       ],
@@ -862,14 +862,14 @@ class _DownloadManagementPageState
                               ),
                             ),
                       icon: pausing
-                          ? const SizedBox.square(
+                          ? SizedBox.square(
                               dimension: 20,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2.2,
-                                color: AppColors.secondary,
+                                color: context.appColors.secondary,
                               ),
                             )
-                          : const Icon(Icons.pause),
+                          : Icon(Icons.pause),
                     )
                   else if (!editing &&
                       (task.status == DownloadTaskStatus.paused ||
@@ -886,14 +886,14 @@ class _DownloadManagementPageState
                               task,
                               (manager) => manager.resume(task.taskId),
                             ),
-                      icon: const Icon(Icons.play_arrow),
+                      icon: Icon(Icons.play_arrow),
                     ),
                   if (!editing && task.status == DownloadTaskStatus.completed)
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       tooltip: '播放',
                       onPressed: () => _playTask(context, ref, task),
-                      icon: const Icon(Icons.play_circle_outline),
+                      icon: Icon(Icons.play_circle_outline),
                     ),
                 ],
               ),
@@ -960,14 +960,15 @@ class _DownloadManagementPageState
           DownloadTaskStatus.cancelled => '已取消',
         };
 
-  static Color _statusColor(DownloadTaskStatus status) => switch (status) {
-    DownloadTaskStatus.queued => AppColors.secondary,
-    DownloadTaskStatus.downloading => AppColors.accent,
-    DownloadTaskStatus.paused => AppColors.secondary,
-    DownloadTaskStatus.completed => AppColors.success,
-    DownloadTaskStatus.failed => AppColors.error,
-    DownloadTaskStatus.cancelled => AppColors.secondary,
-  };
+  static Color _statusColor(BuildContext context, DownloadTaskStatus status) =>
+      switch (status) {
+        DownloadTaskStatus.queued => context.appColors.secondary,
+        DownloadTaskStatus.downloading => context.appColors.accentForeground,
+        DownloadTaskStatus.paused => context.appColors.secondary,
+        DownloadTaskStatus.completed => context.appColors.success,
+        DownloadTaskStatus.failed => context.appColors.error,
+        DownloadTaskStatus.cancelled => context.appColors.secondary,
+      };
 
   static String _formatSpeed(int bytes) => '${_formatBytes(bytes)}/s';
 

@@ -4,6 +4,7 @@ import '../../app/theme.dart';
 import '../../data/cache/cache_controller.dart';
 import '../../data/cache/cache_ttl_policy.dart';
 import '../../data/playback/prefetch_policy.dart';
+import '../../data/theme_mode_preferences.dart';
 import '../cache/cache_management_page.dart';
 
 String _formatBytes(int bytes) {
@@ -29,6 +30,46 @@ String _ttlLabel(CacheTtlOption option) => switch (option) {
   CacheTtlOption.days7 => '7 天后',
 };
 
+String _themeModeLabel(ThemeMode mode) => switch (mode) {
+  ThemeMode.system => '跟随系统',
+  ThemeMode.light => '日间模式',
+  ThemeMode.dark => '夜间模式',
+};
+
+Future<void> _selectThemeMode(
+  BuildContext context,
+  WidgetRef ref,
+  ThemeMode current,
+) async {
+  final selected = await showModalBottomSheet<ThemeMode>(
+    context: context,
+    constraints: BoxConstraints(maxWidth: 600),
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final mode in ThemeMode.values)
+            ListTile(
+              leading: Icon(switch (mode) {
+                ThemeMode.system => Icons.brightness_auto_outlined,
+                ThemeMode.light => Icons.light_mode_outlined,
+                ThemeMode.dark => Icons.dark_mode_outlined,
+              }),
+              title: Text(_themeModeLabel(mode)),
+              trailing: mode == current
+                  ? Icon(Icons.check, color: context.appColors.accentForeground)
+                  : null,
+              onTap: () => Navigator.pop(sheetContext, mode),
+            ),
+        ],
+      ),
+    ),
+  );
+  if (selected != null) {
+    await ref.read(themeModeProvider.notifier).setMode(selected);
+  }
+}
+
 Future<void> _selectTtl(
   BuildContext context,
   WidgetRef ref,
@@ -37,7 +78,7 @@ Future<void> _selectTtl(
   final selected = await showModalBottomSheet<CacheTtlOption>(
     context: context,
     // 宽屏（电视/平板横屏）下收敛宽度居中。
-    constraints: const BoxConstraints(maxWidth: 600),
+    constraints: BoxConstraints(maxWidth: 600),
     builder: (sheetContext) => SafeArea(
       child: SingleChildScrollView(
         child: Column(
@@ -47,7 +88,10 @@ Future<void> _selectTtl(
               ListTile(
                 title: Text(_ttlLabel(option)),
                 trailing: option == current
-                    ? const Icon(Icons.check, color: AppColors.accent)
+                    ? Icon(
+                        Icons.check,
+                        color: context.appColors.accentForeground,
+                      )
                     : null,
                 onTap: () => Navigator.pop(sheetContext, option),
               ),
@@ -66,10 +110,34 @@ class MoreSettingsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => Scaffold(
-    appBar: AppBar(title: const Text('更多设置')),
+    appBar: AppBar(title: Text('更多设置')),
     body: ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
+        _SettingsSection(
+          title: '外观',
+          children: [
+            Consumer(
+              builder: (context, ref, _) {
+                final mode = ref.watch(themeModeProvider);
+                return ListTile(
+                  leading: Icon(Icons.palette_outlined),
+                  title: Text('主题模式'),
+                  subtitle: Text(
+                    _themeModeLabel(mode),
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  trailing: Icon(
+                    Icons.chevron_right,
+                    color: context.appColors.tertiary,
+                  ),
+                  onTap: () => _selectThemeMode(context, ref, mode),
+                );
+              },
+            ),
+          ],
+        ),
+        SizedBox(height: 16),
         _SettingsSection(
           title: '播放',
           children: [
@@ -78,13 +146,13 @@ class MoreSettingsPage extends ConsumerWidget {
                 final mode = ref.watch(prefetchModeProvider).value;
                 final enabled = mode != PrefetchMode.off;
                 return SwitchListTile(
-                  secondary: const Icon(Icons.speed_outlined),
-                  title: const Text('预加载'),
+                  secondary: Icon(Icons.speed_outlined),
+                  title: Text('预加载'),
                   subtitle: Text(
                     enabled
                         ? '播放时提前缓存后续内容（Wi-Fi ${prefetchAheadWifi.inMinutes} 分钟 / 蜂窝 ${prefetchAheadCellular.inMinutes} 分钟）'
                         : '已关闭，播放时只缓存当前观看的分片',
-                    style: const TextStyle(fontSize: 13),
+                    style: TextStyle(fontSize: 13),
                   ),
                   value: enabled,
                   onChanged: (value) => ref
@@ -95,7 +163,7 @@ class MoreSettingsPage extends ConsumerWidget {
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        SizedBox(height: 16),
         _SettingsSection(
           title: '存储',
           children: [
@@ -104,21 +172,21 @@ class MoreSettingsPage extends ConsumerWidget {
                 final option =
                     ref.watch(cacheTtlProvider).value ?? CacheTtlOption.onExit;
                 return ListTile(
-                  leading: const Icon(Icons.auto_delete_outlined),
-                  title: const Text('自动清理缓存'),
+                  leading: Icon(Icons.auto_delete_outlined),
+                  title: Text('自动清理缓存'),
                   subtitle: Text(
                     _ttlLabel(option),
-                    style: const TextStyle(fontSize: 13),
+                    style: TextStyle(fontSize: 13),
                   ),
-                  trailing: const Icon(
+                  trailing: Icon(
                     Icons.chevron_right,
-                    color: AppColors.tertiary,
+                    color: context.appColors.tertiary,
                   ),
                   onTap: () => _selectTtl(context, ref, option),
                 );
               },
             ),
-            const Divider(height: 1, color: AppColors.divider),
+            Divider(height: 1, color: context.appColors.divider),
             Consumer(
               builder: (context, ref, _) {
                 final stats = ref.watch(cacheControllerProvider);
@@ -129,20 +197,15 @@ class MoreSettingsPage extends ConsumerWidget {
                   error: (_, _) => '缓存统计加载失败',
                 );
                 return ListTile(
-                  leading: const Icon(Icons.cleaning_services_outlined),
-                  title: const Text('缓存管理'),
-                  subtitle: Text(
-                    subtitle,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  trailing: const Icon(
+                  leading: Icon(Icons.cleaning_services_outlined),
+                  title: Text('缓存管理'),
+                  subtitle: Text(subtitle, style: TextStyle(fontSize: 13)),
+                  trailing: Icon(
                     Icons.chevron_right,
-                    color: AppColors.tertiary,
+                    color: context.appColors.tertiary,
                   ),
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const CacheManagementPage(),
-                    ),
+                    MaterialPageRoute(builder: (_) => CacheManagementPage()),
                   ),
                 );
               },
@@ -165,14 +228,14 @@ class _SettingsSection extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+        padding: EdgeInsets.fromLTRB(4, 0, 4, 8),
         child: Text(
           title,
-          style: const TextStyle(color: AppColors.secondary, fontSize: 13),
+          style: TextStyle(color: context.appColors.secondary, fontSize: 13),
         ),
       ),
       Card(
-        color: AppColors.surface,
+        color: context.appColors.surface,
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
         child: Column(children: children),

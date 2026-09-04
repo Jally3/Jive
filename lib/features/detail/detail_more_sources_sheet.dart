@@ -22,28 +22,28 @@ class DetailMoreSourcesSheet extends StatelessWidget {
     animation: controller,
     builder: (context, _) => SafeArea(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: EdgeInsets.symmetric(vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+              padding: EdgeInsets.fromLTRB(20, 12, 20, 8),
               child: Row(
                 children: [
-                  const Text(
+                  Text(
                     '全部来源',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                   ),
-                  const Spacer(),
+                  Spacer(),
                   TextButton.icon(
                     onPressed: onDetectAll,
-                    icon: const Icon(Icons.search, size: 18),
-                    label: const Text('查找全部来源'),
+                    icon: Icon(Icons.search, size: 18),
+                    label: Text('查找全部来源'),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1),
             Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
@@ -55,7 +55,9 @@ class DetailMoreSourcesSheet extends StatelessWidget {
                   return ListTile(
                     leading: Icon(
                       isActive ? Icons.check_circle : Icons.source_outlined,
-                      color: isActive ? AppColors.accent : AppColors.tertiary,
+                      color: isActive
+                          ? context.appColors.accentForeground
+                          : context.appColors.tertiary,
                     ),
                     title: Text(source.name),
                     subtitle: Text(
@@ -63,12 +65,12 @@ class DetailMoreSourcesSheet extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 13,
                         color: s?.error != null
-                            ? AppColors.error
-                            : AppColors.secondary,
+                            ? context.appColors.error
+                            : context.appColors.secondary,
                       ),
                     ),
                     trailing: s?.status == DetailSourceStatus.detecting
-                        ? const SizedBox.square(
+                        ? SizedBox.square(
                             dimension: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
