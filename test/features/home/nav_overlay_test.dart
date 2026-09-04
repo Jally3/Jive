@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
@@ -10,6 +11,8 @@ import 'package:jive/features/home/home_page.dart';
 import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/shared/video_card.dart';
 import 'package:jive/shared/video_grid.dart';
+import 'package:jive/shared/is_tv.dart';
+import 'package:jive/tv/tv_horizontal_focus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final _testSource = VodSource(
@@ -98,6 +101,7 @@ class _ManyNestedCategoryRepository extends _ManyCategoryRepository {
 Future<void> _pumpHome(
   WidgetTester tester, {
   VideoRepository? repository,
+  bool isTv = false,
 }) async {
   final container = ProviderContainer(
     overrides: [
@@ -107,6 +111,7 @@ Future<void> _pumpHome(
       vodSourceRegistryProvider.overrideWith(
         (ref) async => VodSourceRegistry([_testSource], {}),
       ),
+      if (isTv) isTvProvider.overrideWith((ref) async => true),
     ],
   );
   await container.read(vodSourceRegistryProvider.future);
@@ -293,6 +298,112 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(_rootTabScrollState(tester).position.pixels, closeTo(offset, 0.01));
+  });
+
+  testWidgets(
+    'TV d-pad reaches offscreen categories and scrolls them visible',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(800, 600);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      await _pumpHome(
+        tester,
+        repository: _ManyCategoryRepository(),
+        isTv: true,
+      );
+
+      final latest = tester.widget<TvHorizontalFocus>(
+        find.byKey(const ValueKey('tv-root-category-latest')),
+      );
+      latest.focusNode.requestFocus();
+      await tester.pump();
+      expect(latest.focusNode.hasFocus, isTrue);
+
+      // 「最新」后还有 12 个分类；TV 分支会全部构建并在焦点移动时滚动。
+      for (var i = 0; i < 12; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pump(const Duration(milliseconds: 180));
+      }
+      await tester.pumpAndSettle();
+
+      final farRight = tester.widget<TvHorizontalFocus>(
+        find.byKey(const ValueKey('tv-root-category-12')),
+      );
+      expect(farRight.focusNode.hasFocus, isTrue);
+      final tabPosition = _rootTabScrollState(tester).position;
+      expect(tabPosition.maxScrollExtent, greaterThan(0));
+      expect(tabPosition.pixels, greaterThan(0));
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(
+        tester
+            .widget<ChoiceChip>(
+              find.descendant(
+                of: find.byKey(const ValueKey('tv-root-category-12')),
+                matching: find.byType(ChoiceChip),
+              ),
+            )
+            .selected,
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets('TV d-pad moves between root and leaf category rows', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 600);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(
+      tester,
+      repository: _ManyNestedCategoryRepository(),
+      isTv: true,
+    );
+    await tester.pumpAndSettle();
+
+    final root = tester.widget<TvHorizontalFocus>(
+      find.byKey(const ValueKey('tv-root-category-100')),
+    );
+    root.focusNode.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    final firstLeaf = tester.widget<TvHorizontalFocus>(
+      find.byKey(const ValueKey('tv-leaf-category-1')),
+    );
+    expect(firstLeaf.focusNode.hasFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    final secondLeaf = tester.widget<TvHorizontalFocus>(
+      find.byKey(const ValueKey('tv-leaf-category-2')),
+    );
+    expect(secondLeaf.focusNode.hasFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(
+      tester
+          .widget<ChoiceChip>(
+            find.descendant(
+              of: find.byKey(const ValueKey('tv-leaf-category-2')),
+              matching: find.byType(ChoiceChip),
+            ),
+          )
+          .selected,
+      isTrue,
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(root.focusNode.hasFocus, isTrue);
   });
 
   testWidgets('selecting a far-right leaf keeps the sub-tab strip position', (

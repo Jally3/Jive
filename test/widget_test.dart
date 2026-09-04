@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
@@ -7,11 +8,13 @@ import 'package:jive/app/theme.dart';
 import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
+import 'package:jive/data/search_history_store.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
+import 'package:jive/shared/is_tv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final _testSource = VodSource(
@@ -106,6 +109,11 @@ final _testOverrides = [
   ),
 ];
 
+final _tvOverrides = [
+  ..._testOverrides,
+  isTvProvider.overrideWith((ref) async => true),
+];
+
 Future<void> _pumpReadyApp(
   WidgetTester tester,
   ProviderContainer container,
@@ -170,6 +178,133 @@ void main() {
       tester.widget<Material>(surface).color,
       AppColors.surface.withValues(alpha: 0.3),
     );
+  });
+
+  testWidgets('TV excludes hidden tabs from focus traversal', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 720);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final container = ProviderContainer(overrides: _tvOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.pump();
+
+    final homeNav = tester.widget<InkWell>(
+      find.byKey(const ValueKey('tv-nav-首页')),
+    );
+    expect(find.byKey(const ValueKey('tv-navigation-rail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('floating-nav-bar')), findsNothing);
+    expect(homeNav.focusNode!.hasFocus, isTrue);
+
+    final hiddenSearch = tester.widget<TextField>(
+      find.byType(TextField, skipOffstage: false),
+    );
+    hiddenSearch.focusNode!.requestFocus();
+    await tester.pump();
+    expect(hiddenSearch.focusNode!.hasFocus, isFalse);
+    expect(homeNav.focusNode!.hasFocus, isTrue);
+  });
+
+  testWidgets('TV rail moves vertically and restores focus after search', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 720);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final container = ProviderContainer(overrides: _tvOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    final searchNav = tester.widget<InkWell>(
+      find.byKey(const ValueKey('tv-nav-搜索')),
+    );
+    expect(searchNav.focusNode!.hasFocus, isTrue);
+
+    // 第一次确认切换页面，焦点仍留在导航栏；第二次确认才进入输入框。
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump();
+    expect(searchNav.focusNode!.hasFocus, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump();
+    final searchField = tester.widget<TextField>(find.byType(TextField));
+    expect(searchField.focusNode!.hasFocus, isTrue);
+
+    // Flutter 3.32 的测试键盘映射表没有 Android goBack 对应的物理键，
+    // 用同一返回处理分支支持的 Escape 验证焦点恢复。
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    await tester.pump();
+    expect(searchField.focusNode!.hasFocus, isFalse);
+    expect(searchNav.focusNode!.hasFocus, isTrue);
+  });
+
+  testWidgets('TV remote OK confirms search and exits text editing', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 720);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final container = ProviderContainer(overrides: _tvOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump();
+
+    final searchField = tester.widget<TextField>(find.byType(TextField));
+    expect(searchField.focusNode!.hasFocus, isTrue);
+    await tester.enterText(find.byType(TextField), '测试');
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump();
+    await tester.pump();
+
+    expect(searchField.focusNode!.hasFocus, isFalse);
+    expect(find.text('测试影片'), findsOneWidget);
+    expect(await container.read(searchHistoryProvider.future), contains('测试'));
+  });
+
+  testWidgets('TV moves right into content and left back to its rail item', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 720);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final container = ProviderContainer(overrides: _tvOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final homeNav = tester.widget<InkWell>(
+      find.byKey(const ValueKey('tv-nav-首页')),
+    );
+    expect(homeNav.focusNode!.hasFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(homeNav.focusNode!.hasFocus, isFalse);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    expect(homeNav.focusNode!.hasFocus, isTrue);
   });
 
   testWidgets('loads home content and opens the complete detail page', (

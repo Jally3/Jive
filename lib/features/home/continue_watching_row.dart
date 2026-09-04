@@ -1,10 +1,10 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
 import '../../data/history_repository.dart';
 import '../../domain/watch_record.dart';
+import '../../shared/app_network_image.dart';
 import '../player/resume_watch.dart';
 
 /// 本进程内隐藏首页续播条：点关闭或打开其他影片后不再出现，直到 App 重启。
@@ -162,17 +162,7 @@ class _Poster extends StatelessWidget {
                   size: 22,
                   color: AppColors.tertiary,
                 )
-              : CachedNetworkImage(
-                  imageUrl: url,
-                  fit: BoxFit.cover,
-                  placeholder: (_, _) =>
-                      const ColoredBox(color: AppColors.surface),
-                  errorWidget: (_, _, _) => const Icon(
-                    Icons.movie_outlined,
-                    size: 22,
-                    color: AppColors.tertiary,
-                  ),
-                ),
+              : AppNetworkImage(url: url, fit: BoxFit.cover, iconSize: 22),
         ),
       ),
     );

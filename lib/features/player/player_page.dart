@@ -35,6 +35,7 @@ import '../../domain/watch_record.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/is_tv.dart';
 import '../../shared/playback_scrubber.dart';
+import '../../tv/player/tv_player_controls.dart';
 import 'widgets/playback_status_indicator.dart';
 import 'widgets/player_controls_bar.dart';
 import 'widgets/player_error_view.dart';
@@ -130,6 +131,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   /// TV 遥控器/D-pad 按键处理的焦点节点，以 autofocus 挂在页面根部，
   /// 保证遥控器事件始终落到播放页。
   final FocusNode _remoteKeyFocusNode = FocusNode();
+  final FocusScopeNode _tvControlsFocusScopeNode = FocusScopeNode(
+    debugLabel: 'tv-player-controls',
+  );
+  final FocusNode _tvProgressFocusNode = FocusNode(
+    debugLabel: 'tv-player-progress',
+  );
+  final FocusNode _tvPrimaryActionFocusNode = FocusNode(
+    debugLabel: 'tv-player-primary-action',
+  );
 
   /// 选集/倍速菜单的 GlobalKey，供遥控器菜单键程序化打开；
   /// 按钮本身仍由原 ValueKey 定位。
@@ -1218,7 +1228,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       return;
     }
     controlsTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && !_episodeMenuOpen) {
+      if (mounted &&
+          !_episodeMenuOpen &&
+          !(_isTv && _tvControlsFocusScopeNode.hasFocus)) {
         _hideControls();
       }
     });
@@ -1245,7 +1257,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   KeyEventResult _handleRemoteKeyEvent(FocusNode node, KeyEvent event) {
     if (!_isTv || event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
-    // 返回/菜单/上下不依赖焦点位置：焦点在控制条按钮上时同样生效。
+    // 返回/菜单不依赖焦点位置：焦点在控制条按钮上时同样生效。
     if (key == LogicalKeyboardKey.goBack ||
         key == LogicalKeyboardKey.browserBack) {
       if (controlsVisible) {
@@ -1264,10 +1276,21 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowUp) {
-      if (!failed && !initializing) _showControls();
+      if (_tvControlsFocusScopeNode.hasFocus) {
+        return KeyEventResult.ignored;
+      }
+      if (!failed && !initializing) {
+        _showControls();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _tvProgressFocusNode.requestFocus();
+        });
+      }
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowDown) {
+      if (_tvControlsFocusScopeNode.hasFocus) {
+        return KeyEventResult.ignored;
+      }
       _hideControls();
       return KeyEventResult.handled;
     }
@@ -1398,6 +1421,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   /// 单集没有选集入口时退化为倍速菜单。
   void _openEpisodeMenuFromRemote() {
     if (failed || initializing) return;
+    if (_isTv) {
+      unawaited(_showTvEpisodePanel());
+      return;
+    }
     _showControls();
     final episodeMenu = _episodeMenuKey.currentState;
     if (episodeMenu != null) {
@@ -1405,6 +1432,96 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     } else {
       _speedMenuKey.currentState?.showButtonMenu();
     }
+  }
+
+  Future<void> _showTvSpeedPanel() async {
+    controlsTimer?.cancel();
+    setState(() => _episodeMenuOpen = true);
+    final selected = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('播放速度'),
+        children: [
+          for (final speed in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, speed),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Text(
+                  speed == 1 ? '正常' : '$speed×',
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: speed == playbackSpeed ? AppColors.accent : null,
+                    fontWeight: speed == playbackSpeed
+                        ? FontWeight.w700
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _episodeMenuOpen = false);
+    if (selected != null) await _setPlaybackSpeed(selected);
+    _tvPrimaryActionFocusNode.requestFocus();
+  }
+
+  Future<void> _showTvEpisodePanel() async {
+    if (_lineEpisodes.isEmpty) return;
+    controlsTimer?.cancel();
+    setState(() => _episodeMenuOpen = true);
+    final selected = await showDialog<Episode>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760, maxHeight: 520),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '选集（${_lineEpisodes.length}）',
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Expanded(
+                  child: GridView.builder(
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 4,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 2.5,
+                        ),
+                    itemCount: _lineEpisodes.length,
+                    itemBuilder: (_, index) {
+                      final item = _lineEpisodes[index];
+                      return FilledButton.tonal(
+                        autofocus: _isSameEpisode(item, episode),
+                        onPressed: () => Navigator.pop(dialogContext, item),
+                        child: Text(item.name, overflow: TextOverflow.ellipsis),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _episodeMenuOpen = false);
+    if (selected != null && !_isSameEpisode(selected, episode)) {
+      await _switchEpisode(selected);
+    }
+    _tvPrimaryActionFocusNode.requestFocus();
   }
 
   Future<void> _togglePlayback() async {
@@ -1553,6 +1670,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     speedBoosting.dispose();
     verticalDrag.dispose();
     _remoteKeyFocusNode.dispose();
+    _tvControlsFocusScopeNode.dispose();
+    _tvProgressFocusNode.dispose();
+    _tvPrimaryActionFocusNode.dispose();
     unawaited(() async {
       try {
         await _systemUiTransition;
@@ -1811,80 +1931,103 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                 ? _toggleFullScreen
                 : () => unawaited(_saveAndPop()),
           ),
-        PlayerControlsBar(
-          controller: current,
-          previewPosition: previewPosition,
-          seekClock: seekClock,
-          seekCommitting: seekCommitting,
-          episodeMenuKey: _episodeMenuKey,
-          speedMenuKey: _speedMenuKey,
-          controlsVisible: controlsVisible,
-          failed: failed,
-          fullScreen: fullScreen,
-          overlayLayout: overlayLayout,
-          compactControls: compactControls,
-          showEpisodeNav: showEpisodeNav,
-          fillScreen: fillScreen,
-          isPortraitVideo: _isPortraitVideo,
-          playbackStatus: playbackStatus,
-          playbackSpeed: playbackSpeed,
-          downloadStatus: currentDownload?.status,
-          episodes: _lineEpisodes,
-          isCurrentEpisode: (item) => _isSameEpisode(item, episode),
-          onShowControls: _showControls,
-          onTogglePlayback: _togglePlayback,
-          onPreviousEpisode: _adjacentEpisode(-1) == null
-              ? null
-              : () {
-                  _showControls();
-                  unawaited(_switchToAdjacentEpisode(-1));
-                },
-          onNextEpisode: _adjacentEpisode(1) == null
-              ? null
-              : () {
-                  _showControls();
-                  unawaited(_switchToAdjacentEpisode(1));
-                },
-          onVolumeButton: () {
-            _showControls();
-            setState(() => volumeSliderVisible = !volumeSliderVisible);
-          },
-          onVolumeLongPress: () => unawaited(_toggleMute()),
-          onDownload: currentDownload?.status == DownloadTaskStatus.completed
-              ? null
-              : _downloadCurrentEpisode,
-          onSpeedSelected: (speed) => unawaited(_setPlaybackSpeed(speed)),
-          onStatusLongPress: _showPlaybackStatusDetails,
-          onEpisodeMenuOpened: () {
-            controlsTimer?.cancel();
-            setState(() => _episodeMenuOpen = true);
-          },
-          onEpisodeMenuCanceled: () {
-            if (!mounted) return;
-            setState(() => _episodeMenuOpen = false);
-            _scheduleControlsHide();
-          },
-          onEpisodeSelected: (next) {
-            setState(() => _episodeMenuOpen = false);
-            unawaited(_switchEpisode(next));
-            _scheduleControlsHide();
-          },
-          onFillScreenToggle: () {
-            _showControls();
-            setState(() => fillScreen = !fillScreen);
-            if (fillScreen) {
-              showAppToast(context, '已切换为铺满模式，画面边缘可能被裁剪');
-            }
-          },
-          onFullScreenToggle: () {
-            _showControls();
-            unawaited(_toggleFullScreen());
-          },
-          onSeekStart: _seekStart,
-          onSeekUpdate: _seekUpdate,
-          onSeekEnd: _seekEnd,
-          onSeekCancel: _seekCancel,
-        ),
+        if (_isTv)
+          TvPlayerControls(
+            visible: controlsVisible,
+            playing: current.value.isPlaying,
+            position: previewPosition.value ?? current.value.position,
+            duration: seekClock.value ?? current.value.duration,
+            focusScopeNode: _tvControlsFocusScopeNode,
+            progressFocusNode: _tvProgressFocusNode,
+            primaryActionFocusNode: _tvPrimaryActionFocusNode,
+            onSeekBackward: () => _seekByRemote(const Duration(seconds: -10)),
+            onSeekForward: () => _seekByRemote(const Duration(seconds: 10)),
+            onTogglePlayback: () => unawaited(_togglePlayback()),
+            onDismiss: _hideControls,
+            onPreviousEpisode: _adjacentEpisode(-1) == null
+                ? null
+                : () => unawaited(_switchToAdjacentEpisode(-1)),
+            onNextEpisode: _adjacentEpisode(1) == null
+                ? null
+                : () => unawaited(_switchToAdjacentEpisode(1)),
+            onOpenSpeed: () => unawaited(_showTvSpeedPanel()),
+            onOpenEpisodes: () => unawaited(_showTvEpisodePanel()),
+          )
+        else
+          PlayerControlsBar(
+            controller: current,
+            previewPosition: previewPosition,
+            seekClock: seekClock,
+            seekCommitting: seekCommitting,
+            episodeMenuKey: _episodeMenuKey,
+            speedMenuKey: _speedMenuKey,
+            controlsVisible: controlsVisible,
+            failed: failed,
+            fullScreen: fullScreen,
+            overlayLayout: overlayLayout,
+            compactControls: compactControls,
+            showEpisodeNav: showEpisodeNav,
+            fillScreen: fillScreen,
+            isPortraitVideo: _isPortraitVideo,
+            playbackStatus: playbackStatus,
+            playbackSpeed: playbackSpeed,
+            downloadStatus: currentDownload?.status,
+            episodes: _lineEpisodes,
+            isCurrentEpisode: (item) => _isSameEpisode(item, episode),
+            onShowControls: _showControls,
+            onTogglePlayback: _togglePlayback,
+            onPreviousEpisode: _adjacentEpisode(-1) == null
+                ? null
+                : () {
+                    _showControls();
+                    unawaited(_switchToAdjacentEpisode(-1));
+                  },
+            onNextEpisode: _adjacentEpisode(1) == null
+                ? null
+                : () {
+                    _showControls();
+                    unawaited(_switchToAdjacentEpisode(1));
+                  },
+            onVolumeButton: () {
+              _showControls();
+              setState(() => volumeSliderVisible = !volumeSliderVisible);
+            },
+            onVolumeLongPress: () => unawaited(_toggleMute()),
+            onDownload: currentDownload?.status == DownloadTaskStatus.completed
+                ? null
+                : _downloadCurrentEpisode,
+            onSpeedSelected: (speed) => unawaited(_setPlaybackSpeed(speed)),
+            onStatusLongPress: _showPlaybackStatusDetails,
+            onEpisodeMenuOpened: () {
+              controlsTimer?.cancel();
+              setState(() => _episodeMenuOpen = true);
+            },
+            onEpisodeMenuCanceled: () {
+              if (!mounted) return;
+              setState(() => _episodeMenuOpen = false);
+              _scheduleControlsHide();
+            },
+            onEpisodeSelected: (next) {
+              setState(() => _episodeMenuOpen = false);
+              unawaited(_switchEpisode(next));
+              _scheduleControlsHide();
+            },
+            onFillScreenToggle: () {
+              _showControls();
+              setState(() => fillScreen = !fillScreen);
+              if (fillScreen) {
+                showAppToast(context, '已切换为铺满模式，画面边缘可能被裁剪');
+              }
+            },
+            onFullScreenToggle: () {
+              _showControls();
+              unawaited(_toggleFullScreen());
+            },
+            onSeekStart: _seekStart,
+            onSeekUpdate: _seekUpdate,
+            onSeekEnd: _seekEnd,
+            onSeekCancel: _seekCancel,
+          ),
         // Paint the paused-state button after the bottom controls so it
         // remains visible in the non-fullscreen player.
         PlayerCenterPlayButton(

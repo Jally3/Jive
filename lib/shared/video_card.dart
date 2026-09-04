@@ -1,7 +1,7 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../app/theme.dart';
 import '../domain/video.dart';
+import 'app_network_image.dart';
 
 class VideoCard extends StatefulWidget {
   const VideoCard({
@@ -79,16 +79,9 @@ class _VideoCardState extends State<VideoCard> {
                         size: 44,
                         color: AppColors.tertiary,
                       )
-                    : CachedNetworkImage(
-                        imageUrl: widget.video.posterUrl,
+                    : AppNetworkImage(
+                        url: widget.video.posterUrl,
                         fit: BoxFit.cover,
-                        placeholder: (_, _) =>
-                            const ColoredBox(color: AppColors.surface),
-                        errorWidget: (_, _, _) => const Icon(
-                          Icons.movie_outlined,
-                          size: 44,
-                          color: AppColors.tertiary,
-                        ),
                       ),
               ),
               if (widget.progress != null && widget.progress! > 0)

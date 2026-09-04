@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../shared/app_states.dart';
+import '../../shared/is_tv.dart';
 import '../../data/content/category_nav.dart';
 import '../../data/content/content_filter_policy.dart';
 import '../../data/content/my_channels_store.dart';
@@ -14,6 +15,7 @@ import '../../domain/video.dart';
 import '../../domain/vod_source.dart';
 import '../../shared/source_selector.dart';
 import '../../shared/video_grid.dart';
+import '../../tv/tv_horizontal_focus.dart';
 import '../detail/detail_page.dart';
 import './category_channels_page.dart';
 import './continue_watching_row.dart';
@@ -45,6 +47,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 网格滚动控制器与"返回顶部"悬浮按钮的可见性（滚动超过一屏左右时出现）。
   /// 不保存 PageStorage offset，切换分类或来源后始终从新列表顶部开始。
   final _scrollController = ScrollController(keepScrollOffset: false);
+  final _rootCategoryScrollController = ScrollController();
+  final _leafCategoryScrollController = ScrollController();
+  final Map<int, FocusNode> _rootCategoryFocusNodes = {};
+  final Map<int, FocusNode> _leafCategoryFocusNodes = {};
   final _showBackToTop = ValueNotifier<bool>(false);
 
   @override
@@ -52,8 +58,71 @@ class _HomePageState extends ConsumerState<HomePage> {
     controller?.removeListener(_changed);
     controller?.dispose();
     _scrollController.dispose();
+    _rootCategoryScrollController.dispose();
+    _leafCategoryScrollController.dispose();
+    for (final node in _rootCategoryFocusNodes.values) {
+      node.dispose();
+    }
+    for (final node in _leafCategoryFocusNodes.values) {
+      node.dispose();
+    }
     _showBackToTop.dispose();
     super.dispose();
+  }
+
+  FocusNode _rootCategoryFocusNode(int? id) =>
+      _rootCategoryFocusNodes.putIfAbsent(id ?? -1, () {
+        final node = FocusNode(
+          debugLabel: 'tv-root-category-${id ?? 'latest'}',
+        );
+        node.addListener(() {
+          if (node.hasFocus) _revealRootCategory(id);
+        });
+        return node;
+      });
+
+  FocusNode _leafCategoryFocusNode(int id) =>
+      _leafCategoryFocusNodes.putIfAbsent(id, () {
+        final node = FocusNode(debugLabel: 'tv-leaf-category-$id');
+        node.addListener(() {
+          if (node.hasFocus) _revealLeafCategory(id);
+        });
+        return node;
+      });
+
+  void _revealRootCategory(int? id) {
+    final ids = <int?>[null, ...?_visibleRoots?.map((item) => item.id)];
+    _scrollCategoryTo(
+      controller: _rootCategoryScrollController,
+      index: ids.indexOf(id).clamp(0, ids.length - 1),
+      count: ids.length,
+    );
+  }
+
+  void _revealLeafCategory(int id) {
+    _scrollCategoryTo(
+      controller: _leafCategoryScrollController,
+      index: _selectedRootChildren
+          .indexWhere((item) => item.id == id)
+          .clamp(0, _selectedRootChildren.length - 1),
+      count: _selectedRootChildren.length,
+    );
+  }
+
+  void _scrollCategoryTo({
+    required ScrollController controller,
+    required int index,
+    required int count,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !controller.hasClients || count <= 1) return;
+      final position = controller.position;
+      controller.animateTo(
+        position.maxScrollExtent * index / (count - 1),
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _changed() {
@@ -434,138 +503,214 @@ class _HomePageState extends ConsumerState<HomePage> {
     VodSource source, {
     required double mainRowHeight,
     required double subRowHeight,
-  }) => ClipRect(
-    key: const ValueKey('home-category-header'),
-    child: BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-      child: ColoredBox(
-        color: AppColors.background.withValues(alpha: 0.72),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: mainRowHeight,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ChipTheme(
-                      data: categoryChipTheme,
-                      child: ListView(
-                        key: PageStorageKey<String>(
-                          'home-root-category-tabs-${source.id}',
-                        ),
-                        padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-                        scrollDirection: Axis.horizontal,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: const Text('最新'),
-                              selected: _selectedRootId == null,
-                              showCheckmark: false,
-                              onSelected: (_) => _selectRoot(source, null),
-                            ),
-                          ),
-                          ...?_visibleRoots?.map(
-                            (item) => Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text(item.name),
-                                selected: _selectedRootId == item.id,
-                                showCheckmark: false,
-                                onSelected: (_) => _selectRoot(source, item.id),
-                              ),
-                            ),
-                          ),
-                          if (categoryError != null)
-                            ActionChip(
-                              label: const Text('重试'),
-                              onPressed: () => _loadCategories(source),
-                            ),
-                        ],
-                      ),
-                    ),
+  }) {
+    final isTv = ref.watch(isTvProvider).value ?? false;
+    final roots = <VideoCategory?>[null, ...?_visibleRoots];
+    final rootNodes = [
+      for (final item in roots) _rootCategoryFocusNode(item?.id),
+    ];
+    final leafNodes = [
+      for (final item in _selectedRootChildren) _leafCategoryFocusNode(item.id),
+    ];
+    final selectedRootIndex = roots.indexWhere(
+      (item) => item?.id == _selectedRootId,
+    );
+    final selectedRootNode =
+        rootNodes[selectedRootIndex < 0 ? 0 : selectedRootIndex];
+    final selectedLeafIndex = _selectedRootChildren.indexWhere(
+      (item) => item.id == selectedCategoryId,
+    );
+    final selectedLeafNode = leafNodes.isEmpty
+        ? null
+        : leafNodes[selectedLeafIndex < 0 ? 0 : selectedLeafIndex];
+    final rootChips = <Widget>[
+      for (var index = 0; index < roots.length; index++)
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: isTv
+              ? TvHorizontalFocus(
+                  key: ValueKey(
+                    'tv-root-category-${roots[index]?.id ?? 'latest'}',
                   ),
-                  // 固定在横滑列表右侧的「全部频道」入口按钮。
-                  if (_visibleRoots?.isNotEmpty ?? false)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: IconButton(
-                        key: const ValueKey('home-category-expand-button'),
-                        tooltip: '全部频道',
-                        visualDensity: VisualDensity.compact,
-                        icon: const Icon(
-                          Icons.keyboard_arrow_down_rounded,
-                          color: AppColors.secondary,
-                        ),
-                        onPressed: () => _openChannelsPage(source),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            if (_selectedRootChildren.isNotEmpty)
+                  index: index,
+                  nodes: rootNodes,
+                  focusNode: rootNodes[index],
+                  scrollController: _rootCategoryScrollController,
+                  downTarget: selectedLeafNode,
+                  onActivate: () => _selectRoot(source, roots[index]?.id),
+                  child: ChoiceChip(
+                    label: Text(roots[index]?.name ?? '最新'),
+                    selected: _selectedRootId == roots[index]?.id,
+                    showCheckmark: false,
+                    onSelected: (_) => _selectRoot(source, roots[index]?.id),
+                  ),
+                )
+              : ChoiceChip(
+                  label: Text(roots[index]?.name ?? '最新'),
+                  selected: _selectedRootId == roots[index]?.id,
+                  showCheckmark: false,
+                  onSelected: (_) => _selectRoot(source, roots[index]?.id),
+                ),
+        ),
+      if (categoryError != null)
+        ActionChip(
+          label: const Text('重试'),
+          onPressed: () => _loadCategories(source),
+        ),
+    ];
+    final leafChips = <Widget>[
+      for (var index = 0; index < _selectedRootChildren.length; index++)
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: isTv
+              ? TvHorizontalFocus(
+                  key: ValueKey(
+                    'tv-leaf-category-${_selectedRootChildren[index].id}',
+                  ),
+                  index: index,
+                  nodes: leafNodes,
+                  focusNode: leafNodes[index],
+                  scrollController: _leafCategoryScrollController,
+                  upTarget: selectedRootNode,
+                  onActivate: () =>
+                      _selectLeaf(_selectedRootChildren[index].id),
+                  child: ChoiceChip(
+                    label: Text(_selectedRootChildren[index].name),
+                    selected:
+                        selectedCategoryId == _selectedRootChildren[index].id,
+                    showCheckmark: false,
+                    onSelected: (_) =>
+                        _selectLeaf(_selectedRootChildren[index].id),
+                  ),
+                )
+              : ChoiceChip(
+                  label: Text(_selectedRootChildren[index].name),
+                  selected:
+                      selectedCategoryId == _selectedRootChildren[index].id,
+                  showCheckmark: false,
+                  onSelected: (_) =>
+                      _selectLeaf(_selectedRootChildren[index].id),
+                ),
+        ),
+    ];
+    return ClipRect(
+      key: const ValueKey('home-category-header'),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: ColoredBox(
+          color: AppColors.background.withValues(alpha: 0.72),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               SizedBox(
-                height: subRowHeight,
-                child: ChipTheme(
-                  data: categoryChipTheme.copyWith(
-                    backgroundColor: AppColors.elevated.withValues(alpha: 0.45),
-                    // copyWith 会沿用 categoryChipTheme 的 color 解析器（优先级高于
-                    // backgroundColor），这里同步覆盖为 0.45 版本，保持原有底色。
-                    color: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected)) {
-                        return states.contains(WidgetState.focused)
-                            ? AppColors.accentPressed
-                            : AppColors.accent;
-                      }
-                      return AppColors.elevated.withValues(alpha: 0.45);
-                    }),
-                    labelStyle: const TextStyle(
-                      color: AppColors.secondary,
-                      fontSize: 13,
+                height: mainRowHeight,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ChipTheme(
+                        data: categoryChipTheme,
+                        child: isTv
+                            ? SingleChildScrollView(
+                                key: PageStorageKey<String>(
+                                  'home-root-category-tabs-${source.id}',
+                                ),
+                                controller: _rootCategoryScrollController,
+                                padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                                scrollDirection: Axis.horizontal,
+                                child: Row(children: rootChips),
+                              )
+                            : ListView(
+                                key: PageStorageKey<String>(
+                                  'home-root-category-tabs-${source.id}',
+                                ),
+                                padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                                scrollDirection: Axis.horizontal,
+                                children: rootChips,
+                              ),
+                      ),
                     ),
-                    secondaryLabelStyle: const TextStyle(
-                      color: AppColors.onAccent,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                  ),
-                  child: ListView(
-                    key: PageStorageKey<String>(
-                      'home-leaf-category-tabs-${source.id}-'
-                      '${_selectedRootId ?? 'none'}',
-                    ),
-                    padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
-                    scrollDirection: Axis.horizontal,
-                    children: _selectedRootChildren
-                        .map(
-                          (item) => Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(item.name),
-                              selected: selectedCategoryId == item.id,
-                              showCheckmark: false,
-                              onSelected: (_) => _selectLeaf(item.id),
-                            ),
+                    // 固定在横滑列表右侧的「全部频道」入口按钮。
+                    if (_visibleRoots?.isNotEmpty ?? false)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: IconButton(
+                          key: const ValueKey('home-category-expand-button'),
+                          tooltip: '全部频道',
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: AppColors.secondary,
                           ),
-                        )
-                        .toList(),
-                  ),
+                          onPressed: () => _openChannelsPage(source),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-            Container(
-              height: 1,
-              color: AppColors.divider.withValues(alpha: 0.6),
-            ),
-          ],
+              if (_selectedRootChildren.isNotEmpty)
+                SizedBox(
+                  height: subRowHeight,
+                  child: ChipTheme(
+                    data: categoryChipTheme.copyWith(
+                      backgroundColor: AppColors.elevated.withValues(
+                        alpha: 0.45,
+                      ),
+                      // copyWith 会沿用 categoryChipTheme 的 color 解析器（优先级高于
+                      // backgroundColor），这里同步覆盖为 0.45 版本，保持原有底色。
+                      color: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.selected)) {
+                          return states.contains(WidgetState.focused)
+                              ? AppColors.accentPressed
+                              : AppColors.accent;
+                        }
+                        return AppColors.elevated.withValues(alpha: 0.45);
+                      }),
+                      labelStyle: const TextStyle(
+                        color: AppColors.secondary,
+                        fontSize: 13,
+                      ),
+                      secondaryLabelStyle: const TextStyle(
+                        color: AppColors.onAccent,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                    ),
+                    child: isTv
+                        ? SingleChildScrollView(
+                            key: PageStorageKey<String>(
+                              'home-leaf-category-tabs-${source.id}-'
+                              '${_selectedRootId ?? 'none'}',
+                            ),
+                            controller: _leafCategoryScrollController,
+                            padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+                            scrollDirection: Axis.horizontal,
+                            child: Row(children: leafChips),
+                          )
+                        : ListView(
+                            key: PageStorageKey<String>(
+                              'home-leaf-category-tabs-${source.id}-'
+                              '${_selectedRootId ?? 'none'}',
+                            ),
+                            padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+                            scrollDirection: Axis.horizontal,
+                            children: leafChips,
+                          ),
+                  ),
+                ),
+              Container(
+                height: 1,
+                color: AppColors.divider.withValues(alpha: 0.6),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _body(VodSource source) {
     final c = controller;

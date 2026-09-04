@@ -105,7 +105,10 @@ class _AppToastState extends State<_AppToast>
 
   @override
   Widget build(BuildContext context) {
-    final maxWidth = math.min(MediaQuery.widthOf(context) * 0.7, 360.0);
+    final maxWidth = math.min(
+      MediaQuery.sizeOf(context).width * 0.7,
+      360.0,
+    );
     final child = FadeTransition(
       opacity: CurvedAnimation(parent: _controller, curve: Curves.easeOut),
       child: SlideTransition(

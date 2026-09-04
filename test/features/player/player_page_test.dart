@@ -321,14 +321,20 @@ Future<void> _unmountPlayerPage(WidgetTester tester) async {
 }
 
 /// 控制条整体的透明度（0 = 隐藏，1 = 显示）。
-double _controlsBarOpacity(WidgetTester tester) => tester
-    .widget<AnimatedOpacity>(
-      find.descendant(
-        of: find.byType(PlayerControlsBar),
-        matching: find.byType(AnimatedOpacity),
-      ),
-    )
-    .opacity;
+double _controlsBarOpacity(WidgetTester tester) {
+  final tvControls = find.byKey(const ValueKey('tv-player-controls-opacity'));
+  if (tvControls.evaluate().isNotEmpty) {
+    return tester.widget<AnimatedOpacity>(tvControls).opacity;
+  }
+  return tester
+      .widget<AnimatedOpacity>(
+        find.descendant(
+          of: find.byType(PlayerControlsBar),
+          matching: find.byType(AnimatedOpacity),
+        ),
+      )
+      .opacity;
+}
 
 List<List<String>> _capturePreferredOrientations(WidgetTester tester) {
   final orientations = <List<String>>[];
@@ -1521,6 +1527,67 @@ void main() {
       await _unmountPlayerPage(tester);
     });
 
+    testWidgets(
+      'control focus separates progress seeking from action navigation',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(1920, 1080);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        videoPlatform.initializationPlan = [
+          _InitializationResult.success,
+          _InitializationResult.success,
+        ];
+        final video = _playableSeries('https://old.example.com');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+          isTv: true,
+        );
+        await _pumpUntil(
+          tester,
+          () =>
+              find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+          reason: 'player did not finish initialization',
+        );
+
+        // 纯播放状态下先收起，再由上键进入进度条焦点。
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+        await tester.pump();
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await _pumpUntil(
+          tester,
+          () => videoPlatform.seekPositions.isNotEmpty,
+          reason: 'focused TV progress did not seek',
+        );
+        final seekCount = videoPlatform.seekPositions.length;
+
+        // 下键进入按钮行；右键只移动按钮焦点，不再触发 seek。
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pump();
+        expect(videoPlatform.seekPositions.length, seekCount);
+
+        // 当前从播放按钮移动到“下一集”，OK 切换剧集。
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await _pumpUntil(
+          tester,
+          () => videoPlatform.dataSources.length == 2,
+          reason: 'focused next-episode action did not activate',
+        );
+        expect(
+          videoPlatform.dataSources.last.uri,
+          'https://old.example.com/2.mp4',
+        );
+        await _unmountPlayerPage(tester);
+      },
+    );
+
     testWidgets('retries seek once when native position snaps away', (
       tester,
     ) async {
@@ -1583,8 +1650,16 @@ void main() {
       await tester.pump();
       expect(_controlsBarOpacity(tester), 1);
 
-      // 按键唤出控制条后自动隐藏计时照旧。
+      // 焦点进入进度条后控制层不得自动隐藏。
       await tester.pump(const Duration(seconds: 4));
+      expect(_controlsBarOpacity(tester), 1);
+
+      // 第一次下键进入操作按钮行，第二次下键收起控制层。
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(_controlsBarOpacity(tester), 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
       expect(_controlsBarOpacity(tester), 0);
       await _unmountPlayerPage(tester);
     });
@@ -1699,10 +1774,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('第2集'), findsOneWidget);
 
-      // D-pad 移动焦点（第一次进入菜单首项，第二次移到第 2 集）后 OK 确认。
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      // TV 选集是四列网格，当前集默认聚焦，向右选择第 2 集。
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await _pumpUntil(

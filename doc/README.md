@@ -9,6 +9,9 @@ doc/
 ├── README.md                                 # 本索引
 ├── codebase/
 │   └── CODEBASE_MAP.md                       # 代码文件地图（逐文件索引）
+├── overview/
+│   ├── PROJECT_OVERVIEW.md                   # 项目简介：亮点功能与技术栈总览
+│   └── RESUME_SUMMARY.md                     # 简历项目介绍与面试追问深度准备
 ├── design/
 │   └── DESIGN_SYSTEM.md                      # 夜幕影院设计规范
 ├── backend/
@@ -38,6 +41,8 @@ doc/
 
 | 文档 | 状态 | 说明 |
 | --- | --- | --- |
+| [`overview/PROJECT_OVERVIEW.md`](overview/PROJECT_OVERVIEW.md) | 持续生效 | 项目简介：定位、亮点功能（多源聚合/边播边下/广告过滤/下载/多端适配）与技术栈总览 |
+| [`overview/RESUME_SUMMARY.md`](overview/RESUME_SUMMARY.md) | 持续生效 | 简历项目介绍（完整版/精简版）与三大核心点面试追问应答（本地代理/SingleFlight/广告过滤） |
 | [`codebase/CODEBASE_MAP.md`](codebase/CODEBASE_MAP.md) | 持续生效 | 代码文件地图：`lib/` 逐文件作用索引，新增/移动/删除文件时须同步 |
 | [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) | 持续生效 | 「夜幕影院」深色主题设计规范（颜色/字号/组件 Token），UI 改动须遵守 |
 | [`backend/BACKEND_TECHNICAL_REQUIREMENTS.md`](backend/BACKEND_TECHNICAL_REQUIREMENTS.md) | 进行中 | V1.2 后端：VOD 源目录、远程配置，以及可选的邮箱密码注册/登录 |

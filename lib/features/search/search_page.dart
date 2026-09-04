@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../shared/app_states.dart';
+import '../../shared/is_tv.dart';
 import '../../data/search_history_store.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
@@ -101,7 +103,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     if (trimmed.isEmpty) return;
     unawaited(ref.read(searchHistoryProvider.notifier).add(trimmed));
     controller?.search(trimmed, immediate: true);
+    if (ref.read(isTvProvider).value ?? false) {
+      // Android TV 遥控器确认搜索后退出编辑态，关闭软键盘并把方向键
+      // 交还给页面焦点系统；手机端仍保留提交后继续编辑的原行为。
+      widget.focusNode?.unfocus();
+    }
   }
+
+  void _submitFromTvRemote() => _submit(input.text);
 
   void _clear() {
     input.clear();
@@ -165,22 +174,34 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 16),
-        TextField(
-          controller: input,
-          focusNode: widget.focusNode,
-          onChanged: _onInputChanged,
-          onSubmitted: _submit,
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.search),
-            hintText: '搜索视频',
-            suffixIcon: input.text.isEmpty
-                ? null
-                : IconButton(
-                    icon: const Icon(Icons.close),
-                    tooltip: '清空',
-                    onPressed: _clear,
-                  ),
+        CallbackShortcuts(
+          bindings: ref.watch(isTvProvider).value ?? false
+              ? <ShortcutActivator, VoidCallback>{
+                  const SingleActivator(LogicalKeyboardKey.select):
+                      _submitFromTvRemote,
+                  const SingleActivator(LogicalKeyboardKey.enter):
+                      _submitFromTvRemote,
+                  const SingleActivator(LogicalKeyboardKey.numpadEnter):
+                      _submitFromTvRemote,
+                }
+              : const <ShortcutActivator, VoidCallback>{},
+          child: TextField(
+            controller: input,
+            focusNode: widget.focusNode,
+            onChanged: _onInputChanged,
+            onSubmitted: _submit,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              hintText: '搜索视频',
+              suffixIcon: input.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close),
+                      tooltip: '清空',
+                      onPressed: _clear,
+                    ),
+            ),
           ),
         ),
         const SizedBox(height: 8),

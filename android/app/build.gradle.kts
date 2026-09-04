@@ -7,8 +7,12 @@ plugins {
 
 android {
     namespace = "com.jive.app.jive"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // AndroidX Core 1.18 requires compiling against Android API 36.
+    // This does not change the API 23 minimum supported device version.
+    compileSdk = 36
+    // Flutter 3.32's default NDK 26.3 installation is incomplete locally.
+    // Pin the complete r26b installation for the Android 6 compatibility APK.
+    ndkVersion = "26.1.10909125"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -24,7 +28,8 @@ android {
         applicationId = "com.jive.app.jive"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // Android 6.0.1 compatibility package (API 23).
+        minSdk = 23
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

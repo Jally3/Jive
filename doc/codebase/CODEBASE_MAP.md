@@ -6,9 +6,9 @@
 
 ```text
 lib/
-├── main.dart                          # 应用入口：设置状态栏样式，启动 ProviderScope/JiveApp
+├── main.dart                          # 应用入口：安装 Android 6 兼容信任根、设置状态栏样式，启动 ProviderScope/JiveApp
 └── app/
-    ├── app.dart                       # 根组件 JiveApp 与 AppShell：主题、闪屏最短展示+源加载闸门、三页底部导航壳、下载生命周期联动
+    ├── app.dart                       # 根组件 JiveApp 与 AppShell：启动闸门、手机底栏/TV 左栏分流、焦点路由、下载生命周期联动
     └── theme.dart                     # 「夜幕影院」深色主题：AppColors 色板与 buildTheme()
 ```
 
@@ -16,14 +16,28 @@ lib/
 
 ```text
 lib/shared/
+├── app_network_image.dart             # 统一网络封面：URL 规范化、图片请求头、缓存加载与错误日志
 ├── app_states.dart                    # 通用状态视图：AppLoadingView / AppEmptyView / AppErrorView
 ├── app_toast.dart                     # 全局居中 toast：挂 root Overlay，2 秒自消，同时只显示一条
 ├── is_tv.dart                         # isTvProvider：经 jive/device 通道判断是否 Android TV（iOS/失败恒 false）
+├── legacy_android_tls.dart            # Android 6 TLS 兼容：向默认安全上下文追加内置 ISRG Root X1
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
 ├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
 ├── skip_settings.dart                 # 跳过片头/片尾芯片选择：详情页与非全屏播放器底部共用
 ├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、观看进度条、TV 焦点描边
 └── video_grid.dart                    # 自适应视频网格 VideoGrid：两列/四列 sliver 布局、动态卡片比例
+```
+
+## TV 展示与遥控器导航（`lib/tv/`）
+
+```text
+lib/tv/
+├── player/
+│   └── tv_player_controls.dart        # TV 播放控制层：可聚焦进度条、遥控按钮行与显式方向导航
+├── tv_app_shell.dart                  # TV 专用宽屏应用壳：左侧导航栏与内容焦点区
+├── tv_horizontal_focus.dart           # TV 横向分类焦点：确定性方向导航、确认操作与自动滚动显露
+├── tv_navigation_rail.dart            # TV 左侧导航及可视焦点项
+└── tv_theme.dart                      # TV 安全边距、导航尺寸与焦点视觉常量
 ```
 
 ## 领域模型（`lib/domain/`）
@@ -187,5 +201,5 @@ test/
 │   ├── download/                      #   预取器、任务管理器、磁盘空间
 │   └── *.dart                         #   三个仓储的测试在 data/ 根部
 ├── features/                          # 页面与控制器测试，目录与 features/ 同名对应
-└── shared/                            # 共享组件测试（toast、进度滑杆、选源弹层）
+└── shared/                            # 共享组件测试（网络封面、toast、进度滑杆、选源弹层）
 ```

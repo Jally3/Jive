@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
@@ -13,6 +12,7 @@ import '../../data/vod_source/vod_source_registry.dart';
 import '../../domain/video.dart';
 import '../../domain/playback_selection.dart';
 import '../../domain/vod_source.dart';
+import '../../shared/app_network_image.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/is_tv.dart';
 import '../../shared/skip_settings.dart';
@@ -698,14 +698,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                         size: 44,
                         color: AppColors.tertiary,
                       )
-                    : CachedNetworkImage(
-                        imageUrl: v.posterUrl,
-                        fit: BoxFit.cover,
-                        errorWidget: (_, _, _) => const Icon(
-                          Icons.movie_outlined,
-                          color: AppColors.tertiary,
-                        ),
-                      ),
+                    : AppNetworkImage(url: v.posterUrl, fit: BoxFit.cover),
               ),
             ),
           ),
@@ -978,15 +971,11 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                             )
                           : ClipRRect(
                               borderRadius: BorderRadius.circular(6),
-                              child: CachedNetworkImage(
-                                imageUrl: c.posterUrl,
+                              child: AppNetworkImage(
+                                url: c.posterUrl,
                                 width: 40,
                                 height: 60,
                                 fit: BoxFit.cover,
-                                errorWidget: (_, _, _) => const Icon(
-                                  Icons.movie_outlined,
-                                  color: AppColors.tertiary,
-                                ),
                               ),
                             ),
                       title: Text(
