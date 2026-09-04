@@ -38,10 +38,16 @@ int computeEffectiveQuota({
 enum DeleteResult { deleted, blocked, notFound, failed }
 
 class ClearAllResult {
-  ClearAllResult({this.deleted = 0, this.skippedActive = 0, this.failed = 0});
+  ClearAllResult({
+    this.deleted = 0,
+    this.skippedActive = 0,
+    this.skippedDownloads = 0,
+    this.failed = 0,
+  });
 
   int deleted;
   int skippedActive;
+  int skippedDownloads;
   int failed;
 }
 
@@ -408,6 +414,29 @@ class CacheManager {
         return created;
       });
 
+  /// 创建或复用下载条目时，在同一个缓存锁内完成下载标记和引用获取。
+  /// 这样退出清理与配额淘汰无法观察到“已入队但尚未受保护”的条目。
+  Future<({CacheEntry entry, CacheRef ref})> upsertDownloadEntry(
+    CacheEntry candidate,
+  ) => _lock.synchronize(() async {
+    final nowMs = _now();
+    final existing = _entries[candidate.key];
+    final base =
+        existing ??
+        candidate.copyWith(
+          lastAccessMs: candidate.lastAccessMs == 0
+              ? nowMs
+              : candidate.lastAccessMs,
+          createdAtMs: nowMs,
+        );
+    final entry = base.copyWith(downloadOrigin: true, updatedAtMs: nowMs);
+    _entries[entry.key] = entry;
+    await _persistState(entry.key);
+    _refs[entry.key] = (_refs[entry.key] ?? 0) + 1;
+    _scheduleIndexSave();
+    return (entry: entry, ref: CacheRef._(this, entry.key));
+  });
+
   Future<void> setExpectations(
     String entryKey,
     int expectedCount, {
@@ -720,9 +749,14 @@ class CacheManager {
         return _removeEntry(entry);
       });
 
-  Future<ClearAllResult> clearAll() => _lock.synchronize(() async {
+  /// 手动清理观看产生的缓存。离线下载只能通过明确的下载删除操作移除。
+  Future<ClearAllResult> clearPlaybackCache() => _lock.synchronize(() async {
     final result = ClearAllResult();
     for (final entry in _entries.values.toList()) {
+      if (entry.downloadOrigin) {
+        result.skippedDownloads++;
+        continue;
+      }
       if ((_refs[entry.key] ?? 0) > 0) {
         result.skippedActive++;
         continue;
@@ -810,6 +844,7 @@ class CacheManager {
     final complete = <CacheEntry>[];
     for (final entry in _entries.values) {
       if (entry.key == excludeKey) continue;
+      if (entry.downloadOrigin) continue;
       if ((_refs[entry.key] ?? 0) > 0) continue;
       if (entry.status == CacheEntryStatus.deleting) continue;
       if (entry.status == CacheEntryStatus.complete) {

@@ -13,5 +13,5 @@ class CacheRepository {
   Future<DeleteResult> deleteEntry(String entryKey) =>
       _manager.deleteEntry(entryKey);
 
-  Future<ClearAllResult> clearAll() => _manager.clearAll();
+  Future<ClearAllResult> clearPlaybackCache() => _manager.clearPlaybackCache();
 }

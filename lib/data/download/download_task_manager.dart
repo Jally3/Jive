@@ -230,6 +230,7 @@ class DownloadTaskManager {
   final Map<String, Map<String, int>> _resourceLengths = {};
   final Map<String, List<({int atMs, int bytes})>> _speedSamples = {};
   final Map<String, Timer> _speedTimers = {};
+  Timer? _progressEmitTimer;
   Future<void> _persistTail = Future<void>.value();
   final StreamController<List<DownloadTask>> _changes =
       StreamController<List<DownloadTask>>.broadcast();
@@ -360,11 +361,18 @@ class DownloadTaskManager {
     return task;
   }
 
-  Future<void> pause(String taskId) async {
+  Future<void> pause(String taskId, {bool waitUntilPaused = false}) async {
     _pauseRequested.add(taskId);
     final task = _tasks[taskId];
     if (task != null && task.status == DownloadTaskStatus.queued) {
       await _set(task.copyWith(status: DownloadTaskStatus.paused));
+      return;
+    }
+    if (waitUntilPaused) {
+      // 正在写入的分片需要完整落盘后才能安全停止。允许交互层等待这个
+      // 边界，以便持续展示“暂停中”并阻止重复操作。
+      final running = _running[taskId];
+      if (running != null) await running;
     }
   }
 
@@ -513,6 +521,8 @@ class DownloadTaskManager {
       await Future.wait(_running.values.toList());
     }
     await _persist();
+    _progressEmitTimer?.cancel();
+    _progressEmitTimer = null;
     await _changes.close();
   }
 
@@ -586,7 +596,7 @@ class DownloadTaskManager {
       final mapping = playlist.timelineMapping;
       final filterVersion = mapping == null ? 0 : downloadFilterVersion;
       final timelineVersion = mapping == null ? 0 : adTimelineVersion;
-      final entry = await cacheManager.upsertEntry(
+      final protectedEntry = await cacheManager.upsertDownloadEntry(
         CacheEntry(
           contentKeyVersion: contentKey.version,
           contentKeyHash: contentKey.hash,
@@ -607,6 +617,8 @@ class DownloadTaskManager {
           episodeName: selection.episode.name,
         ),
       );
+      final entry = protectedEntry.entry;
+      ref = protectedEntry.ref;
       await store.saveSourceManifest(
         contentKey.hash,
         revisionKeyHash,
@@ -631,8 +643,6 @@ class DownloadTaskManager {
         plan.expectedResourceCount,
         requireFinalization: true,
       );
-      await cacheManager.markDownloadOrigin(entry.key);
-      ref = await cacheManager.acquire(entry.key);
       task = await _set(
         task.copyWith(
           contentKeyHash: contentKey.hash,
@@ -652,7 +662,6 @@ class DownloadTaskManager {
         revisionKeyHash: revisionKeyHash,
         onResourceLength: (resourceId, length) {
           _resourceLengths[taskId]?[resourceId] = length;
-          _emit();
         },
         onBytesReceived: (bytes) => _recordBytes(taskId, bytes),
         failOnCacheUnavailable: true,
@@ -801,14 +810,16 @@ class DownloadTaskManager {
     final knownTotal = allLengthsKnown
         ? lengths.values.fold<int>(0, (sum, value) => sum + value)
         : 0;
-    await _set(
-      task.copyWith(
-        completedResourceCount: entry.committedResourceCount,
-        expectedResourceCount: expected,
-        downloadedBytes: entry.completeBytes + entry.partialBytes,
-        totalBytes: knownTotal > 0 ? knownTotal : 0,
-      ),
+    final updated = task.copyWith(
+      completedResourceCount: entry.committedResourceCount,
+      expectedResourceCount: expected,
+      downloadedBytes: entry.completeBytes + entry.partialBytes,
+      totalBytes: knownTotal > 0 ? knownTotal : 0,
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
     );
+    _tasks[taskId] = updated;
+    await _persist();
+    _scheduleProgressEmit();
   }
 
   void _recordBytes(String taskId, int bytes) {
@@ -821,7 +832,7 @@ class DownloadTaskManager {
       _tasks[taskId] = task.copyWith(
         downloadedBytes: task.downloadedBytes + bytes,
       );
-      _emit();
+      _scheduleProgressEmit();
     }
     if (_speedTimers.containsKey(taskId)) return;
     _speedTimers[taskId] = Timer.periodic(
@@ -848,7 +859,7 @@ class DownloadTaskManager {
     _tasks[taskId] = task.copyWith(
       speedBytesPerSecond: (bytes * 1000 / elapsedMs).round(),
     );
-    _emit();
+    _scheduleProgressEmit();
   }
 
   void _stopSpeedTimer(String taskId) {
@@ -883,7 +894,19 @@ class DownloadTaskManager {
   }
 
   void _emit() {
+    _progressEmitTimer?.cancel();
+    _progressEmitTimer = null;
     if (!_changes.isClosed) _changes.add(tasks);
+  }
+
+  /// 合并网络块、分片完成和多任务速度更新，避免下载页随每个数据块重建。
+  /// 状态切换仍通过 [_emit] 立即发布。
+  void _scheduleProgressEmit() {
+    if (_changes.isClosed || _progressEmitTimer != null) return;
+    _progressEmitTimer = Timer(const Duration(milliseconds: 500), () {
+      _progressEmitTimer = null;
+      _emit();
+    });
   }
 
   Future<void> _saveTimeline(

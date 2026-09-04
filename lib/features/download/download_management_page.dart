@@ -25,14 +25,18 @@ class _DownloadManagementPageState
   final Set<String> busyTaskIds = {};
   final Set<String> selectedTaskIds = {};
   final Set<String> expandedGroups = {};
+  final Set<String> manuallyCollapsedGroups = {};
   bool batchBusy = false;
   bool editing = false;
 
   @override
   Widget build(BuildContext context) {
     final tasks = ref.watch(downloadTasksProvider);
+    final allVisibleSelected = editing && _allVisibleSelected();
     return Scaffold(
       appBar: AppBar(
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
         title: Text(editing ? '已选 ${selectedTaskIds.length} 项' : '下载管理'),
         leading: editing
             ? IconButton(
@@ -44,9 +48,11 @@ class _DownloadManagementPageState
         actions: [
           if (editing) ...[
             IconButton(
-              tooltip: '全选当前筛选结果',
-              onPressed: _selectAllVisible,
-              icon: const Icon(Icons.select_all),
+              tooltip: allVisibleSelected ? '取消全选' : '全选当前筛选结果',
+              onPressed: _toggleSelectAllVisible,
+              icon: Icon(
+                allVisibleSelected ? Icons.deselect : Icons.select_all,
+              ),
             ),
           ] else
             IconButton(
@@ -81,7 +87,11 @@ class _DownloadManagementPageState
                 ),
               )
               .map((entry) => entry.key)
-              .where((key) => !expandedGroups.contains(key))
+              .where(
+                (key) =>
+                    !expandedGroups.contains(key) &&
+                    !manuallyCollapsedGroups.contains(key),
+              )
               .toList();
           if (autoExpand.isNotEmpty) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -139,11 +149,7 @@ class _DownloadManagementPageState
             task.status == DownloadTaskStatus.paused ||
             task.status == DownloadTaskStatus.failed,
       ),
-      'delete' => tasks.any(
-        (task) =>
-            task.status != DownloadTaskStatus.downloading &&
-            task.status != DownloadTaskStatus.queued,
-      ),
+      'delete' => true,
       _ => false,
     };
   }
@@ -232,9 +238,7 @@ class _DownloadManagementPageState
     final completed = tasks
         .where((task) => task.status == DownloadTaskStatus.completed)
         .length;
-    final expanded =
-        expandedGroups.contains(groupKey) ||
-        tasks.any((task) => task.status == DownloadTaskStatus.downloading);
+    final expanded = expandedGroups.contains(groupKey);
     return Card(
       color: AppColors.surface,
       margin: const EdgeInsets.only(bottom: 12),
@@ -254,8 +258,10 @@ class _DownloadManagementPageState
             onTap: () => setState(() {
               if (expanded) {
                 expandedGroups.remove(groupKey);
+                manuallyCollapsedGroups.add(groupKey);
               } else {
                 expandedGroups.add(groupKey);
+                manuallyCollapsedGroups.remove(groupKey);
               }
             }),
           ),
@@ -284,18 +290,31 @@ class _DownloadManagementPageState
     });
   }
 
-  void _selectAllVisible() {
-    final tasks = ref
-        .read(downloadTasksProvider)
-        .maybeWhen(
-          data: (value) => value.where(_matchesFilter),
-          orElse: () => const <DownloadTask>[],
-        );
-    setState(
-      () => selectedTaskIds
-        ..clear()
-        ..addAll(tasks.map((task) => task.taskId)),
-    );
+  List<DownloadTask> _visibleTasks() => ref
+      .read(downloadTasksProvider)
+      .maybeWhen(
+        data: (value) => value.where(_matchesFilter).toList(),
+        orElse: () => const <DownloadTask>[],
+      );
+
+  bool _allVisibleSelected() {
+    final tasks = _visibleTasks();
+    return tasks.isNotEmpty &&
+        tasks.every((task) => selectedTaskIds.contains(task.taskId));
+  }
+
+  void _toggleSelectAllVisible() {
+    final tasks = _visibleTasks();
+    final taskIds = tasks.map((task) => task.taskId).toList();
+    final shouldDeselect =
+        taskIds.isNotEmpty && taskIds.every(selectedTaskIds.contains);
+    setState(() {
+      if (shouldDeselect) {
+        selectedTaskIds.removeAll(taskIds);
+      } else {
+        selectedTaskIds.addAll(taskIds);
+      }
+    });
   }
 
   /// 删除确认弹窗：返回是否确认，以及是否连带删除本地文件。
@@ -377,10 +396,7 @@ class _DownloadManagementPageState
               await manager.resume(task.taskId);
             }
           case 'delete':
-            if (task.status != DownloadTaskStatus.downloading &&
-                task.status != DownloadTaskStatus.queued) {
-              await manager.removeTask(task.taskId, deleteCache: deleteCache);
-            }
+            await manager.removeTask(task.taskId, deleteCache: deleteCache);
         }
       }
       if (mounted) {
@@ -428,9 +444,9 @@ class _DownloadManagementPageState
   Widget _filterBar(List<DownloadTask> tasks) {
     const labels = {
       _DownloadFilter.all: '全部',
-      _DownloadFilter.active: '进行中',
+      _DownloadFilter.active: '未完成',
       _DownloadFilter.completed: '已完成',
-      _DownloadFilter.failed: '失败/取消',
+      _DownloadFilter.failed: '异常',
     };
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -509,12 +525,18 @@ class _DownloadManagementPageState
   }
 
   Widget _summary(List<DownloadTask> tasks) {
-    final active = tasks.where(
-      (task) =>
-          task.status == DownloadTaskStatus.downloading ||
-          task.status == DownloadTaskStatus.queued,
-    );
-    final speed = active.fold<int>(
+    final transferring = tasks
+        .where(
+          (task) =>
+              task.status == DownloadTaskStatus.downloading ||
+              task.status == DownloadTaskStatus.queued,
+        )
+        .toList();
+    final paused = tasks
+        .where((task) => task.status == DownloadTaskStatus.paused)
+        .length;
+    final unfinished = transferring.length + paused;
+    final speed = transferring.fold<int>(
       0,
       (sum, task) => sum + task.speedBytesPerSecond,
     );
@@ -559,6 +581,9 @@ class _DownloadManagementPageState
         children: [
           Text(
             value,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.fade,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w700,
@@ -580,66 +605,81 @@ class _DownloadManagementPageState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: active.isEmpty
-                      // 没有进行中的下载时不显示速度，避免 0 B/s 的噪音。
-                      ? const Text(
-                          '当前没有进行中的下载',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.secondary,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final speedView = transferring.isEmpty
+                    ? const Text(
+                        '当前没有进行中的下载',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.secondary,
+                        ),
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '当前速度',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.secondary,
+                            ),
                           ),
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              '当前速度',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.secondary,
-                              ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _formatSpeed(speed),
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.accent,
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatSpeed(speed),
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.accent,
-                              ),
-                            ),
-                          ],
-                        ),
-                ),
-                if (active.isNotEmpty || resumable > 0)
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                          ),
+                        ],
+                      );
+                final actions = Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (resumable > 0)
+                      OutlinedButton.icon(
+                        onPressed: batchBusy ? null : _resumeAll,
+                        icon: const Icon(Icons.play_arrow, size: 18),
+                        label: const Text('全部继续'),
+                      ),
+                    if (transferring.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: batchBusy ? null : _pauseAll,
+                        icon: const Icon(Icons.pause, size: 18),
+                        label: const Text('全部暂停'),
+                      ),
+                  ],
+                );
+                if (constraints.maxWidth < 520) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (resumable > 0)
-                        OutlinedButton.icon(
-                          onPressed: batchBusy ? null : _resumeAll,
-                          icon: const Icon(Icons.play_arrow, size: 18),
-                          label: const Text('全部继续'),
-                        ),
-                      if (active.isNotEmpty)
-                        OutlinedButton.icon(
-                          onPressed: batchBusy ? null : _pauseAll,
-                          icon: const Icon(Icons.pause, size: 18),
-                          label: const Text('全部暂停'),
-                        ),
+                      speedView,
+                      if (transferring.isNotEmpty || resumable > 0) ...[
+                        const SizedBox(height: 12),
+                        actions,
+                      ],
                     ],
-                  ),
-              ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(child: speedView),
+                    if (transferring.isNotEmpty || resumable > 0) actions,
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 16),
             Row(
               children: [
-                stat('进行中', '${active.length}'),
+                stat('未完成', '$unfinished'),
                 stat('已完成', '$completed'),
                 stat(
                   '失败/取消',
@@ -651,6 +691,24 @@ class _DownloadManagementPageState
             ),
             if (overall != null) ...[
               const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Text(
+                    '整体进度',
+                    style: TextStyle(fontSize: 12, color: AppColors.secondary),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${(overall * 100).round()}%',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.secondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
@@ -671,9 +729,14 @@ class _DownloadManagementPageState
     DownloadTask task, {
     bool nested = false,
   }) {
+    final taskBusy = busyTaskIds.contains(task.taskId);
+    final pausing =
+        taskBusy &&
+        (task.status == DownloadTaskStatus.downloading ||
+            task.status == DownloadTaskStatus.queued);
     // 排队中的任务显示空进度条，避免不定态动画被误解为正在下载。
-    final progress = task.status == DownloadTaskStatus.queued
-        ? 0.0
+    final progress = task.status == DownloadTaskStatus.completed
+        ? 1.0
         : task.totalBytes > 0
         ? (task.downloadedBytes / task.totalBytes).clamp(0.0, 1.0)
         : task.expectedResourceCount > 0
@@ -681,29 +744,30 @@ class _DownloadManagementPageState
             0.0,
             1.0,
           )
-        : null;
+        : task.status == DownloadTaskStatus.downloading
+        ? null
+        : 0.0;
     final sizeText = task.totalBytes > 0
         ? '${_formatBytes(task.downloadedBytes)} / ${_formatBytes(task.totalBytes)}'
-        : '${_formatBytes(task.downloadedBytes)} · ${_resourceProgressText(task.completedResourceCount, task.expectedResourceCount)}';
-    final statusColor = _statusColor(task.status);
-    // 只有下载中的任务显示速度；失败任务显示原因；其余只显示大小/片段。
-    final metaText = switch (task.status) {
-      DownloadTaskStatus.downloading =>
-        '$sizeText · 速度 ${_formatSpeed(task.speedBytesPerSecond)}',
-      DownloadTaskStatus.failed =>
-        '$sizeText · ${downloadFailureText(task.error)}',
-      _ => sizeText,
-    };
+        : '${_formatBytes(task.downloadedBytes)} · ${_resourceProgressText(task)}';
+    final statusColor = pausing
+        ? AppColors.secondary
+        : _statusColor(task.status);
+    final metaParts = <String>[
+      sizeText,
+      if (task.status == DownloadTaskStatus.downloading &&
+          !_isFinalizing(task) &&
+          !pausing)
+        '速度 ${_formatSpeed(task.speedBytesPerSecond)}',
+      if (task.status == DownloadTaskStatus.failed)
+        downloadFailureText(task.error),
+    ];
     return Card(
       color: nested ? Colors.transparent : AppColors.surface,
       elevation: nested ? 0 : null,
       margin: EdgeInsets.only(bottom: nested ? 0 : 10),
       child: InkWell(
-        onTap: editing
-            ? () => _toggleTaskSelection(task)
-            : task.status == DownloadTaskStatus.completed
-            ? () => _playTask(context, ref, task)
-            : null,
+        onTap: editing ? () => _toggleTaskSelection(task) : null,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
           child: Column(
@@ -718,7 +782,9 @@ class _DownloadManagementPageState
                     ),
                   Expanded(
                     child: Text(
-                      '${task.title} · ${task.episodeName}',
+                      nested
+                          ? task.episodeName
+                          : '${task.title} · ${task.episodeName}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w600),
@@ -739,7 +805,7 @@ class _DownloadManagementPageState
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        _statusShort(task),
+                        pausing ? '暂停中' : _statusShort(task),
                         style: TextStyle(
                           fontSize: 12,
                           color: statusColor,
@@ -764,56 +830,63 @@ class _DownloadManagementPageState
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      metaText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.secondary,
-                      ),
+                    child: Wrap(
+                      spacing: 10,
+                      runSpacing: 2,
+                      children: [
+                        for (final part in metaParts)
+                          Text(
+                            part,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.secondary,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   if (!editing &&
                       (task.status == DownloadTaskStatus.downloading ||
                           task.status == DownloadTaskStatus.queued))
                     IconButton(
+                      key: ValueKey('download-pause-${task.taskId}'),
                       visualDensity: VisualDensity.compact,
-                      tooltip: '暂停',
-                      onPressed: busyTaskIds.contains(task.taskId)
+                      tooltip: pausing ? '暂停中' : '暂停',
+                      onPressed: taskBusy
                           ? null
                           : () => _runTaskAction(
                               task,
-                              (manager) => manager.pause(task.taskId),
+                              (manager) => manager.pause(
+                                task.taskId,
+                                waitUntilPaused: true,
+                              ),
                             ),
-                      icon: const Icon(Icons.pause),
+                      icon: pausing
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                color: AppColors.secondary,
+                              ),
+                            )
+                          : const Icon(Icons.pause),
                     )
                   else if (!editing &&
                       (task.status == DownloadTaskStatus.paused ||
                           task.status == DownloadTaskStatus.failed))
                     IconButton(
+                      key: ValueKey('download-resume-${task.taskId}'),
                       visualDensity: VisualDensity.compact,
                       tooltip: task.status == DownloadTaskStatus.failed
                           ? '重试'
                           : '继续',
-                      onPressed: busyTaskIds.contains(task.taskId)
+                      onPressed: taskBusy
                           ? null
                           : () => _runTaskAction(
                               task,
                               (manager) => manager.resume(task.taskId),
                             ),
                       icon: const Icon(Icons.play_arrow),
-                    ),
-                  if (!editing &&
-                      (task.status == DownloadTaskStatus.downloading ||
-                          task.status == DownloadTaskStatus.queued))
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: '取消下载',
-                      onPressed: busyTaskIds.contains(task.taskId)
-                          ? null
-                          : () => _confirmCancelTask(task),
-                      icon: const Icon(Icons.close),
                     ),
                   if (!editing && task.status == DownloadTaskStatus.completed)
                     IconButton(
@@ -822,62 +895,12 @@ class _DownloadManagementPageState
                       onPressed: () => _playTask(context, ref, task),
                       icon: const Icon(Icons.play_circle_outline),
                     ),
-                  if (!editing &&
-                      task.status != DownloadTaskStatus.downloading &&
-                      task.status != DownloadTaskStatus.queued)
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: '删除任务记录',
-                      onPressed: busyTaskIds.contains(task.taskId)
-                          ? null
-                          : () => _confirmRemoveTask(task),
-                      icon: const Icon(
-                        Icons.delete_outline,
-                        color: AppColors.error,
-                      ),
-                    ),
                 ],
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  /// 取消即删除：停止下载并移除任务记录，页面不再保留「已取消」状态。
-  Future<void> _confirmCancelTask(DownloadTask task) async {
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('取消下载？'),
-        content: Text('将停止下载「${task.episodeName}」并删除任务记录。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('再想想'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('取消下载'),
-          ),
-        ],
-      ),
-    );
-    if (accepted != true || !mounted) return;
-    await _runTaskAction(task, (manager) => manager.removeTask(task.taskId));
-  }
-
-  Future<void> _confirmRemoveTask(DownloadTask task) async {
-    final result = await _confirmDelete(
-      title: '删除任务记录？',
-      message: '将从下载列表移除「${task.episodeName}」的任务记录。',
-    );
-    if (!result.confirmed || !mounted) return;
-    await _runTaskAction(
-      task,
-      (manager) =>
-          manager.removeTask(task.taskId, deleteCache: result.deleteCache),
     );
   }
 
@@ -921,19 +944,26 @@ class _DownloadManagementPageState
       ref.read(downloadManagerProvider.future);
 
   /// 短状态文案：失败原因较长，放在任务卡信息行展示，chip 只显示短标签。
-  static String _statusShort(DownloadTask task) => switch (task.status) {
-    DownloadTaskStatus.queued => '排队中',
-    DownloadTaskStatus.downloading => '下载中',
-    DownloadTaskStatus.paused => '已暂停',
-    DownloadTaskStatus.completed => '已完成',
-    DownloadTaskStatus.failed => '失败',
-    DownloadTaskStatus.cancelled => '已取消',
-  };
+  static bool _isFinalizing(DownloadTask task) =>
+      task.status == DownloadTaskStatus.downloading &&
+      task.expectedResourceCount > 0 &&
+      task.completedResourceCount >= task.expectedResourceCount;
+
+  static String _statusShort(DownloadTask task) => _isFinalizing(task)
+      ? '整理中'
+      : switch (task.status) {
+          DownloadTaskStatus.queued => '排队中',
+          DownloadTaskStatus.downloading => '下载中',
+          DownloadTaskStatus.paused => '已暂停',
+          DownloadTaskStatus.completed => '已完成',
+          DownloadTaskStatus.failed => '失败',
+          DownloadTaskStatus.cancelled => '已取消',
+        };
 
   static Color _statusColor(DownloadTaskStatus status) => switch (status) {
     DownloadTaskStatus.queued => AppColors.secondary,
     DownloadTaskStatus.downloading => AppColors.accent,
-    DownloadTaskStatus.paused => Colors.orangeAccent,
+    DownloadTaskStatus.paused => AppColors.secondary,
     DownloadTaskStatus.completed => AppColors.success,
     DownloadTaskStatus.failed => AppColors.error,
     DownloadTaskStatus.cancelled => AppColors.secondary,
@@ -941,9 +971,18 @@ class _DownloadManagementPageState
 
   static String _formatSpeed(int bytes) => '${_formatBytes(bytes)}/s';
 
-  static String _resourceProgressText(int completed, int expected) {
-    if (expected <= 0) return '片段数计算中';
-    return '片段 $completed/$expected';
+  static String _resourceProgressText(DownloadTask task) {
+    if (task.expectedResourceCount > 0) {
+      return '片段 ${task.completedResourceCount}/${task.expectedResourceCount}';
+    }
+    return switch (task.status) {
+      DownloadTaskStatus.queued => '等待开始',
+      DownloadTaskStatus.downloading => '正在解析',
+      DownloadTaskStatus.paused => '等待继续',
+      DownloadTaskStatus.completed => '已完成',
+      DownloadTaskStatus.failed => '未完成',
+      DownloadTaskStatus.cancelled => '已取消',
+    };
   }
 
   static String _formatBytes(int bytes) {

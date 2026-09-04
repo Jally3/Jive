@@ -391,6 +391,7 @@ class RevisionState extends CacheEntry {
       episodeId: entry.episodeId,
       episodeName: entry.episodeName,
       status: entry.status,
+      downloadOrigin: entry.downloadOrigin,
       expectedResourceCount: entry.expectedResourceCount,
       committedResourceCount: entry.committedResourceCount,
       completeBytes: entry.completeBytes,

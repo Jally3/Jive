@@ -31,10 +31,14 @@ class _FakeCacheController extends CacheController {
   }
 
   @override
-  Future<ClearAllResult> clearAll() async {
-    _entries.clear();
+  Future<ClearAllResult> clearPlaybackCache() async {
+    final before = _entries.length;
+    _entries.removeWhere((entry) => !entry.downloadOrigin);
     state = AsyncData(_stats());
-    return ClearAllResult(deleted: 1);
+    return ClearAllResult(
+      deleted: before - _entries.length,
+      skippedDownloads: _entries.length,
+    );
   }
 
   @override
@@ -87,7 +91,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('还没有播放缓存'), findsOneWidget);
     expect(find.textContaining('主动下载的任务在「下载」里'), findsOneWidget);
-    expect(find.text('清理全部'), findsNothing);
+    expect(find.text('清理播放缓存'), findsNothing);
   });
 
   testWidgets('shows summary and grouped entries when cache exists', (
@@ -97,7 +101,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('测试影片'), findsOneWidget);
     expect(find.text('第1集'), findsOneWidget);
-    expect(find.text('清理全部'), findsOneWidget);
+    expect(find.text('清理播放缓存'), findsOneWidget);
     expect(find.textContaining('已用'), findsOneWidget);
     expect(find.textContaining('离线下载请到「下载」'), findsOneWidget);
     expect(find.text('自动'), findsNothing);
@@ -128,10 +132,30 @@ void main() {
   testWidgets('clear all asks for confirmation', (tester) async {
     await tester.pumpWidget(wrap([entry()]));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('清理全部'));
+    await tester.tap(find.text('清理播放缓存'));
     await tester.pumpAndSettle();
-    expect(find.text('清空全部缓存？'), findsOneWidget);
-    expect(find.textContaining('下载列表里的任务不会被取消'), findsOneWidget);
+    expect(find.text('清理播放缓存？'), findsOneWidget);
+    expect(find.textContaining('离线下载与正在播放的内容会保留'), findsOneWidget);
+  });
+
+  testWidgets('clear playback cache preserves offline downloads', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap([
+        entry(episode: '播放缓存'),
+        entry(episode: '离线下载', downloadOrigin: true),
+      ]),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('清理播放缓存'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '清理'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('播放缓存'), findsNothing);
+    expect(find.text('离线下载'), findsWidgets);
   });
 
   testWidgets('status labels distinguish playback cache from downloads', (

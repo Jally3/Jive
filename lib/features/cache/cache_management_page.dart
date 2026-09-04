@@ -17,15 +17,13 @@ class CacheManagementPage extends ConsumerStatefulWidget {
 class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
   bool _busy = false;
 
-  Future<void> _clearAll() async {
+  Future<void> _clearPlaybackCache() async {
     if (_busy) return;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('清空全部缓存？'),
-        content: const Text(
-          '将删除所有本地片段以释放空间，包括离线下载占用的文件。下载列表里的任务不会被取消。正在播放的内容会跳过。',
-        ),
+        title: const Text('清理播放缓存？'),
+        content: const Text('将删除观看时自动保存的本地片段以释放空间。离线下载与正在播放的内容会保留。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -33,7 +31,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('清空'),
+            child: const Text('清理'),
           ),
         ],
       ),
@@ -43,15 +41,17 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
     try {
       final result = await ref
           .read(cacheControllerProvider.notifier)
-          .clearAll();
+          .clearPlaybackCache();
       if (mounted) {
         showAppToast(
           context,
           result.failed > 0
-              ? '已清空 ${result.deleted} 项，${result.failed} 项失败'
+              ? '已清理 ${result.deleted} 项，${result.failed} 项失败'
               : result.skippedActive > 0
-              ? '已清空 ${result.deleted} 项，${result.skippedActive} 项正在播放已跳过'
-              : '已清空全部缓存',
+              ? '已清理 ${result.deleted} 项，${result.skippedActive} 项正在播放已跳过'
+              : result.deleted > 0
+              ? '已清理 ${result.deleted} 项播放缓存'
+              : '没有可清理的播放缓存',
         );
       }
     } catch (_) {
@@ -210,9 +210,9 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: _busy ? null : _clearAll,
+                      onPressed: _busy ? null : _clearPlaybackCache,
                       icon: const Icon(Icons.delete_sweep_outlined),
-                      label: const Text('清理全部'),
+                      label: const Text('清理播放缓存'),
                     ),
                   ),
                 ],

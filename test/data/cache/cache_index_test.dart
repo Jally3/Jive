@@ -51,7 +51,7 @@ void main() {
 
   test('revision state round trip preserves resources', () {
     final state = RevisionState.fromEntry(
-      entry(),
+      entry().copyWith(downloadOrigin: true),
       resources: {
         'sha256:${'0' * 64}': const CacheResourceRecord(
           resourceType: CacheResourceType.segment,
@@ -71,6 +71,7 @@ void main() {
       CacheResourceStatus.complete,
     );
     expect(restored.resources['sha256:${'0' * 64}']?.lastAccessMs, 9);
+    expect(restored.downloadOrigin, isTrue);
   });
 
   test('downloadOrigin round trips and defaults to false for old states', () {

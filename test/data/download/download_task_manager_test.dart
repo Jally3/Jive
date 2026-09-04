@@ -205,8 +205,15 @@ void main() {
     await firstManager.initialize();
     final task = await firstManager.enqueue(_selection());
     await segmentStarted.future;
-    await firstManager.pause(task.taskId);
+    var pauseCompleted = false;
+    final pauseFuture = firstManager
+        .pause(task.taskId, waitUntilPaused: true)
+        .whenComplete(() => pauseCompleted = true);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(pauseCompleted, isFalse);
     releaseSegment.complete();
+    await pauseFuture;
+    expect(pauseCompleted, isTrue);
     for (var i = 0; i < 100; i++) {
       if (firstManager.tasks.single.status == DownloadTaskStatus.paused) break;
       await Future<void>.delayed(const Duration(milliseconds: 10));

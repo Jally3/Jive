@@ -103,7 +103,7 @@ lib/data/playback/
 
 ```text
 lib/data/cache/
-├── cache_manager.dart                 # 缓存核心 CacheManager：磁盘配额计算、LRU/TTL 淘汰、引用计数 CacheRef 与写租约 WriteLease
+├── cache_manager.dart                 # 缓存核心 CacheManager：磁盘配额、下载保护的 LRU/TTL 淘汰、引用计数 CacheRef 与写租约 WriteLease
 ├── cache_index.dart                   # 磁盘索引格式与 CacheIndexStore：条目/资源记录、state.json 探测、目录常量
 ├── cache_io.dart                      # 资源抓取器 ResourceFetcher：读穿/写穿缓存、SingleFlight 合并、响应头白名单与完整性校验
 ├── content_key.dart                   # ContentKey 构建：源+视频+线路+剧集身份编码后的 sha256 寻址
@@ -112,7 +112,7 @@ lib/data/cache/
 ├── cache_ttl_policy.dart              # 缓存 TTL 选项 cacheTtlProvider：退出清理 / 1 小时 / 5 小时 / 1 天
 ├── cache_providers.dart               # 缓存装配：持久目录（含旧临时目录迁移）、diskSpaceProvider、cacheManagerProvider
 ├── cache_repository.dart              # CacheManager 的薄封装 CacheRepository，供 UI 层依赖
-└── cache_controller.dart              # 缓存页状态 cacheControllerProvider：统计刷新、单条删除、清空全部
+└── cache_controller.dart              # 缓存页状态 cacheControllerProvider：统计刷新、单条删除、批量清理播放缓存
 ```
 
 ## 下载（`lib/data/download/`）
@@ -122,7 +122,7 @@ lib/data/cache/
 ```text
 lib/data/download/
 ├── download_manager.dart              # 边下边播分片预取器 SegmentPrefetcher：并发抓取、指数退避、窗口随播放位置重锚定
-├── download_task_manager.dart         # 显式下载引擎 DownloadTaskManager：任务持久化、并发许可池、暂停/恢复/断点续下、速度采样
+├── download_task_manager.dart         # 显式下载引擎 DownloadTaskManager：任务持久化、并发许可池、暂停/恢复/断点续下、速度采样与 UI 进度合并发布
 ├── download_providers.dart            # 下载装配 downloadManagerProvider：注入缓存与剧集选择回解析，联动 App 生命周期
 └── platform_disk_space.dart           # 磁盘空间通道 PlatformDiskSpaceProvider：MethodChannel(jive/cache) 读容量/可用空间
 ```
@@ -165,7 +165,7 @@ lib/features/
 ├── cache/
 │   └── cache_management_page.dart     # 缓存管理页：用量统计、配额展示、单条删除与清空确认
 ├── download/
-│   └── download_management_page.dart  # 下载管理页：任务筛选、批量暂停/删除、离线播放入口
+│   └── download_management_page.dart  # 下载管理页：响应式速度/进度摘要、任务分组筛选、批量操作、离线播放入口
 └── settings/
     ├── source_management_page.dart    # 源管理页：源列表、健康检查（延迟/可用性）与结果持久化展示
     └── more_settings_page.dart        # 更多设置：缓存 TTL 选择、预加载开关、缓存管理入口

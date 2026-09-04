@@ -302,17 +302,52 @@ void main() {
       expect((await manager.stats()).entryCount, 1);
     });
 
-    test('clearAll skips active entries and reports counts', () async {
+    test(
+      'clearPlaybackCache skips active entries and reports counts',
+      () async {
+        final manager = CacheManager(store: store, diskSpace: disk);
+        await manager.initialize();
+        final active = await manager.upsertEntry(entry('active'));
+        await manager.upsertEntry(entry('idle'));
+        final ref = await manager.acquire(active.key);
+        final result = await manager.clearPlaybackCache();
+        expect(result.deleted, 1);
+        expect(result.skippedActive, 1);
+        expect(result.skippedDownloads, 0);
+        expect(result.failed, 0);
+        await ref.dispose();
+      },
+    );
+
+    test('clearPlaybackCache preserves explicit downloads', () async {
       final manager = CacheManager(store: store, diskSpace: disk);
       await manager.initialize();
-      final active = await manager.upsertEntry(entry('active'));
-      await manager.upsertEntry(entry('idle'));
-      final ref = await manager.acquire(active.key);
-      final result = await manager.clearAll();
+      await manager.upsertEntry(entry('playback'));
+      final protected = await manager.upsertDownloadEntry(entry('download'));
+      await protected.ref.dispose();
+
+      final result = await manager.clearPlaybackCache();
+
       expect(result.deleted, 1);
-      expect(result.skippedActive, 1);
-      expect(result.failed, 0);
-      await ref.dispose();
+      expect(result.skippedDownloads, 1);
+      expect(await manager.getEntry(protected.entry.key), isNotNull);
+    });
+
+    test('upsertDownloadEntry marks and acquires atomically', () async {
+      final manager = CacheManager(store: store, diskSpace: disk);
+      await manager.initialize();
+      final playback = await manager.upsertEntry(entry('shared'));
+
+      final protected = await manager.upsertDownloadEntry(entry('shared'));
+
+      expect(protected.entry.key, playback.key);
+      expect(protected.entry.downloadOrigin, isTrue);
+      expect(await manager.deleteEntry(playback.key), DeleteResult.blocked);
+      await protected.ref.dispose();
+      expect(
+        await manager.deletePlaybackEntry(playback.key),
+        DeleteResult.blocked,
+      );
     });
 
     test('touch updates lastAccess for LRU ordering', () async {
@@ -586,7 +621,7 @@ void main() {
       expect((await manager.getEntry(download.key))!.downloadOrigin, isTrue);
     });
 
-    test('quota LRU does not exempt downloadOrigin entries', () async {
+    test('quota LRU preserves downloadOrigin entries', () async {
       disk = _FakeDiskSpace(1000, total: null);
       final manager = CacheManager(store: store, diskSpace: disk, maxAge: null);
       await manager.initialize();
@@ -600,9 +635,9 @@ void main() {
       );
       final fresh = await manager.upsertEntry(entry('fresh'));
       final freshLease = await manager.reserve(fresh.key, 600);
-      expect(freshLease, isNotNull);
+      expect(freshLease, isNull);
       await freshLease?.cancel();
-      expect(await manager.getEntry(old.key), isNull);
+      expect(await manager.getEntry(old.key), isNotNull);
       expect(await manager.getEntry(fresh.key), isNotNull);
     });
 
@@ -670,5 +705,40 @@ void main() {
       expect(await restored.getEntry(old.key), isNull);
       expect((await restored.stats()).entryCount, 0);
     });
+
+    test(
+      'restart preserves downloadOrigin and automatic cleanup protection',
+      () async {
+        final manager = CacheManager(
+          store: store,
+          diskSpace: disk,
+          maxAge: const Duration(days: 3),
+        );
+        await manager.initialize();
+        final oldDownload = entry('download').copyWith(
+          lastAccessMs: DateTime.now()
+              .subtract(const Duration(days: 4))
+              .millisecondsSinceEpoch,
+        );
+        final protected = await manager.upsertDownloadEntry(oldDownload);
+        await protected.ref.dispose();
+        await manager.flush();
+
+        final restored = CacheManager(
+          store: store,
+          diskSpace: disk,
+          maxAge: const Duration(days: 3),
+        );
+        await restored.initialize();
+
+        final entryAfterRestart = await restored.getEntry(protected.entry.key);
+        expect(entryAfterRestart, isNotNull);
+        expect(entryAfterRestart!.downloadOrigin, isTrue);
+        expect(
+          await restored.deletePlaybackEntry(protected.entry.key),
+          DeleteResult.blocked,
+        );
+      },
+    );
   });
 }
