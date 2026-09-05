@@ -104,13 +104,14 @@ lib/
 lib/domain/
 ├── vod_source.dart          # VodSource 模型（id/name/baseUri/adapterType/search/enabled/priority/notification/featuredCategoryIds/pluginConfigUri）
 ├── video.dart               # Video 含 sourceId/sourceVideoId/globalId；VideoRef；PlaybackLine；VideoPage.total
+├── video_feed.dart          # VideoFeed：updated/popular/newReleases/topRated
 
 lib/data/
-├── video_repository.dart    # VideoRepositoryImpl 统一入口，按 source/ref 请求
+├── video_repository.dart    # VideoRepositoryImpl 统一入口，按 source/ref/feed 请求
 └── vod_source/
     ├── vod_source_config.dart   # 从 assets 读取 config/vod_sources.json
     ├── vod_source_registry.dart # 内置源列表 + adapter 映射；vodSourceRegistryProvider
-    ├── vod_source_adapter.dart  # VodSourceAdapter 接口
+    ├── vod_source_adapter.dart  # VodSourceAdapter + 可选 VideoFeedSourceAdapter 能力
     ├── vod_source_preferences.dart   # selectedVodSourceProvider（持久化全局源）
     └── adapters/
         ├── mac_cms_v10_adapter.dart  # Mac CMS V10 解析实现
@@ -122,7 +123,7 @@ lib/data/
 
 lib/features/
 ├── home/
-│   └── paged_video_controller.dart          # 首页/单源分页（绑定 VodSource）
+│   └── paged_video_controller.dart          # 首页/单源分页（绑定 VodSource + VideoFeed）
 ├── search/
 │   └── multi_source_search_controller.dart  # 搜索页 1+3 多源探测协调器
 └── detail/

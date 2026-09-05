@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../../data/video_repository.dart';
 import '../../domain/video.dart';
+import '../../domain/video_feed.dart';
 import '../../domain/vod_source.dart';
 
 class PagedVideoController extends ChangeNotifier {
@@ -14,6 +15,7 @@ class PagedVideoController extends ChangeNotifier {
   VodSource source;
   int? categoryId;
   String? keyword;
+  VideoFeed feed = VideoFeed.updated;
   final List<Video> items = [];
   int _page = 0;
   bool hasMore = true;
@@ -26,7 +28,7 @@ class PagedVideoController extends ChangeNotifier {
   final Map<String, _FirstPageSnapshot> _firstPageCache = {};
   static const _firstPageCacheDuration = Duration(minutes: 2);
 
-  String get _cacheKey => '${categoryId ?? ''}|${keyword ?? ''}';
+  String get _cacheKey => '${feed.name}|${categoryId ?? ''}|${keyword ?? ''}';
 
   @override
   void dispose() {
@@ -41,10 +43,12 @@ class PagedVideoController extends ChangeNotifier {
   Future<void> loadInitial({
     int? category,
     String? search,
+    VideoFeed? selectedFeed,
     bool forceRefresh = false,
   }) async {
     categoryId = category;
     keyword = search;
+    feed = selectedFeed ?? feed;
     _generation++;
     items.clear();
     _page = 0;
@@ -78,8 +82,15 @@ class PagedVideoController extends ChangeNotifier {
     _notify();
   }
 
-  Future<void> refresh() =>
-      loadInitial(category: categoryId, search: keyword, forceRefresh: true);
+  Future<void> refresh() => loadInitial(
+    category: categoryId,
+    search: keyword,
+    selectedFeed: feed,
+    forceRefresh: true,
+  );
+
+  Future<void> selectFeed(VideoFeed value) =>
+      loadInitial(category: categoryId, search: keyword, selectedFeed: value);
 
   Future<void> loadMore() async {
     if (loading || !hasMore) return;
@@ -91,12 +102,20 @@ class PagedVideoController extends ChangeNotifier {
 
   Future<void> _load(int page, int generation) async {
     try {
-      final result = await repository.fetchPage(
-        source,
-        page: page,
-        categoryId: categoryId,
-        keyword: keyword,
-      );
+      final hasSearch = keyword?.trim().isNotEmpty ?? false;
+      final result = hasSearch
+          ? await repository.fetchPage(
+              source,
+              page: page,
+              categoryId: categoryId,
+              keyword: keyword,
+            )
+          : await repository.fetchFeedPage(
+              source,
+              feed: feed,
+              page: page,
+              categoryId: categoryId,
+            );
       if (_disposed || generation != _generation) return;
       final known = items.map((item) => item.globalId).toSet();
       items.addAll(result.items.where((item) => known.add(item.globalId)));

@@ -83,6 +83,29 @@ void main() {
     expect(CacheEntry.fromJson(legacy).downloadOrigin, isFalse);
   });
 
+  test('playback stats exclude offline downloads from every total', () {
+    final stats = CacheStats(
+      completeBytes: 1100,
+      partialBytes: 220,
+      reservedBytes: 0,
+      quotaBytes: 4096,
+      entries: [
+        entry(),
+        entry().copyWith(
+          downloadOrigin: true,
+          completeBytes: 1000,
+          partialBytes: 200,
+        ),
+      ],
+    );
+
+    expect(stats.playback.entryCount, 1);
+    expect(stats.playback.completeBytes, 100);
+    expect(stats.playback.partialBytes, 20);
+    expect(stats.playback.usedBytes, 120);
+    expect(stats.playback.quotaBytes, 4096);
+  });
+
   test('index save and load round trip', () async {
     await store.saveIndex([entry(), entry(title: '另一部')]);
     final loaded = await store.loadIndex();

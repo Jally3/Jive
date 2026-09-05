@@ -5,6 +5,7 @@ import 'package:jive/app/app.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
+import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/features/home/home_page.dart';
 import 'package:jive/features/splash/splash_page.dart';
@@ -19,7 +20,21 @@ final _testSource = VodSource(
   adapterType: 'mac_cms_v10',
 );
 
-class _FakeRepository implements VideoRepository {
+class _FakeRepository implements VideoRepository, VideoFeedRepository {
+  @override
+  Set<VideoFeed> supportedFeeds(VodSource source) => const {
+    VideoFeed.updated,
+    VideoFeed.popular,
+  };
+
+  @override
+  Future<VideoPage> fetchFeedPage(
+    VodSource source, {
+    required VideoFeed feed,
+    int page = 1,
+    int? categoryId,
+  }) => fetchPage(source, page: page, categoryId: categoryId);
+
   @override
   Future<VideoPage> fetchPage(
     VodSource source, {
@@ -152,21 +167,13 @@ ScrollableState _homeScrollState(WidgetTester tester) => tester
 ScrollableState _rootTabScrollState(WidgetTester tester) => tester
     .stateList<ScrollableState>(
       find.descendant(
-        of: find.byKey(const ValueKey('home-category-header')),
+        of: find.byKey(
+          const PageStorageKey<String>('home-root-category-tabs-storm'),
+        ),
         matching: find.byType(Scrollable),
       ),
     )
     .firstWhere((state) => state.position.axis == Axis.horizontal);
-
-ScrollableState _leafTabScrollState(WidgetTester tester) => tester
-    .stateList<ScrollableState>(
-      find.descendant(
-        of: find.byKey(const ValueKey('home-category-header')),
-        matching: find.byType(Scrollable),
-      ),
-    )
-    .where((state) => state.position.axis == Axis.horizontal)
-    .last;
 
 /// 「全部频道」页面的滚动容器内，先把目标滚进可视区再点。
 Future<void> _scrollPanelUntilVisible(WidgetTester tester, Finder target) {
@@ -212,20 +219,61 @@ void main() {
     expect(grid.bottom, scaffold.bottom);
   });
 
+  testWidgets('home uses a compact intro and an explicit channels icon', (
+    tester,
+  ) async {
+    await _pumpHome(tester);
+
+    expect(
+      tester.getSize(find.byKey(const ValueKey('home-intro-header'))).height,
+      94,
+    );
+    final expandButton = find.byKey(
+      const ValueKey('home-category-expand-button'),
+    );
+    expect(
+      find.descendant(
+        of: expandButton,
+        matching: find.byIcon(Icons.grid_view_rounded),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('home exposes update and popular feeds in a fixed row', (
+    tester,
+  ) async {
+    await _pumpHome(tester);
+
+    expect(find.widgetWithText(ChoiceChip, '更新'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '热门'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '新片'), findsNothing);
+    expect(find.widgetWithText(ChoiceChip, '高分'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '热门'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(
+      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '热门')).selected,
+      isTrue,
+    );
+  });
+
   testWidgets('home category header stays aligned and pins with the grid', (
     tester,
   ) async {
     await _pumpHome(tester);
-    final latestChip = find.widgetWithText(ChoiceChip, '最新');
+    final categoryChip = find.widgetWithText(ChoiceChip, '全部');
     final firstCard = find.byType(VideoCard).first;
     final scrollState = _homeScrollState(tester);
     final initialGap =
-        tester.getTopLeft(firstCard).dy - tester.getBottomLeft(latestChip).dy;
+        tester.getTopLeft(firstCard).dy - tester.getBottomLeft(categoryChip).dy;
 
     scrollState.position.jumpTo(70);
     await tester.pump();
     final scrollingGap =
-        tester.getTopLeft(firstCard).dy - tester.getBottomLeft(latestChip).dy;
+        tester.getTopLeft(firstCard).dy - tester.getBottomLeft(categoryChip).dy;
     expect(scrollingGap, closeTo(initialGap, 0.01));
 
     scrollState.position.jumpTo(170);
@@ -295,7 +343,7 @@ void main() {
     expect(_rootTabScrollState(tester).position.pixels, closeTo(offset, 0.01));
   });
 
-  testWidgets('selecting a far-right leaf keeps the sub-tab strip position', (
+  testWidgets('nested categories are selected from an inline horizontal row', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -306,19 +354,32 @@ void main() {
 
     await tester.tap(find.widgetWithText(ChoiceChip, '电影'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 300));
 
-    final beforeState = _leafTabScrollState(tester);
-    beforeState.position.jumpTo(beforeState.position.maxScrollExtent);
+    expect(find.byType(BottomSheet), findsNothing);
+    final firstChild = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, '子分类0'),
+    );
+    expect(firstChild.selected, isTrue);
+    final childTabs = find.byKey(
+      const PageStorageKey<String>('home-child-category-tabs-storm-100'),
+    );
+    expect(childTabs, findsOneWidget);
+    await tester.drag(childTabs, const Offset(-500, 0));
     await tester.pump();
-    final offset = beforeState.position.pixels;
-    expect(offset, greaterThan(0));
-
-    await tester.tap(find.widgetWithText(ChoiceChip, '子分类11'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '子分类5'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-
-    expect(_leafTabScrollState(tester).position.pixels, closeTo(offset, 0.01));
+    expect(
+      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '电影')).selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '子分类5'))
+          .selected,
+      isTrue,
+    );
   });
 
   testWidgets('expand button opens the all-channels page', (tester) async {
@@ -330,7 +391,7 @@ void main() {
     final page = find.byKey(const ValueKey('category-channels-page'));
     expect(page, findsOneWidget);
     expect(
-      find.descendant(of: page, matching: find.text('最新')),
+      find.descendant(of: page, matching: find.text('全部')),
       findsOneWidget,
     );
     // 子分类按所属主分类分组展示；「电影」出现在我的频道网格和分组区头两处。
@@ -355,11 +416,17 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.byKey(const ValueKey('category-channels-page')), findsNothing);
-    // 选中后主分类切到「电影」，子分类行出现且「子分类5」为选中态。
+    // 选中后根分类保持简洁标签，子分类在独立横滑行中呈现。
     final chip = tester.widget<ChoiceChip>(
-      find.widgetWithText(ChoiceChip, '子分类5'),
+      find.widgetWithText(ChoiceChip, '电影'),
     );
     expect(chip.selected, isTrue);
+    expect(
+      find.byKey(
+        const PageStorageKey<String>('home-child-category-tabs-storm-100'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('selecting a childless root in the page selects that category', (

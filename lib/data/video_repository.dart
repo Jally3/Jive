@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../domain/video.dart';
+import '../domain/video_feed.dart';
 import '../domain/vod_source.dart';
 import './vod_source/adapters/age_adapter.dart';
 import './vod_source/adapters/mac_cms_v10_adapter.dart';
@@ -37,7 +38,48 @@ abstract interface class VideoRepository {
   Future<Video> resolvePlayback(VodSource source, VideoRef ref);
 }
 
-class VideoRepositoryImpl implements VideoRepository {
+abstract interface class VideoFeedRepository {
+  Set<VideoFeed> supportedFeeds(VodSource source);
+
+  Future<VideoPage> fetchFeedPage(
+    VodSource source, {
+    required VideoFeed feed,
+    int page = 1,
+    int? categoryId,
+  });
+}
+
+extension VideoRepositoryFeeds on VideoRepository {
+  Set<VideoFeed> supportedFeeds(VodSource source) {
+    final repository = this;
+    return repository is VideoFeedRepository
+        ? (repository as VideoFeedRepository).supportedFeeds(source)
+        : const {VideoFeed.updated};
+  }
+
+  Future<VideoPage> fetchFeedPage(
+    VodSource source, {
+    required VideoFeed feed,
+    int page = 1,
+    int? categoryId,
+  }) {
+    final repository = this;
+    if (repository is VideoFeedRepository) {
+      return (repository as VideoFeedRepository).fetchFeedPage(
+        source,
+        feed: feed,
+        page: page,
+        categoryId: categoryId,
+      );
+    }
+    if (feed != VideoFeed.updated) {
+      throw const VideoDataException('当前来源暂不支持此排序');
+    }
+    return fetchPage(source, page: page, categoryId: categoryId);
+  }
+}
+
+class VideoRepositoryImpl implements VideoRepository, VideoFeedRepository {
   VideoRepositoryImpl({
     VodSourceAdapter? Function(VodSource source)? adapterResolver,
     this.contentFilterEnabled = true,
@@ -78,6 +120,45 @@ class VideoRepositoryImpl implements VideoRepository {
     final result = await _adapterFor(
       source,
     ).fetchPage(source, page: page, categoryId: categoryId, keyword: keyword);
+    if (!contentFilterEnabled) return result;
+    final items = result.items
+        .where((item) => !isBlockedVideo(item))
+        .toList(growable: false);
+    if (items.length == result.items.length) return result;
+    return VideoPage(
+      items: items,
+      page: result.page,
+      pageCount: result.pageCount,
+      total: result.total,
+    );
+  }
+
+  @override
+  Set<VideoFeed> supportedFeeds(VodSource source) {
+    final adapter = _adapterFor(source);
+    return adapter is VideoFeedSourceAdapter
+        ? (adapter as VideoFeedSourceAdapter).supportedFeeds(source)
+        : const {VideoFeed.updated};
+  }
+
+  @override
+  Future<VideoPage> fetchFeedPage(
+    VodSource source, {
+    required VideoFeed feed,
+    int page = 1,
+    int? categoryId,
+  }) async {
+    final adapter = _adapterFor(source);
+    final result = adapter is VideoFeedSourceAdapter
+        ? await (adapter as VideoFeedSourceAdapter).fetchFeedPage(
+            source,
+            feed: feed,
+            page: page,
+            categoryId: categoryId,
+          )
+        : feed == VideoFeed.updated
+        ? await adapter.fetchPage(source, page: page, categoryId: categoryId)
+        : throw const VideoDataException('当前来源暂不支持此排序');
     if (!contentFilterEnabled) return result;
     final items = result.items
         .where((item) => !isBlockedVideo(item))

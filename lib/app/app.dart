@@ -175,34 +175,42 @@ class _AppShellState extends State<AppShell> {
   });
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    extendBody: true,
-    body: IndexedStack(
-      index: index,
-      children: List.generate(3, (value) => pages[value] ?? SizedBox.shrink()),
-    ),
-    bottomNavigationBar: SafeArea(
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Flexible(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth:
-                    MediaQuery.orientationOf(context) == Orientation.landscape
-                    ? 600
-                    : 480,
-              ),
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: _FloatingNavBar(index: index, onSelect: _onSelect),
+  Widget build(BuildContext context) {
+    final isTablet = MediaQuery.sizeOf(context).shortestSide >= 600;
+    return Scaffold(
+      extendBody: true,
+      body: IndexedStack(
+        index: index,
+        children: List.generate(
+          3,
+          (value) => pages[value] ?? SizedBox.shrink(),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth:
+                      MediaQuery.orientationOf(context) == Orientation.landscape
+                      ? 600
+                      : 480,
+                ),
+                child: Padding(
+                  padding: isTablet
+                      ? EdgeInsets.fromLTRB(16, 0, 16, 12)
+                      : EdgeInsets.fromLTRB(20, 0, 20, 10),
+                  child: _FloatingNavBar(index: index, onSelect: _onSelect),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _FloatingNavBar extends StatelessWidget {
@@ -220,7 +228,7 @@ class _FloatingNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isTablet = MediaQuery.sizeOf(context).shortestSide >= 600;
-    final height = isTablet ? 72.0 : 64.0;
+    final height = isTablet ? 72.0 : 60.0;
     final radius = height / 2;
     // 首页保留更通透的毛玻璃；其他页面提高底色不透明度，
     // 避免图标和文字被页面内容干扰。
@@ -235,15 +243,18 @@ class _FloatingNavBar extends StatelessWidget {
         boxShadow: [
           BoxShadow(
             color: context.appColors.scrim,
-            blurRadius: 24,
-            offset: Offset(0, 6),
+            blurRadius: isTablet ? 24 : 16,
+            offset: Offset(0, isTablet ? 6 : 4),
           ),
         ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          filter: ImageFilter.blur(
+            sigmaX: isTablet ? 20 : 16,
+            sigmaY: isTablet ? 20 : 16,
+          ),
           child: Material(
             key: ValueKey('floating-nav-surface'),
             color: context.appColors.surface.withValues(alpha: surfaceAlpha),
@@ -297,6 +308,7 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final color = selected
         ? context.appColors.accentForeground
         : context.appColors.secondary;
@@ -304,13 +316,14 @@ class _NavItem extends StatelessWidget {
       borderRadius: BorderRadius.circular(isTablet ? 30 : 32),
       onTap: onTap,
       child: AnimatedContainer(
+        key: ValueKey('bottom-nav-item-$label'),
         duration: Duration(milliseconds: 180),
         margin: isTablet
             ? EdgeInsets.symmetric(horizontal: 8, vertical: 6)
-            : EdgeInsets.zero,
+            : EdgeInsets.symmetric(horizontal: 5, vertical: 5),
         decoration: BoxDecoration(
-          color: isTablet && selected
-              ? context.appColors.accent.withValues(alpha: 0.12)
+          color: selected
+              ? context.appColors.accent.withValues(alpha: isDark ? 0.18 : 0.12)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(30),
         ),

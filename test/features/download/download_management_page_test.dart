@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jive/app/theme.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/features/download/download_management_page.dart';
@@ -60,17 +61,95 @@ void main() {
     expect(find.text('下载管理'), findsOneWidget);
     expect(find.text('全部暂停'), findsOneWidget);
     expect(find.text('未完成 3'), findsOneWidget);
-    expect(find.text('下载中'), findsOneWidget);
-    expect(find.text('已暂停'), findsOneWidget);
-    expect(find.text('已完成'), findsWidgets);
-    expect(find.text('失败'), findsOneWidget);
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '未完成 3'))
+          .selected,
+      isTrue,
+    );
+    await tester.tap(find.widgetWithText(ChoiceChip, '全部 5'));
+    await tester.pumpAndSettle();
+    expect(find.text('整体进度'), findsNothing);
+    expect(find.text('失败/取消'), findsNothing);
+    expect(find.text('5 集 · 完成 1 集'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('第1集')).dx,
+      greaterThan(tester.getTopLeft(find.text('测试影片')).dx),
+    );
+    expect(
+      tester.widget<Text>(find.text('测试影片')).style?.fontWeight,
+      FontWeight.w700,
+    );
+    expect(
+      tester.widget<Text>(find.text('第1集')).style?.fontWeight,
+      FontWeight.w600,
+    );
+    expect(find.text('下载中'), findsNothing);
+    expect(find.text('已暂停'), findsNothing);
+    expect(find.text('已完成'), findsNothing);
+    expect(find.text('失败'), findsNothing);
+    expect(find.byTooltip('播放'), findsOneWidget);
+    expect(find.byTooltip('继续'), findsOneWidget);
+    expect(find.byTooltip('重试'), findsOneWidget);
+    final pauseAll = tester.widget<OutlinedButton>(
+      find.ancestor(
+        of: find.text('全部暂停'),
+        matching: find.byWidgetPredicate((widget) => widget is OutlinedButton),
+      ),
+    );
+    expect(pauseAll.style?.foregroundColor?.resolve({}), AppPalette.dark.text);
+    final resumeAll = tester.widget<OutlinedButton>(
+      find.ancestor(
+        of: find.text('全部继续'),
+        matching: find.byWidgetPredicate((widget) => widget is OutlinedButton),
+      ),
+    );
+    expect(resumeAll.style?.foregroundColor?.resolve({}), AppPalette.dark.text);
+    expect(find.byType(LinearProgressIndicator), findsNWidgets(3));
+    expect(
+      tester
+          .widgetList<LinearProgressIndicator>(
+            find.byType(LinearProgressIndicator),
+          )
+          .map((indicator) => indicator.color),
+      everyElement(AppPalette.dark.accent),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('download-task-row-1')),
+        matching: find.text('速度 1.0 MB/s'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('download-task-row-3')),
+        matching: find.textContaining('速度'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('download-task-row-2')),
+        matching: find.textContaining('速度'),
+      ),
+      findsNothing,
+    );
+    for (final id in ['1', '2', '3', '4', '5']) {
+      expect(
+        tester
+            .widget<InkWell>(find.byKey(ValueKey('download-task-row-$id')))
+            .onTap,
+        isNotNull,
+      );
+    }
     expect(find.byTooltip('取消下载'), findsNothing);
     expect(find.byTooltip('删除任务记录'), findsNothing);
 
     // 切换筛选
     await tester.tap(find.text('异常 1'));
     await tester.pumpAndSettle();
-    expect(find.text('失败'), findsOneWidget);
+    expect(find.byTooltip('重试'), findsOneWidget);
 
     // 进入编辑态
     await tester.tap(find.byIcon(Icons.edit_outlined));
@@ -113,10 +192,33 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('全部继续'), findsOneWidget);
     expect(find.text('全部暂停'), findsOneWidget);
-    expect(find.text('速度 1.0 MB/s'), findsOneWidget);
+    expect(find.text('62% · 188 MB'), findsOneWidget);
     expect(find.byKey(const ValueKey('download-pause-1')), findsOneWidget);
     expect(find.byTooltip('取消下载'), findsNothing);
     expect(find.byTooltip('删除任务记录'), findsNothing);
+  });
+
+  testWidgets('completed-only downloads default to the completed filter', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          downloadTasksProvider.overrideWith(
+            (ref) => Stream.value([_task('1', DownloadTaskStatus.completed)]),
+          ),
+        ],
+        child: const MaterialApp(home: DownloadManagementPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '已完成 1'))
+          .selected,
+      isTrue,
+    );
   });
 
   testWidgets('select all button toggles all visible tasks', (tester) async {
@@ -186,11 +288,7 @@ void main() {
     await tester.tap(find.text('测试影片'));
     await tester.pumpAndSettle();
 
-    final indicators = tester.widgetList<LinearProgressIndicator>(
-      find.byType(LinearProgressIndicator),
-    );
-    expect(indicators, hasLength(1));
-    expect(indicators.single.value, 0);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(find.textContaining('等待继续'), findsOneWidget);
   });
 

@@ -105,11 +105,25 @@ Future<void> _selectTtl(
   }
 }
 
-class MoreSettingsPage extends ConsumerWidget {
+class MoreSettingsPage extends ConsumerStatefulWidget {
   const MoreSettingsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => Scaffold(
+  ConsumerState<MoreSettingsPage> createState() => _MoreSettingsPageState();
+}
+
+class _MoreSettingsPageState extends ConsumerState<MoreSettingsPage> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(cacheControllerProvider.notifier).refresh();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text('更多设置')),
     body: ListView(
       padding: EdgeInsets.fromLTRB(16, 12, 16, 32),
@@ -191,14 +205,16 @@ class MoreSettingsPage extends ConsumerWidget {
               builder: (context, ref, _) {
                 final stats = ref.watch(cacheControllerProvider);
                 final subtitle = stats.when(
-                  data: (value) =>
-                      '播放缓存 · 已用 ${_formatBytes(value.usedBytes)} / 配额 ${_formatBytes(value.quotaBytes)} · ${value.entryCount} 个剧集',
-                  loading: () => '正在统计…',
-                  error: (_, _) => '缓存统计加载失败',
+                  data: (value) {
+                    final playback = value.playback;
+                    return '已用 ${_formatBytes(playback.usedBytes)} / 配额 ${_formatBytes(playback.quotaBytes)} · ${playback.entryCount} 个剧集';
+                  },
+                  loading: () => '正在统计播放缓存…',
+                  error: (_, _) => '播放缓存统计加载失败',
                 );
                 return ListTile(
                   leading: Icon(Icons.cleaning_services_outlined),
-                  title: Text('缓存管理'),
+                  title: Text('播放缓存'),
                   subtitle: Text(subtitle, style: TextStyle(fontSize: 13)),
                   trailing: Icon(
                     Icons.chevron_right,

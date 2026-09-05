@@ -3,6 +3,55 @@ import 'package:video_player/video_player.dart';
 
 import '../../../app/theme.dart';
 
+/// 沉浸式播放器左侧中部的操作锁。
+class PlayerScreenLockButton extends StatelessWidget {
+  const PlayerScreenLockButton({
+    super.key,
+    required this.locked,
+    required this.visible,
+    required this.onPressed,
+  });
+
+  final bool locked;
+  final bool visible;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeFocus(
+      excluding: !visible,
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: const Duration(milliseconds: 180),
+        child: IgnorePointer(
+          ignoring: !visible,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: SafeArea(
+              top: false,
+              right: false,
+              bottom: false,
+              minimum: const EdgeInsets.only(left: 8),
+              child: IconButton.filledTonal(
+                key: const ValueKey('player-screen-lock-button'),
+                onPressed: onPressed,
+                tooltip: locked ? '解除锁定' : '锁定操作',
+                iconSize: 22,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size.square(48),
+                  foregroundColor: Colors.white,
+                  backgroundColor: Colors.black.withValues(alpha: 0.45),
+                ),
+                icon: Icon(locked ? Icons.lock : Icons.lock_open),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 暂停状态下的画面中央大播放按钮。
 /// 绘制在底部控制条之后，非全屏播放器中也保持可见。
 class PlayerCenterPlayButton extends StatelessWidget {

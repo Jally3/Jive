@@ -138,7 +138,7 @@ class CategoryChannelsPage extends StatefulWidget {
   final int? selectedRootId;
   final int? selectedCategoryId;
 
-  /// 选中无子分类的主分类；id 为 null 表示「最新」。
+  /// 选中无子分类的主分类；id 为 null 表示「全部」。
   final ValueChanged<int?> onSelectRoot;
 
   /// 选中子分类，附带其所属主分类 id。
@@ -353,7 +353,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
         ),
         SizedBox(height: _layout.isTablet ? 12 : 8),
         if (_editing)
-          // 「最新」放在 header 占首格：不参与拖拽也不可移除。
+          // 「全部」放在 header 占首格：不参与拖拽也不可移除。
           ReorderableGridView.count(
             crossAxisCount: _layout.columns,
             shrinkWrap: true,
@@ -364,7 +364,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
             onReorder: _reorder,
             header: [
               _pill(
-                label: '最新',
+                label: '全部',
                 selected: widget.selectedRootId == null,
                 dimmed: true,
               ),
@@ -383,7 +383,7 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
         else
           _grid([
             _pill(
-              label: '最新',
+              label: '全部',
               selected: widget.selectedRootId == null,
               onTap: () => _selectRoot(null),
             ),

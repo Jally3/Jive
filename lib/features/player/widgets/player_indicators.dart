@@ -50,8 +50,8 @@ class PlayerBufferingIndicator extends StatelessWidget {
   }
 }
 
-/// 手势指示：纵向滑动亮度/音量、长按 2 倍速、滑屏 seek
-/// 三种状态共用的画面中央浮层，按优先级只展示一种。
+/// 手势指示：纵向滑动亮度/音量、长按 2 倍速、滑屏 seek。
+/// 倍速提示靠右上角轻量展示，其余提示保持居中；按优先级只展示一种。
 class PlayerGestureIndicator extends StatelessWidget {
   const PlayerGestureIndicator({
     super.key,
@@ -87,84 +87,50 @@ class PlayerGestureIndicator extends StatelessWidget {
       ]),
       builder: (_, _) {
         final drag = verticalDrag.value;
+        final speedVisible =
+            drag == null && speedBoosting.value && !screenSeeking.value;
+        Widget centerIndicator = const SizedBox.shrink();
+
         if (drag != null) {
-          return IgnorePointer(
-            child: DecoratedBox(
-              key: const ValueKey('vertical-drag-indicator'),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.72),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      drag.isVolume
-                          ? (drag.value <= 0
-                                ? Icons.volume_off
-                                : drag.value < 0.5
-                                ? Icons.volume_down
-                                : Icons.volume_up)
-                          : Icons.brightness_6,
+          centerIndicator = DecoratedBox(
+            key: const ValueKey('vertical-drag-indicator'),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.72),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    drag.isVolume
+                        ? (drag.value <= 0
+                              ? Icons.volume_off
+                              : drag.value < 0.5
+                              ? Icons.volume_down
+                              : Icons.volume_up)
+                        : Icons.brightness_6,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${(drag.value * 100).round()}%',
+                    style: const TextStyle(
                       color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${(drag.value * 100).round()}%',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           );
-        }
-        if (speedBoosting.value && !screenSeeking.value) {
-          return IgnorePointer(
-            child: DecoratedBox(
-              key: const ValueKey('speed-boost-indicator'),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.72),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.fast_forward, color: Colors.white),
-                    SizedBox(width: 8),
-                    Text(
-                      '2× 播放中',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }
-        if (!screenSeeking.value) {
-          return const SizedBox.shrink();
-        }
-        final target = previewPosition.value ?? controller.value.position;
-        final delta = target - positionBeforeSeek;
-        final forward = !delta.isNegative;
-        return IgnorePointer(
-          child: DecoratedBox(
+        } else if (screenSeeking.value) {
+          final target = previewPosition.value ?? controller.value.position;
+          final delta = target - positionBeforeSeek;
+          final forward = !delta.isNegative;
+          centerIndicator = DecoratedBox(
             key: const ValueKey('screen-seek-indicator'),
             decoration: BoxDecoration(
               color: Colors.black.withValues(alpha: 0.78),
@@ -204,6 +170,60 @@ class PlayerGestureIndicator extends StatelessWidget {
                 ],
               ),
             ),
+          );
+        }
+
+        return IgnorePointer(
+          child: Stack(
+            fit: StackFit.expand,
+            alignment: Alignment.center,
+            children: [
+              Center(child: centerIndicator),
+              SafeArea(
+                minimum: const EdgeInsets.only(top: 52, right: 16),
+                child: Align(
+                  alignment: Alignment.topRight,
+                  child: AnimatedOpacity(
+                    opacity: speedVisible ? 1 : 0,
+                    duration: speedVisible
+                        ? const Duration(milliseconds: 120)
+                        : const Duration(milliseconds: 150),
+                    child: DecoratedBox(
+                      key: const ValueKey('speed-boost-indicator'),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.fast_forward,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              '2×',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },

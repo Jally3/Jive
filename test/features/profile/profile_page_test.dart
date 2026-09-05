@@ -33,15 +33,46 @@ DownloadTask _task(String id, DownloadTaskStatus status) => DownloadTask(
 );
 
 class _FakeCacheController extends CacheController {
+  var refreshCount = 0;
+
   @override
-  Future<CacheStats> build() async => const CacheStats(
-    completeBytes: 1024,
+  Future<CacheStats> build() async => CacheStats(
+    completeBytes: 5 * 1024,
     partialBytes: 0,
     reservedBytes: 0,
-    quotaBytes: 2048,
-    entries: [],
+    quotaBytes: 10 * 1024,
+    entries: [
+      _cacheEntry('播放缓存', 1024),
+      _cacheEntry('离线下载', 4 * 1024, downloadOrigin: true),
+    ],
   );
+
+  @override
+  Future<void> refresh() async {
+    refreshCount++;
+  }
 }
+
+CacheEntry _cacheEntry(
+  String episode,
+  int bytes, {
+  bool downloadOrigin = false,
+}) => CacheEntry(
+  contentKeyVersion: 1,
+  contentKeyHash: episode,
+  revisionKeyHash: 'revision-$episode',
+  manifestFingerprint: 'fingerprint-$episode',
+  sourceId: 's',
+  sourceVideoId: 'v',
+  title: '测试影片',
+  playbackLineIdentity: 'line',
+  playbackLineName: '',
+  episodeIdentity: episode,
+  episodeId: episode,
+  episodeName: episode,
+  downloadOrigin: downloadOrigin,
+  completeBytes: bytes,
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -73,17 +104,18 @@ void main() {
     expect(find.text('测试源'), findsOneWidget);
     expect(find.text('更多设置'), findsOneWidget);
     expect(find.text('播放与存储'), findsOneWidget);
-    expect(find.text('缓存管理'), findsNothing);
+    expect(find.text('播放缓存'), findsNothing);
     expect(find.text('预加载'), findsNothing);
   });
 
   testWidgets('more settings groups prefetch and cache entries', (
     tester,
   ) async {
+    final cacheController = _FakeCacheController();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          cacheControllerProvider.overrideWith(_FakeCacheController.new),
+          cacheControllerProvider.overrideWith(() => cacheController),
         ],
         child: const MaterialApp(home: MoreSettingsPage()),
       ),
@@ -91,14 +123,18 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('更多设置'), findsOneWidget);
+    expect(cacheController.refreshCount, 1);
     expect(find.text('外观'), findsOneWidget);
     expect(find.text('主题模式'), findsOneWidget);
     expect(find.text('跟随系统'), findsOneWidget);
     expect(find.text('播放'), findsOneWidget);
     expect(find.text('预加载'), findsOneWidget);
     expect(find.text('存储'), findsOneWidget);
-    expect(find.text('缓存管理'), findsOneWidget);
-    expect(find.textContaining('已用 1.0 KB / 配额 2.0 KB'), findsOneWidget);
+    expect(find.text('播放缓存'), findsOneWidget);
+    expect(
+      find.textContaining('已用 1.0 KB / 配额 10.0 KB · 1 个剧集'),
+      findsOneWidget,
+    );
     expect(find.text('自动清理缓存'), findsOneWidget);
     expect(find.text('1 小时后'), findsOneWidget);
     await tester.tap(find.text('主题模式'));

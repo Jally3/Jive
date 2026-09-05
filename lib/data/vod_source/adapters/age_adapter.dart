@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../../domain/video.dart';
+import '../../../domain/video_feed.dart';
 import '../../../domain/vod_source.dart';
 import '../../video_repository.dart';
 import '../vod_source_adapter.dart';
 
-class AgeAdapter implements VodSourceAdapter {
+class AgeAdapter implements VodSourceAdapter, VideoFeedSourceAdapter {
   AgeAdapter(this.client);
   final http.Client client;
 
@@ -24,7 +25,6 @@ class AgeAdapter implements VodSourceAdapter {
   ];
 
   static const categories = <VideoCategory>[
-    VideoCategory(id: 1, name: '热门'),
     VideoCategory(id: 2, name: '连载'),
     VideoCategory(id: 3, name: '剧场版'),
     VideoCategory(id: 4, name: 'WEB'),
@@ -56,7 +56,36 @@ class AgeAdapter implements VodSourceAdapter {
     if (trimmed.isNotEmpty) {
       return _fetchSearch(source, page: page, keyword: trimmed);
     }
-    return _fetchCatalog(source, page: page, categoryId: categoryId);
+    return fetchFeedPage(
+      source,
+      feed: VideoFeed.updated,
+      page: page,
+      categoryId: categoryId,
+    );
+  }
+
+  @override
+  Set<VideoFeed> supportedFeeds(VodSource source) => const {
+    VideoFeed.updated,
+    VideoFeed.popular,
+  };
+
+  @override
+  Future<VideoPage> fetchFeedPage(
+    VodSource source, {
+    required VideoFeed feed,
+    int page = 1,
+    int? categoryId,
+  }) {
+    if (!supportedFeeds(source).contains(feed)) {
+      throw const VideoDataException('该来源暂不支持此排序');
+    }
+    return _fetchCatalog(
+      source,
+      feed: feed,
+      page: page,
+      categoryId: categoryId,
+    );
   }
 
   @override
@@ -77,6 +106,7 @@ class AgeAdapter implements VodSourceAdapter {
 
   Future<VideoPage> _fetchCatalog(
     VodSource source, {
+    required VideoFeed feed,
     required int page,
     int? categoryId,
   }) async {
@@ -84,7 +114,7 @@ class AgeAdapter implements VodSourceAdapter {
       'genre': 'all',
       'label': 'all',
       'letter': 'all',
-      'order': 'time',
+      'order': feed == VideoFeed.popular ? 'click' : 'time',
       'region': 'all',
       'resource': 'all',
       'season': 'all',
@@ -94,8 +124,6 @@ class AgeAdapter implements VodSourceAdapter {
       'size': '$pageSize',
     };
     switch (categoryId) {
-      case 1:
-        query['order'] = 'click';
       case 2:
         query['status'] = '连载';
       case 3:

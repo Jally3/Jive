@@ -71,3 +71,39 @@ class PlayerGestureLayer extends StatelessWidget {
     );
   }
 }
+
+/// 屏幕锁定时的精简手势层：单击只唤出解锁按钮，
+/// 右半屏长按仍可临时倍速；滑动和双击不会下传。
+class PlayerLockedGestureLayer extends StatelessWidget {
+  const PlayerLockedGestureLayer({
+    super.key,
+    required this.onTap,
+    required this.onLongPressStart,
+    required this.onLongPressEnd,
+    required this.onLongPressCancel,
+  });
+
+  final VoidCallback onTap;
+  final void Function(LongPressStartDetails details, double width)
+  onLongPressStart;
+  final VoidCallback onLongPressEnd;
+  final VoidCallback onLongPressCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: LayoutBuilder(
+        builder: (_, constraints) => GestureDetector(
+          key: const ValueKey('player-locked-gesture-layer'),
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          onLongPressStart: (details) =>
+              onLongPressStart(details, constraints.maxWidth),
+          onLongPressEnd: (_) => onLongPressEnd(),
+          onLongPressCancel: onLongPressCancel,
+          child: const ColoredBox(color: Colors.transparent),
+        ),
+      ),
+    );
+  }
+}

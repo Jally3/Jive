@@ -150,6 +150,16 @@ void main() {
     expect(find.text('正常影片0'), findsOneWidget);
   });
 
+  testWidgets('source with only update support hides the feed row', (
+    tester,
+  ) async {
+    await pumpHome(tester);
+
+    expect(find.widgetWithText(ChoiceChip, '更新'), findsNothing);
+    expect(find.widgetWithText(ChoiceChip, '热门'), findsNothing);
+    expect(find.widgetWithText(ChoiceChip, '全部'), findsOneWidget);
+  });
+
   testWidgets('long-press Jive title toggles the content filter', (
     tester,
   ) async {

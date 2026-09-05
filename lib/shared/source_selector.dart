@@ -261,12 +261,14 @@ class SourceIndicatorButton extends ConsumerWidget {
         .maybeWhen(data: (r) => r, orElse: () => null);
     final name = registry?.findById(sourceId ?? '')?.name ?? sourceId ?? '加载中';
     return TextButton.icon(
+      key: ValueKey('source-indicator-button'),
       onPressed: () =>
           SourceSelectorSheet.show(context, selectedId: overrideSelectedId),
-      icon: Icon(Icons.source_outlined, size: 18),
+      style: TextButton.styleFrom(foregroundColor: context.appColors.secondary),
+      icon: Icon(Icons.source_outlined, size: 16),
       label: Text(
         '$name ▾',
-        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
       ),
     );
   }

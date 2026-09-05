@@ -119,7 +119,7 @@ void main() {
       expect(delegate.mainAxisSpacing, 12);
       expect(delegate.crossAxisSpacing, 12);
 
-      final pill = tester.getSize(find.text('最新'));
+      final pill = tester.getSize(find.text('全部'));
       // 胶囊本身只有文字尺寸；其父网格格高应接近 48，而不是 4 列时的 ~80。
       final grid = tester.getSize(find.byType(GridView).first);
       final rowHeight = (grid.width - 12 * 5) / 6 / delegate.childAspectRatio;

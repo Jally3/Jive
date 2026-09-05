@@ -24,7 +24,11 @@ class CacheController extends AsyncNotifier<CacheStats> {
     return repo.stats();
   }
 
-  Future<void> refresh() async => ref.invalidateSelf();
+  Future<void> refresh() async {
+    final repo = await _repository();
+    await repo.refreshQuota();
+    state = AsyncData(await repo.stats());
+  }
 
   Future<ClearAllResult> clearPlaybackCache() async {
     final repo = await _repository();

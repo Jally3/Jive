@@ -7,6 +7,7 @@ import 'package:jive/app/theme.dart';
 import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
+import 'package:jive/data/theme_mode_preferences.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
@@ -143,15 +144,50 @@ void main() {
       find.descendant(of: nav, matching: find.byIcon(icon)),
     );
 
-    expect(tester.getSize(nav).height, 64);
+    expect(tester.getSize(nav).height, 60);
     expect(navLabel('首页').style?.fontSize, 12);
     expect(navIcon(Icons.home).size, 24);
+    expect(
+      tester
+          .widget<AnimatedContainer>(
+            find.byKey(const ValueKey('bottom-nav-item-首页')),
+          )
+          .decoration,
+      isA<BoxDecoration>().having(
+        (decoration) => decoration.color,
+        'selected color',
+        AppPalette.light.accent.withValues(alpha: 0.12),
+      ),
+    );
     expect(
       tester.widget<Material>(surface).color,
       AppPalette.light.surface.withValues(
         alpha: AppPalette.light.navigationHomeAlpha,
       ),
     );
+
+    await container.read(themeModeProvider.notifier).setMode(ThemeMode.dark);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Material>(surface).color,
+      AppPalette.dark.surface.withValues(
+        alpha: AppPalette.dark.navigationHomeAlpha,
+      ),
+    );
+    expect(
+      tester
+          .widget<AnimatedContainer>(
+            find.byKey(const ValueKey('bottom-nav-item-首页')),
+          )
+          .decoration,
+      isA<BoxDecoration>().having(
+        (decoration) => decoration.color,
+        'dark selected color',
+        AppPalette.dark.accent.withValues(alpha: 0.18),
+      ),
+    );
+    await container.read(themeModeProvider.notifier).setMode(ThemeMode.light);
+    await tester.pumpAndSettle();
 
     await tester.tap(find.descendant(of: nav, matching: find.text('我的')));
     await tester.pump();
@@ -338,34 +374,38 @@ void main() {
     expect(find.widgetWithText(ChoiceChip, '电影片'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, '体育'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, '动作片'), findsNothing);
-    // 选中带子分类的顶级分类：展示子分类横滑栏并自动选中第一个子分类。
+    // 选中带子分类的顶级分类：展开页内横滑子分类并选中首项。
     await tester.tap(find.widgetWithText(ChoiceChip, '电影片'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(find.widgetWithText(ChoiceChip, '动作片'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '喜剧片'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 300));
     expect(
       tester
           .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '动作片'))
           .selected,
       isTrue,
     );
-    expect(find.text('测试影片'), findsOneWidget);
-    // 切换子分类。
+    expect(find.widgetWithText(ChoiceChip, '喜剧片'), findsOneWidget);
     await tester.tap(find.widgetWithText(ChoiceChip, '喜剧片'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '电影片'))
+          .selected,
+      isTrue,
+    );
     expect(
       tester
           .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '喜剧片'))
           .selected,
       isTrue,
     );
-    // 选中无子级的顶级分类：直接按该分类查询，子分类栏收起。
+    expect(find.text('测试影片'), findsOneWidget);
+    // 选中无子级的顶级分类：直接按该分类查询。
     await tester.tap(find.widgetWithText(ChoiceChip, '体育'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.widgetWithText(ChoiceChip, '动作片'), findsNothing);
+    expect(find.widgetWithText(ChoiceChip, '喜剧片'), findsNothing);
     expect(find.text('测试影片'), findsOneWidget);
   });
 

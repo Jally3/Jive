@@ -33,6 +33,7 @@ lib/shared/
 ```text
 lib/domain/
 ├── video.dart                         # 核心模型：Video / VideoRef / Episode / PlaybackLine / VideoCategory / VideoPage
+├── video_feed.dart                    # 首页内容维度：更新 / 热门 / 新片 / 高分
 ├── vod_source.dart                    # VOD 源模型 VodSource：JSON 解析、HTTPS 与启用状态校验
 ├── library.dart                       # 收藏记录 FavoriteRecord（含 JSON 反序列化容错）
 ├── watch_record.dart                  # 观看历史 WatchRecord：进度、完播标记、时间线/manifest 版本指纹
@@ -46,7 +47,7 @@ lib/domain/
 
 ```text
 lib/data/
-├── video_repository.dart              # 内容访问门面 VideoRepository(Impl)：按 adapterType 分发请求、详情 2 分钟短缓存、敏感内容过滤
+├── video_repository.dart              # 内容访问门面：按 adapterType 分发列表/详情/Feed，详情短缓存、敏感内容过滤
 ├── library_repository.dart            # 收藏持久化：SharedPreferences 存储，写操作串行队列防并发损坏
 ├── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取、单条删除、watchHistoryProvider
 ├── theme_mode_preferences.dart         # 外观模式持久化：跟随系统/日间/夜间与 themeModeProvider
@@ -61,7 +62,7 @@ lib/data/
 lib/data/vod_source/
 ├── vod_source_config.dart             # 源列表加载：远端优先 → 远端缓存 → 内置资产，仅放行启用的 HTTPS 源
 ├── vod_source_registry.dart           # 源注册表 VodSourceRegistry 与内置 Adapter 表、vodSourceRegistryProvider
-├── vod_source_adapter.dart            # Adapter 接口 VodSourceAdapter，及可选的剧集播放解析扩展 EpisodePlaybackResolver
+├── vod_source_adapter.dart            # Adapter 接口，及可选 Feed 能力与剧集播放解析扩展
 ├── vod_source_preferences.dart        # 全局当前源 selectedVodSourceProvider：持久化选择、白名单与 HTTPS 校验
 └── adapters/
     ├── mac_cms_v10_adapter.dart       # MacCMS v10 JSON API 通用适配器（默认 adapterType）

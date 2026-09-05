@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:jive/data/vod_source/adapters/age_adapter.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/domain/video.dart';
+import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/vod_source.dart';
 
 final _source = VodSource(
@@ -27,7 +28,7 @@ void main() {
     );
     final categories = await adapter.fetchCategories(_source);
     expect(requests, 0);
-    expect(categories.map((item) => item.name), ['热门', '连载', '剧场版', 'WEB']);
+    expect(categories.map((item) => item.name), ['连载', '剧场版', 'WEB']);
   });
 
   test('fetchPage maps catalog query, totals and cards', () async {
@@ -64,6 +65,32 @@ void main() {
     expect(page.items.single.title, '测试番');
     expect(page.items.single.sourceId, 'age');
     expect(page.items.single.remarks, '第09集');
+  });
+
+  test('popular feed combines click ordering with category filters', () async {
+    late Uri requestUri;
+    final adapter = AgeAdapter(
+      MockClient((request) async {
+        requestUri = request.url;
+        return http.Response.bytes(
+          utf8.encode(jsonEncode({'total': 0, 'videos': <Object>[]})),
+          200,
+        );
+      }),
+    );
+
+    await adapter.fetchFeedPage(
+      _source,
+      feed: VideoFeed.popular,
+      categoryId: 3,
+    );
+
+    expect(requestUri.queryParameters['order'], 'click');
+    expect(requestUri.queryParameters['genre'], '剧场版');
+    expect(adapter.supportedFeeds(_source), {
+      VideoFeed.updated,
+      VideoFeed.popular,
+    });
   });
 
   test('search uses totalPage and encodes the keyword', () async {

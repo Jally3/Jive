@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/domain/video.dart';
+import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/features/home/paged_video_controller.dart';
 
@@ -79,6 +80,79 @@ void main() {
     await controller.refresh();
     expect(repository.requests, 2);
   });
+
+  test('feed selection keeps category and uses an isolated cache', () async {
+    final repository = _FeedRepository();
+    final controller = PagedVideoController(repository, _source);
+
+    await controller.loadInitial(category: 20);
+    await controller.selectFeed(VideoFeed.popular);
+    expect(controller.categoryId, 20);
+    expect(controller.error, isNull);
+    expect(controller.items.single.title, 'popular:20');
+
+    await controller.selectFeed(VideoFeed.updated);
+    expect(repository.requests, 2);
+    expect(controller.items.single.title, 'updated:20');
+  });
+}
+
+class _FeedRepository implements VideoRepository, VideoFeedRepository {
+  var requests = 0;
+
+  @override
+  Set<VideoFeed> supportedFeeds(VodSource source) => const {
+    VideoFeed.updated,
+    VideoFeed.popular,
+  };
+
+  @override
+  Future<VideoPage> fetchFeedPage(
+    VodSource source, {
+    required VideoFeed feed,
+    int page = 1,
+    int? categoryId,
+  }) async {
+    requests++;
+    return VideoPage(
+      items: [
+        Video(
+          id: '${feed.name}:$categoryId',
+          title: '${feed.name}:$categoryId',
+        ),
+      ],
+      page: 1,
+      pageCount: 1,
+    );
+  }
+
+  @override
+  Future<VideoPage> fetchPage(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+  }) => fetchFeedPage(
+    source,
+    feed: VideoFeed.updated,
+    page: page,
+    categoryId: categoryId,
+  );
+
+  @override
+  Future<List<VideoCategory>> fetchCategories(VodSource source) async =>
+      const [];
+
+  @override
+  Future<Video> fetchDetail(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
+      throw UnimplementedError();
 }
 
 class _CountingRepository implements VideoRepository {

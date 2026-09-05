@@ -424,6 +424,38 @@ class CacheStats {
 
   int get entryCount => entries.length;
   int get usedBytes => completeBytes + partialBytes;
+
+  /// 仅包含观看播放产生的缓存，不包含用户主动创建的离线下载。
+  PlaybackCacheStats get playback => PlaybackCacheStats.from(this);
+}
+
+class PlaybackCacheStats {
+  const PlaybackCacheStats({
+    required this.completeBytes,
+    required this.partialBytes,
+    required this.quotaBytes,
+    required this.entries,
+  });
+
+  factory PlaybackCacheStats.from(CacheStats stats) {
+    final entries = stats.entries
+        .where((entry) => !entry.downloadOrigin)
+        .toList(growable: false);
+    return PlaybackCacheStats(
+      completeBytes: entries.fold(0, (sum, entry) => sum + entry.completeBytes),
+      partialBytes: entries.fold(0, (sum, entry) => sum + entry.partialBytes),
+      quotaBytes: stats.quotaBytes,
+      entries: entries,
+    );
+  }
+
+  final int completeBytes;
+  final int partialBytes;
+  final int quotaBytes;
+  final List<CacheEntry> entries;
+
+  int get entryCount => entries.length;
+  int get usedBytes => completeBytes + partialBytes;
 }
 
 class CacheIndexStore {

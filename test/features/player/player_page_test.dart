@@ -20,9 +20,11 @@ import 'package:jive/domain/watch_record.dart';
 import 'package:jive/app/theme.dart';
 import 'package:jive/features/player/player_page.dart';
 import 'package:jive/features/player/widgets/player_controls_bar.dart';
+import 'package:jive/features/player/widgets/player_indicators.dart';
 import 'package:jive/shared/is_tv.dart';
 import 'package:jive/shared/playback_scrubber.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
 // These interfaces are transitive test fixtures of the production plugins.
 // ignore: depend_on_referenced_packages
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
@@ -133,7 +135,9 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   Future<void> setVolume(int playerId, double volume) async {}
 
   @override
-  Future<void> setPlaybackSpeed(int playerId, double speed) async {}
+  Future<void> setPlaybackSpeed(int playerId, double speed) async {
+    calls.add('setPlaybackSpeed:$playerId:$speed');
+  }
 
   @override
   Widget buildViewWithOptions(VideoViewOptions options) => ColoredBox(
@@ -715,6 +719,238 @@ void main() {
 
     await _unmountPlayerPage(tester);
   });
+
+  testWidgets('playback speed menu scrolls on short screens and supports 3×', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(640, 240);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final video = _playableVideo('https://example.com/1.mp4');
+
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find
+          .byKey(const ValueKey('playback-speed-menu'))
+          .evaluate()
+          .isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    final speedMenu = tester.widget<PopupMenuButton<double>>(
+      find.descendant(
+        of: find.byKey(const ValueKey('playback-speed-menu')),
+        matching: find.byType(PopupMenuButton<double>),
+      ),
+    );
+    expect(speedMenu.constraints?.maxHeight, lessThanOrEqualTo(208));
+
+    await tester.tap(find.byKey(const ValueKey('playback-speed-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('3×'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('3×'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3×'));
+    await tester.pumpAndSettle();
+
+    expect(
+      videoPlatform.calls,
+      contains('setPlaybackSpeed:${videoPlatform.lastPlayerId}:3.0'),
+    );
+    expect(find.text('3×'), findsOneWidget);
+
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets('long press shows a compact 2× indicator at the top right', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse('https://example.com/1.mp4'),
+    );
+    final previewPosition = ValueNotifier<Duration?>(null);
+    final seekClock = ValueNotifier<Duration?>(null);
+    final seekCommitting = ValueNotifier(false);
+    final screenSeeking = ValueNotifier(false);
+    final speedBoosting = ValueNotifier(true);
+    final verticalDrag = ValueNotifier<({bool isVolume, double value})?>(null);
+    addTearDown(() async {
+      previewPosition.dispose();
+      seekClock.dispose();
+      seekCommitting.dispose();
+      screenSeeking.dispose();
+      speedBoosting.dispose();
+      verticalDrag.dispose();
+      await controller.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 390,
+              height: 220,
+              child: PlayerGestureIndicator(
+                controller: controller,
+                previewPosition: previewPosition,
+                seekClock: seekClock,
+                seekCommitting: seekCommitting,
+                screenSeeking: screenSeeking,
+                speedBoosting: speedBoosting,
+                verticalDrag: verticalDrag,
+                positionBeforeSeek: Duration.zero,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final indicator = find.byKey(const ValueKey('speed-boost-indicator'));
+    final opacity = tester.widget<AnimatedOpacity>(
+      find.ancestor(of: indicator, matching: find.byType(AnimatedOpacity)),
+    );
+    final indicatorArea = tester.getRect(find.byType(PlayerGestureIndicator));
+    final indicatorBounds = tester.getRect(indicator);
+    expect(opacity.opacity, 1);
+    expect(find.text('2× 播放中'), findsNothing);
+    expect(indicatorBounds.center.dx, greaterThan(indicatorArea.center.dx));
+    expect(indicatorBounds.center.dy, lessThan(indicatorArea.center.dy));
+    expect(tester.widget<Icon>(find.byIcon(Icons.fast_forward)).size, 16);
+    expect(tester.widget<Text>(find.text('2×')).style?.fontSize, 13);
+
+    speedBoosting.value = false;
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: indicator,
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity,
+      0,
+    );
+  });
+
+  testWidgets(
+    'screen lock blocks playback gestures but keeps right-side 2× boost',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(844, 390);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final video = _playableVideo('https://example.com/1.mp4');
+
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(
+        tester,
+        () =>
+            find
+                .byKey(const ValueKey('player-screen-lock-button'))
+                .evaluate()
+                .isNotEmpty &&
+            videoPlatform.playing[videoPlatform.lastPlayerId] == true,
+        reason: 'landscape player did not finish initialization',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('playback-speed-menu')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('3×'));
+      await tester.tap(find.text('3×'));
+      await tester.pumpAndSettle();
+      expect(videoPlatform.calls.last, 'setPlaybackSpeed:0:3.0');
+
+      await tester.tap(find.byKey(const ValueKey('player-screen-lock-button')));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.byTooltip('解除锁定'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('player-locked-gesture-layer')),
+        findsOneWidget,
+      );
+      expect(_controlsBarOpacity(tester), 0);
+
+      final lockedLayer = find.byKey(
+        const ValueKey('player-locked-gesture-layer'),
+      );
+      final lockedBounds = tester.getRect(lockedLayer);
+      final pauseCallsBefore = videoPlatform.calls
+          .where((call) => call == 'pause:0')
+          .length;
+      await tester.tapAt(lockedBounds.center);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tapAt(lockedBounds.center);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        videoPlatform.calls.where((call) => call == 'pause:0').length,
+        pauseCallsBefore,
+      );
+
+      final seekCountBefore = videoPlatform.seekPositions.length;
+      await tester.dragFrom(
+        Offset(lockedBounds.center.dx - 80, lockedBounds.center.dy),
+        const Offset(160, 0),
+      );
+      await tester.pump();
+      expect(videoPlatform.seekPositions.length, seekCountBefore);
+
+      final boostCallsBefore = videoPlatform.calls
+          .where((call) => call == 'setPlaybackSpeed:0:2.0')
+          .length;
+      await tester.longPressAt(
+        Offset(lockedBounds.left + 40, lockedBounds.center.dy),
+      );
+      await tester.pump();
+      expect(
+        videoPlatform.calls
+            .where((call) => call == 'setPlaybackSpeed:0:2.0')
+            .length,
+        boostCallsBefore,
+      );
+
+      await tester.longPressAt(
+        Offset(lockedBounds.right - 40, lockedBounds.center.dy),
+      );
+      await tester.pump();
+      expect(videoPlatform.calls, contains('setPlaybackSpeed:0:2.0'));
+      expect(videoPlatform.calls.last, 'setPlaybackSpeed:0:3.0');
+
+      if (find.byTooltip('解除锁定').hitTestable().evaluate().isEmpty) {
+        await tester.tapAt(lockedBounds.center);
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+      await tester.tap(find.byTooltip('解除锁定'));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(
+        find.byKey(const ValueKey('player-locked-gesture-layer')),
+        findsNothing,
+      );
+      expect(_controlsBarOpacity(tester), 1);
+
+      await _unmountPlayerPage(tester);
+    },
+  );
 
   testWidgets('light portrait player keeps only the video surface dark', (
     tester,

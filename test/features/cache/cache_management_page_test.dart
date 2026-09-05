@@ -10,9 +10,16 @@ class _FakeCacheController extends CacheController {
   _FakeCacheController(List<CacheEntry> initial) : _entries = initial;
 
   final List<CacheEntry> _entries;
+  int refreshCalls = 0;
 
   @override
   Future<CacheStats> build() async => _stats();
+
+  @override
+  Future<void> refresh() async {
+    refreshCalls++;
+    state = AsyncData(_stats());
+  }
 
   CacheStats _stats() {
     var complete = 0;
@@ -89,9 +96,29 @@ void main() {
   testWidgets('shows empty state when there is no cache', (tester) async {
     await tester.pumpWidget(wrap(const []));
     await tester.pumpAndSettle();
+    expect(find.text('播放缓存管理'), findsOneWidget);
     expect(find.textContaining('还没有播放缓存'), findsOneWidget);
     expect(find.textContaining('主动下载的任务在「下载」里'), findsOneWidget);
     expect(find.text('清理播放缓存'), findsNothing);
+    expect(find.byType(RefreshIndicator), findsOneWidget);
+  });
+
+  testWidgets('entering and pulling refresh playback cache statistics', (
+    tester,
+  ) async {
+    final controller = _FakeCacheController(const []);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [cacheControllerProvider.overrideWith(() => controller)],
+        child: const MaterialApp(home: CacheManagementPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.refreshCalls, 1);
+
+    await tester.drag(find.byType(ListView), const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(controller.refreshCalls, 2);
   });
 
   testWidgets('shows summary and grouped entries when cache exists', (
@@ -101,8 +128,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('测试影片'), findsOneWidget);
     expect(find.text('第1集'), findsOneWidget);
+    expect(find.text('共 1 集 · 占用 1.0 MB'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('第1集')).dx,
+      greaterThan(tester.getTopLeft(find.text('测试影片')).dx),
+    );
+    expect(
+      tester.widget<Text>(find.text('测试影片')).style?.fontWeight,
+      FontWeight.w700,
+    );
+    expect(
+      tester.widget<Text>(find.text('第1集')).style?.fontWeight,
+      FontWeight.w600,
+    );
     expect(find.text('清理播放缓存'), findsOneWidget);
-    expect(find.textContaining('已用'), findsOneWidget);
+    expect(find.textContaining('播放缓存 1.0 MB'), findsOneWidget);
     expect(find.textContaining('离线下载请到「下载」'), findsOneWidget);
     expect(find.text('自动'), findsNothing);
   });
@@ -115,6 +155,7 @@ void main() {
     expect(find.text('测试影片'), findsOneWidget);
     expect(find.text('第1集'), findsOneWidget);
     expect(find.text('第2集'), findsOneWidget);
+    expect(find.text('共 2 集 · 占用 2.0 MB'), findsOneWidget);
   });
 
   testWidgets('delete entry confirms and removes it', (tester) async {
@@ -138,7 +179,7 @@ void main() {
     expect(find.textContaining('离线下载与正在播放的内容会保留'), findsOneWidget);
   });
 
-  testWidgets('clear playback cache preserves offline downloads', (
+  testWidgets('offline downloads are hidden from playback cache', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -149,13 +190,30 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('离线下载'), findsNothing);
+    expect(find.textContaining('播放缓存 1.0 MB'), findsOneWidget);
+
     await tester.tap(find.text('清理播放缓存'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, '清理'));
     await tester.pumpAndSettle();
 
     expect(find.text('播放缓存'), findsNothing);
-    expect(find.text('离线下载'), findsWidgets);
+    expect(find.text('离线下载'), findsNothing);
+    expect(find.textContaining('还没有播放缓存'), findsOneWidget);
+  });
+
+  testWidgets('offline-download-only storage shows the playback empty state', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap([entry(episode: '离线下载', downloadOrigin: true)]),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('还没有播放缓存'), findsOneWidget);
+    expect(find.text('离线下载'), findsNothing);
+    expect(find.text('清理播放缓存'), findsNothing);
   });
 
   testWidgets('status labels distinguish playback cache from downloads', (
@@ -170,7 +228,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('已缓存'), findsOneWidget);
-    expect(find.text('离线下载'), findsOneWidget);
+    expect(find.text('离线下载'), findsNothing);
     expect(find.text('缓存失败'), findsOneWidget);
     expect(find.text('可离线'), findsNothing);
     expect(find.text('下载失败'), findsNothing);

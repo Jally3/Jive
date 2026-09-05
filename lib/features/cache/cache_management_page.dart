@@ -17,6 +17,16 @@ class CacheManagementPage extends ConsumerStatefulWidget {
 class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
   bool _busy = false;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (mounted) {
+        await ref.read(cacheControllerProvider.notifier).refresh();
+      }
+    });
+  }
+
   Future<void> _clearPlaybackCache() async {
     if (_busy) return;
     final accepted = await showDialog<bool>(
@@ -112,13 +122,13 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text('缓存管理')),
+    appBar: AppBar(title: Text('播放缓存管理')),
     body: ref
         .watch(cacheControllerProvider)
         .when(
-          loading: () => AppLoadingView(label: '正在统计缓存…'),
+          loading: () => AppLoadingView(label: '正在统计播放缓存…'),
           error: (error, _) => AppErrorView(
-            message: '缓存统计加载失败',
+            message: '播放缓存统计加载失败',
             onRetry: () => ref.invalidate(cacheControllerProvider),
           ),
           data: (stats) => _content(stats),
@@ -126,16 +136,30 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
   );
 
   Widget _content(CacheStats stats) {
-    if (stats.entries.isEmpty) {
-      return AppEmptyView(
-        icon: Icons.cleaning_services_outlined,
-        message: '还没有播放缓存\n看过的片子会把片段留在这里，方便接着播。主动下载的任务在「下载」里。',
+    final playback = stats.playback;
+    if (playback.entries.isEmpty) {
+      return LayoutBuilder(
+        builder: (context, constraints) => RefreshIndicator(
+          onRefresh: () => ref.read(cacheControllerProvider.notifier).refresh(),
+          child: ListView(
+            physics: AlwaysScrollableScrollPhysics(),
+            children: [
+              SizedBox(
+                height: constraints.maxHeight,
+                child: AppEmptyView(
+                  icon: Icons.cleaning_services_outlined,
+                  message: '还没有播放缓存\n看过的片子会把片段留在这里，方便接着播。主动下载的任务在「下载」里。',
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
-    final used = stats.usedBytes;
-    final quota = stats.quotaBytes;
+    final used = playback.usedBytes;
+    final quota = playback.quotaBytes;
     final fraction = quota > 0 ? (used / quota).clamp(0.0, 1.0) : 0.0;
-    final grouped = _groupByTitle(stats.entries);
+    final grouped = _groupByTitle(playback.entries);
     return RefreshIndicator(
       onRefresh: () => ref.read(cacheControllerProvider.notifier).refresh(),
       child: ListView(
@@ -178,7 +202,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '已用 ${_formatBytes(used)} / ${_formatBytes(quota)}',
+                              '播放缓存 ${_formatBytes(used)} / ${_formatBytes(quota)}',
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w700,
@@ -195,7 +219,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                             ),
                             SizedBox(height: 6),
                             Text(
-                              '完整资源 ${_formatBytes(stats.completeBytes)} · 临时文件 ${_formatBytes(stats.partialBytes)} · ${stats.entryCount} 个剧集',
+                              '完整资源 ${_formatBytes(playback.completeBytes)} · 临时文件 ${_formatBytes(playback.partialBytes)} · ${playback.entryCount} 个剧集',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: context.appColors.secondary,
@@ -240,19 +264,41 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
         children: [
           ListTile(
             dense: true,
+            visualDensity: VisualDensity.compact,
+            contentPadding: EdgeInsets.fromLTRB(20, 4, 16, 4),
             title: Text(
               group.$1,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
-            subtitle: Text(
-              '${group.$2.length} 个剧集 · ${_formatBytes(used)}',
-              style: TextStyle(fontSize: 12),
+            subtitle: Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                '共 ${group.$2.length} 集 · 占用 ${_formatBytes(used)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: context.appColors.secondary,
+                ),
+              ),
             ),
           ),
-          Divider(height: 1, color: context.appColors.divider),
-          for (final entry in group.$2) _entryTile(entry),
+          Divider(
+            height: 1,
+            indent: 20,
+            endIndent: 16,
+            color: context.appColors.divider,
+          ),
+          for (var i = 0; i < group.$2.length; i++) ...[
+            _entryTile(group.$2[i]),
+            if (i < group.$2.length - 1)
+              Divider(
+                height: 1,
+                indent: 24,
+                endIndent: 16,
+                color: context.appColors.divider,
+              ),
+          ],
         ],
       ),
     );
@@ -267,7 +313,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
     final showProgress =
         !entry.offlinePlayable && entry.status != CacheEntryStatus.failed;
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 10, 4, 10),
+      padding: EdgeInsets.fromLTRB(24, 6, 4, 6),
       child: Row(
         children: [
           Expanded(
@@ -276,12 +322,15 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
               children: [
                 Row(
                   children: [
-                    Flexible(
+                    Expanded(
                       child: Text(
                         entry.episodeName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 14),
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                     SizedBox(width: 8),
@@ -302,7 +351,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                     ),
                   ],
                 ),
-                SizedBox(height: 4),
+                SizedBox(height: 2),
                 Text(
                   '$size$accessed',
                   style: TextStyle(
@@ -311,7 +360,7 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
                   ),
                 ),
                 if (showProgress) ...[
-                  SizedBox(height: 6),
+                  SizedBox(height: 4),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(3),
                     child: LinearProgressIndicator(
@@ -328,6 +377,9 @@ class _CacheManagementPageState extends ConsumerState<CacheManagementPage> {
           IconButton(
             tooltip: '删除',
             onPressed: _busy ? null : () => _deleteEntry(entry),
+            visualDensity: VisualDensity.compact,
+            constraints: BoxConstraints.tightFor(width: 36, height: 32),
+            padding: EdgeInsets.zero,
             icon: Icon(Icons.delete_outline, size: 20),
           ),
         ],

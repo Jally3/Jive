@@ -39,6 +39,8 @@ class PlayerControlsBar extends StatelessWidget {
     required this.onVolumeLongPress,
     required this.onDownload,
     required this.onSpeedSelected,
+    required this.onSpeedMenuOpened,
+    required this.onSpeedMenuCanceled,
     required this.onStatusLongPress,
     required this.onEpisodeMenuOpened,
     required this.onEpisodeMenuCanceled,
@@ -92,6 +94,8 @@ class PlayerControlsBar extends StatelessWidget {
   /// 下载按钮回调；已完成下载时为 null（按钮禁用）。
   final VoidCallback? onDownload;
   final ValueChanged<double> onSpeedSelected;
+  final VoidCallback onSpeedMenuOpened;
+  final VoidCallback onSpeedMenuCanceled;
   final VoidCallback onStatusLongPress;
   final VoidCallback onEpisodeMenuOpened;
   final VoidCallback onEpisodeMenuCanceled;
@@ -110,6 +114,11 @@ class PlayerControlsBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final speedMenuMaxHeight =
+        (mediaQuery.size.height - mediaQuery.viewPadding.vertical - 32)
+            .clamp(160.0, 320.0)
+            .toDouble();
     // 控制条隐藏时不允许焦点遍历进入其中的按钮，
     // 避免遥控器焦点落在不可见控件上。
     return ExcludeFocus(
@@ -306,6 +315,12 @@ class PlayerControlsBar extends StatelessWidget {
                                       key: speedMenuKey,
                                       tooltip: '播放速度',
                                       initialValue: playbackSpeed,
+                                      constraints: BoxConstraints(
+                                        minWidth: 112,
+                                        maxHeight: speedMenuMaxHeight,
+                                      ),
+                                      onOpened: onSpeedMenuOpened,
+                                      onCanceled: onSpeedMenuCanceled,
                                       onSelected: onSpeedSelected,
                                       itemBuilder: (_) => const [
                                         PopupMenuItem(
@@ -331,6 +346,10 @@ class PlayerControlsBar extends StatelessWidget {
                                         PopupMenuItem(
                                           value: 2.0,
                                           child: Text('2×'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 3.0,
+                                          child: Text('3×'),
                                         ),
                                       ],
                                       child: Padding(

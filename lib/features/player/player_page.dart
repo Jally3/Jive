@@ -77,11 +77,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   PlaybackUrlResolver? _urlResolver;
   Timer? saveTimer;
   Timer? controlsTimer;
+  Timer? _lockButtonTimer;
   Timer? wakelockTimer;
   bool failed = false, fullScreen = false, initializing = true;
   bool fillScreen = false;
   bool controlsVisible = true;
   bool _episodeMenuOpen = false;
+  bool _speedMenuOpen = false;
+  bool _screenLocked = false;
+  bool _lockButtonVisible = true;
   bool _isAppForeground = true;
   bool _playbackDesired = true;
   bool _completionHandled = false;
@@ -207,6 +211,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   Future<void> _setup(Duration resume) async {
+    _lockButtonTimer?.cancel();
+    _screenLocked = false;
+    _lockButtonVisible = true;
     _observedDuration = Duration.zero;
     _introSkipped = false;
     _outroSkipped = false;
@@ -915,7 +922,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final previous = fullScreen;
     final target = !previous;
     _fullScreenTransitionInFlight = true;
-    setState(() => fullScreen = target);
+    if (!target) {
+      _lockButtonTimer?.cancel();
+      _stopSpeedBoost(controller);
+    }
+    setState(() {
+      fullScreen = target;
+      if (!target) {
+        _screenLocked = false;
+        _lockButtonVisible = true;
+        controlsVisible = true;
+      }
+    });
     final transition = _applyFullScreenSystemUi(target);
     _systemUiTransition = transition;
     try {
@@ -1197,13 +1215,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   void _showControls() {
+    if (_screenLocked) return;
     controlsTimer?.cancel();
     if (mounted) setState(() => controlsVisible = true);
     _scheduleControlsHide();
   }
 
   void _toggleControls() {
-    if (_episodeMenuOpen) return;
+    if (_screenLocked || _popupMenuOpen) return;
     controlsTimer?.cancel();
     setState(() {
       controlsVisible = !controlsVisible;
@@ -1214,14 +1233,67 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   void _scheduleControlsHide() {
     controlsTimer?.cancel();
-    if (controller?.value.isPlaying != true || isSeeking || _episodeMenuOpen) {
+    if (_screenLocked ||
+        controller?.value.isPlaying != true ||
+        isSeeking ||
+        _popupMenuOpen) {
       return;
     }
     controlsTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && !_episodeMenuOpen) {
+      if (mounted && !_popupMenuOpen && !_screenLocked) {
         _hideControls();
       }
     });
+  }
+
+  bool get _popupMenuOpen => _episodeMenuOpen || _speedMenuOpen;
+
+  void _toggleScreenLock() {
+    final next = !_screenLocked;
+    controlsTimer?.cancel();
+    _lockButtonTimer?.cancel();
+    _stopSpeedBoost(controller);
+    setState(() {
+      _screenLocked = next;
+      _lockButtonVisible = true;
+      controlsVisible = !next;
+      volumeSliderVisible = false;
+    });
+    unawaited(HapticFeedback.lightImpact());
+    if (next) {
+      _scheduleLockButtonHide();
+    } else {
+      _scheduleControlsHide();
+    }
+  }
+
+  void _toggleLockedControls() {
+    if (!_screenLocked) return;
+    _lockButtonTimer?.cancel();
+    setState(() => _lockButtonVisible = !_lockButtonVisible);
+    if (_lockButtonVisible) _scheduleLockButtonHide();
+  }
+
+  void _scheduleLockButtonHide() {
+    _lockButtonTimer?.cancel();
+    if (!_screenLocked || !_lockButtonVisible) return;
+    _lockButtonTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _screenLocked) {
+        setState(() => _lockButtonVisible = false);
+      }
+    });
+  }
+
+  void _unlockScreenForLayoutChange() {
+    if (!_screenLocked) return;
+    _lockButtonTimer?.cancel();
+    _stopSpeedBoost(controller);
+    setState(() {
+      _screenLocked = false;
+      _lockButtonVisible = true;
+      controlsVisible = true;
+    });
+    _scheduleControlsHide();
   }
 
   /// 收起控制条（遥控器下/返回键，也是自动隐藏计时器的收尾）。
@@ -1525,6 +1597,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     WidgetsBinding.instance.removeObserver(this);
     saveTimer?.cancel();
     controlsTimer?.cancel();
+    _lockButtonTimer?.cancel();
     wakelockTimer?.cancel();
     final save = _save();
     final detached = _detachPlayback();
@@ -1571,6 +1644,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     // 退出横屏全屏时旋转动画有几帧延迟，期间 MediaQuery 仍可能是横屏尺寸，
     // 用 overlay 避免竖屏 Column 在横屏尺寸下溢出。
     final overlayLayout = _overlayLayoutOf(context);
+    if (!overlayLayout && _screenLocked) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_overlayLayoutOf(context)) {
+          _unlockScreenForLayoutChange();
+        }
+      });
+    }
     final colors = context.appColors;
     final appBrightness = Theme.of(context).brightness;
     _lockPortraitOnExit =
@@ -1757,6 +1837,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     // 铺满（cover）在沉浸式 overlay（全屏或设备横屏）生效：视频等比放大覆盖
     // 整个区域，超出部分裁剪；窗口模式保持完整画面。
     final overlayLayout = _overlayLayoutOf(context);
+    final lockActive = overlayLayout && _screenLocked;
     final cover = fillScreen && overlayLayout && !_isPortraitVideo;
     final compactControls =
         MediaQuery.sizeOf(context).width < 430 ||
@@ -1786,20 +1867,28 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               ),
             ),
           ),
-        PlayerGestureLayer(
-          onTap: _toggleControls,
-          onDoubleTap: _togglePlayback,
-          onHorizontalDragStart: _screenHorizontalDragStart,
-          onHorizontalDragUpdate: _screenHorizontalDragUpdate,
-          onHorizontalDragEnd: _screenHorizontalDragEnd,
-          onHorizontalDragCancel: _screenHorizontalDragCancel,
-          onLongPressStart: _screenLongPressStart,
-          onLongPressEnd: _screenLongPressEnd,
-          onLongPressCancel: _screenLongPressCancel,
-          onVerticalDragStart: _screenVerticalDragStart,
-          onVerticalDragUpdate: _screenVerticalDragUpdate,
-          onVerticalDragEnd: _screenVerticalDragEnd,
-        ),
+        if (lockActive)
+          PlayerLockedGestureLayer(
+            onTap: _toggleLockedControls,
+            onLongPressStart: _screenLongPressStart,
+            onLongPressEnd: _screenLongPressEnd,
+            onLongPressCancel: _screenLongPressCancel,
+          )
+        else
+          PlayerGestureLayer(
+            onTap: _toggleControls,
+            onDoubleTap: _togglePlayback,
+            onHorizontalDragStart: _screenHorizontalDragStart,
+            onHorizontalDragUpdate: _screenHorizontalDragUpdate,
+            onHorizontalDragEnd: _screenHorizontalDragEnd,
+            onHorizontalDragCancel: _screenHorizontalDragCancel,
+            onLongPressStart: _screenLongPressStart,
+            onLongPressEnd: _screenLongPressEnd,
+            onLongPressCancel: _screenLongPressCancel,
+            onVerticalDragStart: _screenVerticalDragStart,
+            onVerticalDragUpdate: _screenVerticalDragUpdate,
+            onVerticalDragEnd: _screenVerticalDragEnd,
+          ),
         PlayerBufferingIndicator(
           controller: current,
           screenSeeking: screenSeeking,
@@ -1819,7 +1908,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         // 统一由播放器内顶栏提供返回和标题。
         if (overlayLayout)
           PlayerTopBar(
-            visible: controlsVisible,
+            visible: controlsVisible && !lockActive,
             fullScreen: fullScreen,
             title: '${widget.video.title} · ${episode.name}',
             onBack: fullScreen
@@ -1833,7 +1922,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           seekCommitting: seekCommitting,
           episodeMenuKey: _episodeMenuKey,
           speedMenuKey: _speedMenuKey,
-          controlsVisible: controlsVisible,
+          controlsVisible: controlsVisible && !lockActive,
           failed: failed,
           fullScreen: fullScreen,
           overlayLayout: overlayLayout,
@@ -1868,7 +1957,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           onDownload: currentDownload?.status == DownloadTaskStatus.completed
               ? null
               : _downloadCurrentEpisode,
-          onSpeedSelected: (speed) => unawaited(_setPlaybackSpeed(speed)),
+          onSpeedMenuOpened: () {
+            controlsTimer?.cancel();
+            setState(() => _speedMenuOpen = true);
+          },
+          onSpeedMenuCanceled: () {
+            if (!mounted) return;
+            setState(() => _speedMenuOpen = false);
+            _scheduleControlsHide();
+          },
+          onSpeedSelected: (speed) {
+            setState(() => _speedMenuOpen = false);
+            unawaited(_setPlaybackSpeed(speed));
+            _scheduleControlsHide();
+          },
           onStatusLongPress: _showPlaybackStatusDetails,
           onEpisodeMenuOpened: () {
             controlsTimer?.cancel();
@@ -1902,13 +2004,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         ),
         // Paint the paused-state button after the bottom controls so it
         // remains visible in the non-fullscreen player.
-        PlayerCenterPlayButton(
-          controller: current,
-          screenSeeking: screenSeeking,
-          controlsVisible: controlsVisible,
-          onResume: _resumePlayback,
-        ),
-        if (!compactControls && volumeSliderVisible && controlsVisible)
+        if (!lockActive)
+          PlayerCenterPlayButton(
+            controller: current,
+            screenSeeking: screenSeeking,
+            controlsVisible: controlsVisible,
+            onResume: _resumePlayback,
+          ),
+        if (!lockActive &&
+            !compactControls &&
+            volumeSliderVisible &&
+            controlsVisible)
           PlayerVolumeSlider(
             controller: current,
             overlayLayout: overlayLayout,
@@ -1918,6 +2024,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               if (value > 0) volumeBeforeMute = value;
               _showControls();
             },
+          ),
+        if (overlayLayout && !_isTv)
+          PlayerScreenLockButton(
+            locked: lockActive,
+            visible: lockActive ? _lockButtonVisible : controlsVisible,
+            onPressed: _toggleScreenLock,
           ),
       ],
     );
@@ -1961,6 +2073,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     screenLongPressOnRight = details.localPosition.dx >= width / 2;
     controlsTimer?.cancel();
     if (screenLongPressOnRight && current.value.isPlaying) {
+      unawaited(HapticFeedback.lightImpact());
       speedBoosting.value = true;
       longPressSpeedChange = current.setPlaybackSpeed(2).catchError((_) {});
     }

@@ -11,7 +11,9 @@ import '../../data/history_repository.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
 import '../../domain/video.dart';
+import '../../domain/video_feed.dart';
 import '../../domain/vod_source.dart';
+import '../../shared/app_toast.dart';
 import '../../shared/source_selector.dart';
 import '../../shared/video_grid.dart';
 import '../detail/detail_page.dart';
@@ -26,6 +28,8 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
+  static const _productEnabledFeeds = [VideoFeed.updated, VideoFeed.popular];
+
   PagedVideoController? controller;
 
   /// 顶级分类（tab 栏）与按父 id 分组的子分类（横滑栏）。
@@ -35,6 +39,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   Map<int, List<VideoCategory>> _children = {};
   int? _selectedRootId;
   int? selectedCategoryId;
+  final Map<int, int> _lastSelectedLeafByRoot = {};
   String? categoryError;
   String? _activeSourceId;
 
@@ -92,6 +97,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _children = {};
     _selectedRootId = null;
     selectedCategoryId = null;
+    _lastSelectedLeafByRoot.clear();
     categoryError = null;
     _myChannelIds = null;
     controller!.loadInitial();
@@ -148,35 +154,67 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
-  /// 选中顶级分类：有子分类时展示子分类栏并自动选中第一个子分类；
-  /// 无子分类时直接按该分类查询。rootId 为 null 表示"最新"。
+  /// 选中顶级分类：有子分类时直接展开页内横向子分类栏，并恢复该分类
+  /// 上次选中的子分类；首次进入默认选择第一个可用子分类。
+  /// 无子分类时直接按该分类查询。rootId 为 null 表示“全部”。
   Future<void> _selectRoot(VodSource source, int? rootId) async {
     final children = _children[rootId] ?? <VideoCategory>[];
-    final queryId = rootId == null
-        ? null
-        : (children.isEmpty ? rootId : children.first.id);
+    if (rootId != null && children.isNotEmpty) {
+      final rememberedLeafId = _lastSelectedLeafByRoot[rootId];
+      final leafId = children.any((child) => child.id == rememberedLeafId)
+          ? rememberedLeafId!
+          : children.first.id;
+      await _selectRootLeaf(rootId, leafId);
+      return;
+    }
     _resetScrollPosition();
     setState(() {
       _selectedRootId = rootId;
-      selectedCategoryId = queryId;
+      selectedCategoryId = rootId;
     });
-    await controller?.loadInitial(category: queryId);
+    await controller?.loadInitial(
+      category: rootId,
+      selectedFeed: controller?.feed,
+    );
   }
 
-  Future<void> _selectLeaf(int categoryId) async {
-    _resetScrollPosition();
-    setState(() => selectedCategoryId = categoryId);
-    await controller?.loadInitial(category: categoryId);
-  }
-
-  /// 下拉面板里直接选中子分类：同步所属主分类高亮并按子分类查询。
+  /// 直接选中子分类：同步所属主分类高亮并按子分类查询。
   Future<void> _selectRootLeaf(int rootId, int leafId) async {
     _resetScrollPosition();
     setState(() {
       _selectedRootId = rootId;
       selectedCategoryId = leafId;
+      _lastSelectedLeafByRoot[rootId] = leafId;
     });
-    await controller?.loadInitial(category: leafId);
+    await controller?.loadInitial(
+      category: leafId,
+      selectedFeed: controller?.feed,
+    );
+  }
+
+  Future<void> _selectFeed(VodSource source, VideoFeed feed) async {
+    final repository = ref.read(videoRepositoryProvider);
+    if (!repository.supportedFeeds(source).contains(feed)) {
+      showAppToast(context, '当前来源暂不支持${feed.label}排序');
+      return;
+    }
+    _resetScrollPosition();
+    await controller?.selectFeed(feed);
+  }
+
+  List<VideoFeed> _visibleFeeds(VodSource source) {
+    try {
+      final supported = ref
+          .read(videoRepositoryProvider)
+          .supportedFeeds(source);
+      return [
+        VideoFeed.updated,
+        for (final feed in _productEnabledFeeds.skip(1))
+          if (supported.contains(feed)) feed,
+      ];
+    } catch (_) {
+      return const [VideoFeed.updated];
+    }
   }
 
   /// 打开「全部频道」全屏页面：选择分类、管理我的频道（增删/拖拽排序）。
@@ -244,9 +282,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       context,
     ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
   }
-
-  List<VideoCategory> get _selectedRootChildren =>
-      _children[_selectedRootId] ?? [];
 
   /// 主 tab 行实际展示的根分类：按「我的频道」定制过滤并保持顺序；
   /// 未定制或定制全部失效时回退为全部根分类。
@@ -348,12 +383,23 @@ class _HomePageState extends ConsumerState<HomePage> {
   double _subCategoryRowHeight(BuildContext context) =>
       math.max(48, MediaQuery.textScalerOf(context).scale(13) + 24);
 
+  double _leafCategoryRowHeight(BuildContext context) =>
+      math.max(42, MediaQuery.textScalerOf(context).scale(12) + 22);
+
   List<Widget> _homeHeaderSlivers(VodSource source) {
     final mainRowHeight = _mainCategoryRowHeight(context);
     final subRowHeight = _subCategoryRowHeight(context);
-    final hasSubcategories = _selectedRootChildren.isNotEmpty;
+    final leafRowHeight = _leafCategoryRowHeight(context);
+    final visibleFeeds = _visibleFeeds(source);
+    final showFeedRow = visibleFeeds.length > 1;
+    final showLeafRow =
+        _selectedRootId != null &&
+        (_children[_selectedRootId]?.isNotEmpty ?? false);
     final pinnedHeight =
-        mainRowHeight + (hasSubcategories ? subRowHeight : 0) + 1;
+        subRowHeight +
+        (showFeedRow ? mainRowHeight : 0) +
+        (showLeafRow ? leafRowHeight : 0) +
+        1;
     return [
       SliverToBoxAdapter(child: _introHeader()),
       SliverToBoxAdapter(child: ContinueWatchingSection()),
@@ -365,6 +411,8 @@ class _HomePageState extends ConsumerState<HomePage> {
             source,
             mainRowHeight: mainRowHeight,
             subRowHeight: subRowHeight,
+            leafRowHeight: leafRowHeight,
+            visibleFeeds: visibleFeeds,
           ),
         ),
       ),
@@ -372,9 +420,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _introHeader() => Container(
-    constraints: BoxConstraints(minHeight: 104),
+    key: ValueKey('home-intro-header'),
+    constraints: BoxConstraints(minHeight: 94),
     color: context.appColors.background.withValues(alpha: 0.55),
-    padding: EdgeInsets.fromLTRB(16, 24, 8, 12),
+    padding: EdgeInsets.fromLTRB(16, 18, 8, 8),
     child: Row(
       children: [
         Expanded(
@@ -437,137 +486,202 @@ class _HomePageState extends ConsumerState<HomePage> {
     VodSource source, {
     required double mainRowHeight,
     required double subRowHeight,
-  }) => ClipRect(
-    key: ValueKey('home-category-header'),
-    child: BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-      child: ColoredBox(
-        color: context.appColors.background.withValues(alpha: 0.72),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: mainRowHeight,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ChipTheme(
-                      data: categoryChipTheme(context),
-                      child: ListView(
-                        key: PageStorageKey<String>(
-                          'home-root-category-tabs-${source.id}',
-                        ),
-                        padding: EdgeInsets.fromLTRB(16, 4, 8, 4),
-                        scrollDirection: Axis.horizontal,
-                        children: [
+    required double leafRowHeight,
+    required List<VideoFeed> visibleFeeds,
+  }) {
+    final selectedChildren =
+        _children[_selectedRootId] ?? const <VideoCategory>[];
+    return ClipRect(
+      key: ValueKey('home-category-header'),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: ColoredBox(
+          color: context.appColors.background.withValues(alpha: 0.72),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (visibleFeeds.length > 1)
+                SizedBox(
+                  height: mainRowHeight,
+                  child: ChipTheme(
+                    data: categoryChipTheme(context).copyWith(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 7,
+                      ),
+                    ),
+                    child: ListView(
+                      key: PageStorageKey<String>(
+                        'home-feed-tabs-${source.id}',
+                      ),
+                      padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        for (final feed in visibleFeeds)
                           Padding(
                             padding: EdgeInsets.only(right: 8),
                             child: ChoiceChip(
-                              label: Text('最新'),
-                              selected: _selectedRootId == null,
+                              key: ValueKey('home-feed-${feed.name}'),
+                              label: Text(feed.label),
+                              selected: controller?.feed == feed,
                               showCheckmark: false,
-                              onSelected: (_) => _selectRoot(source, null),
+                              onSelected: (_) => _selectFeed(source, feed),
                             ),
                           ),
-                          ...?_visibleRoots?.map(
-                            (item) => Padding(
-                              padding: EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text(item.name),
-                                selected: _selectedRootId == item.id,
-                                showCheckmark: false,
-                                onSelected: (_) => _selectRoot(source, item.id),
-                              ),
-                            ),
-                          ),
-                          if (categoryError != null)
-                            ActionChip(
-                              label: Text('重试'),
-                              onPressed: () => _loadCategories(source),
-                            ),
-                        ],
-                      ),
+                      ],
                     ),
-                  ),
-                  // 固定在横滑列表右侧的「全部频道」入口按钮。
-                  if (_visibleRoots?.isNotEmpty ?? false)
-                    Padding(
-                      padding: EdgeInsets.only(right: 8),
-                      child: IconButton(
-                        key: ValueKey('home-category-expand-button'),
-                        tooltip: '全部频道',
-                        visualDensity: VisualDensity.compact,
-                        icon: Icon(
-                          Icons.keyboard_arrow_down_rounded,
-                          color: context.appColors.secondary,
-                        ),
-                        onPressed: () => _openChannelsPage(source),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            if (_selectedRootChildren.isNotEmpty)
-              SizedBox(
-                height: subRowHeight,
-                child: ChipTheme(
-                  data: categoryChipTheme(context).copyWith(
-                    backgroundColor: context.appColors.elevated.withValues(
-                      alpha: 0.45,
-                    ),
-                    // copyWith 会沿用 categoryChipTheme 的 color 解析器（优先级高于
-                    // backgroundColor），这里同步覆盖为 0.45 版本，保持原有底色。
-                    color: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected)) {
-                        return states.contains(WidgetState.focused)
-                            ? context.appColors.accentPressed
-                            : context.appColors.accent;
-                      }
-                      return context.appColors.elevated.withValues(alpha: 0.45);
-                    }),
-                    labelStyle: TextStyle(
-                      color: context.appColors.secondary,
-                      fontSize: 13,
-                    ),
-                    secondaryLabelStyle: TextStyle(
-                      color: context.appColors.onAccent,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  ),
-                  child: ListView(
-                    key: PageStorageKey<String>(
-                      'home-leaf-category-tabs-${source.id}-'
-                      '${_selectedRootId ?? 'none'}',
-                    ),
-                    padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
-                    scrollDirection: Axis.horizontal,
-                    children: _selectedRootChildren
-                        .map(
-                          (item) => Padding(
-                            padding: EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(item.name),
-                              selected: selectedCategoryId == item.id,
-                              showCheckmark: false,
-                              onSelected: (_) => _selectLeaf(item.id),
-                            ),
-                          ),
-                        )
-                        .toList(),
                   ),
                 ),
+              SizedBox(
+                height: subRowHeight,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ChipTheme(
+                        data: categoryChipTheme(context).copyWith(
+                          backgroundColor: context.appColors.elevated
+                              .withValues(alpha: 0.45),
+                          color: WidgetStateProperty.resolveWith((states) {
+                            if (states.contains(WidgetState.selected)) {
+                              return states.contains(WidgetState.focused)
+                                  ? context.appColors.accentPressed
+                                  : context.appColors.accent;
+                            }
+                            return context.appColors.elevated.withValues(
+                              alpha: 0.45,
+                            );
+                          }),
+                          labelStyle: TextStyle(
+                            color: context.appColors.secondary,
+                            fontSize: 13,
+                          ),
+                          secondaryLabelStyle: TextStyle(
+                            color: context.appColors.onAccent,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                        ),
+                        child: ListView(
+                          key: PageStorageKey<String>(
+                            'home-root-category-tabs-${source.id}',
+                          ),
+                          padding: EdgeInsets.fromLTRB(16, 2, 8, 2),
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            Padding(
+                              padding: EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text('全部'),
+                                selected: _selectedRootId == null,
+                                showCheckmark: false,
+                                onSelected: (_) => _selectRoot(source, null),
+                              ),
+                            ),
+                            ...?_visibleRoots?.map(
+                              (item) => Padding(
+                                padding: EdgeInsets.only(right: 8),
+                                child: ChoiceChip(
+                                  label: Text(item.name),
+                                  selected: _selectedRootId == item.id,
+                                  showCheckmark: false,
+                                  onSelected: (_) =>
+                                      _selectRoot(source, item.id),
+                                ),
+                              ),
+                            ),
+                            if (categoryError != null)
+                              ActionChip(
+                                label: Text('重试'),
+                                onPressed: () => _loadCategories(source),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (_visibleRoots?.isNotEmpty ?? false)
+                      Padding(
+                        padding: EdgeInsets.only(right: 8),
+                        child: IconButton(
+                          key: ValueKey('home-category-expand-button'),
+                          tooltip: '全部频道',
+                          visualDensity: VisualDensity.compact,
+                          icon: Icon(
+                            Icons.grid_view_rounded,
+                            size: 20,
+                            color: context.appColors.secondary,
+                          ),
+                          onPressed: () => _openChannelsPage(source),
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            Container(
-              height: 1,
-              color: context.appColors.divider.withValues(alpha: 0.6),
-            ),
-          ],
+              if (selectedChildren.isNotEmpty)
+                SizedBox(
+                  height: leafRowHeight,
+                  child: ChipTheme(
+                    data: categoryChipTheme(context).copyWith(
+                      backgroundColor: Colors.transparent,
+                      side: BorderSide(color: context.appColors.divider),
+                      labelStyle: TextStyle(
+                        color: context.appColors.secondary,
+                        fontSize: 12,
+                      ),
+                      secondaryLabelStyle: TextStyle(
+                        color: context.appColors.accentForeground,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      color: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.selected)) {
+                          return context.appColors.accent.withValues(
+                            alpha: 0.18,
+                          );
+                        }
+                        return Colors.transparent;
+                      }),
+                    ),
+                    child: ListView(
+                      key: PageStorageKey<String>(
+                        'home-child-category-tabs-${source.id}-$_selectedRootId',
+                      ),
+                      padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        for (final child in selectedChildren)
+                          Padding(
+                            padding: EdgeInsets.only(right: 8),
+                            child: ChoiceChip(
+                              key: ValueKey('home-child-category-${child.id}'),
+                              label: Text(child.name),
+                              selected: selectedCategoryId == child.id,
+                              showCheckmark: false,
+                              onSelected: (_) =>
+                                  _selectRootLeaf(_selectedRootId!, child.id),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              Container(
+                height: 1,
+                color: context.appColors.divider.withValues(alpha: 0.6),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _body(VodSource source) {
     final c = controller;
