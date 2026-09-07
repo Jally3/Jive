@@ -17,6 +17,7 @@ lib/
 ```text
 lib/shared/
 ├── app_states.dart                    # 通用状态视图：AppLoadingView / AppEmptyView / AppErrorView
+├── app_update_dialog.dart             # Android 新版本弹窗：更新说明、稍后和外部下载跳转
 ├── app_toast.dart                     # 全局居中 toast：挂 root Overlay，2 秒自消，同时只显示一条
 ├── is_tv.dart                         # isTvProvider：经 jive/device 通道判断是否 Android TV（iOS/失败恒 false）
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
@@ -32,6 +33,7 @@ lib/shared/
 
 ```text
 lib/domain/
+├── app_update_info.dart               # APK 版本清单模型：容错解析版本、HTTPS 下载地址和更新说明
 ├── video.dart                         # 核心模型：Video / VideoRef / Episode / PlaybackLine / VideoCategory / VideoPage
 ├── video_feed.dart                    # 首页内容维度：更新 / 热门 / 新片 / 高分
 ├── vod_source.dart                    # VOD 源模型 VodSource：JSON 解析、HTTPS 与启用状态校验
@@ -71,6 +73,13 @@ lib/data/vod_source/
     ├── syncnext_plugin_adapter.dart   # Syncnext 插件源适配器：按源缓存 JS 会话，实现 EpisodePlaybackResolver
     ├── syncnext_plugin_models.dart    # 插件配置模型：SyncnextPluginConfig / 页面 / 端点的 JSON 解析
     └── syncnext_plugin_runtime.dart   # 通用 JS 插件运行时：JsPluginSession 经 flutter_js 执行插件脚本，桥接 HTTP 与 Cookie
+```
+
+## 应用更新（`lib/data/update/`）
+
+```text
+lib/data/update/
+└── app_update_service.dart            # Android APK 版本检查：读本地 versionName、拉取 version.json、比较并外部打开下载地址
 ```
 
 ## 内容策略（`lib/data/content/`）

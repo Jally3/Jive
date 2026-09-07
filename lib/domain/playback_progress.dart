@@ -8,7 +8,6 @@ class PlaybackProgress {
   final int positionMs;
   final int durationMs;
   final bool completed;
-
   factory PlaybackProgress.normalize({
     required int positionMs,
     required int durationMs,
@@ -22,6 +21,7 @@ class PlaybackProgress {
       completed: duration > 0 && position / duration >= completionThreshold,
     );
   }
+
 
   Duration resumePosition() =>
       completed ? Duration.zero : Duration(milliseconds: positionMs);

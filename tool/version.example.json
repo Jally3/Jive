@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "platform": "android",
+  "latestVersionName": "1.0.14",
+  "apkUrl": "https://download.example.com/jive/jive-1.0.14.apk",
+  "releaseNotes": [
+    "修复部分视频无法播放的问题",
+    "优化电视遥控器操作体验"
+  ],
+  "publishedAt": "2026-09-06T12:00:00+08:00"
+}

@@ -6,10 +6,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
+import 'package:jive/data/update/app_update_service.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
+import 'package:jive/domain/app_update_info.dart';
 import 'package:jive/features/splash/splash_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -45,14 +47,34 @@ class _FakeRepository implements VideoRepository {
       fetchDetail(source, ref);
 }
 
+class _FakeUpdateGateway implements AppUpdateGateway {
+  _FakeUpdateGateway([this.update]);
+
+  final AppUpdateInfo? update;
+  var checkCalls = 0;
+
+  @override
+  Future<AppUpdateInfo?> checkForUpdate() async {
+    checkCalls++;
+    return update;
+  }
+
+  @override
+  Future<bool> openDownload(AppUpdateInfo update) async => true;
+}
+
 ProviderContainer _container({
   required Future<VodSourceRegistry> Function() registry,
+  AppUpdateGateway? updateGateway,
 }) => ProviderContainer(
   overrides: [
     videoRepositoryProvider.overrideWithValue(_FakeRepository()),
     vodSourceRegistryProvider.overrideWith((ref) => registry()),
     downloadTasksProvider.overrideWith(
       (ref) => Stream.value(const <DownloadTask>[]),
+    ),
+    appUpdateGatewayProvider.overrideWithValue(
+      updateGateway ?? _FakeUpdateGateway(),
     ),
   ],
 );
@@ -127,5 +149,34 @@ void main() {
 
     await tester.pump(splashMinHold);
     expect(find.byKey(const ValueKey('floating-nav-bar')), findsOneWidget);
+  });
+
+  testWidgets('checks for an update after the home shell appears', (
+    tester,
+  ) async {
+    final gateway = _FakeUpdateGateway(
+      AppUpdateInfo(
+        versionName: '1.0.14',
+        apkUrl: Uri.parse('https://example.com/jive.apk'),
+        releaseNotes: const ['修复播放失败'],
+      ),
+    );
+    final container = _container(
+      registry: () async => VodSourceRegistry([_testSource], const {}),
+      updateGateway: gateway,
+    );
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const JiveApp()),
+    );
+    await tester.pump();
+    expect(gateway.checkCalls, 0);
+
+    await tester.pump(splashMinHold);
+    await tester.pumpAndSettle();
+
+    expect(gateway.checkCalls, 1);
+    expect(find.text('发现新版本 1.0.14'), findsOneWidget);
   });
 }

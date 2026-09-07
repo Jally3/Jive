@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:jive/domain/app_update_info.dart';
 import '../shared/app_states.dart';
+import '../shared/app_update_dialog.dart';
 import '../data/download/download_providers.dart';
 import '../data/theme_mode_preferences.dart';
+import '../data/update/app_update_service.dart';
 import '../data/vod_source/vod_source_preferences.dart';
 import '../data/vod_source/vod_source_registry.dart';
 import '../features/home/home_page.dart';
@@ -123,15 +127,16 @@ class _DownloadLifecycleState extends ConsumerState<_DownloadLifecycle>
   Widget build(BuildContext context) => widget.child;
 }
 
-class AppShell extends StatefulWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
   @override
-  State<AppShell> createState() => _AppShellState();
+  ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> {
   var index = 0;
   var profileRevision = 0;
+  var _updateCheckStarted = false;
   late final List<Widget?> pages;
   final _searchFocusNode = FocusNode();
 
@@ -143,6 +148,23 @@ class _AppShellState extends State<AppShell> {
     // 预建搜索页：首次构建开销挪到启动阶段，避免首次切换 tab 时
     // 在同一帧内建整棵子树造成卡顿。
     pages[1] = SearchPage(focusNode: _searchFocusNode);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_checkForAppUpdate());
+    });
+  }
+
+  Future<void> _checkForAppUpdate() async {
+    if (_updateCheckStarted ||
+        !mounted ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    _updateCheckStarted = true;
+    final gateway = ref.read(appUpdateGatewayProvider);
+    final update = await gateway.checkForUpdate();
+    if (!mounted || update == null) return;
+    await showAppUpdateDialog(context, update:update, gateway: gateway);
   }
 
   @override

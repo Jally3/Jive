@@ -4,7 +4,7 @@ description: "Jive - a focused mobile video player MVP."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.0.13+5
+version: 1.0.14+5
 
 environment:
   sdk: ^3.9.2
@@ -34,6 +34,8 @@ dependencies:
   connectivity_plus: ^7.3.1
   flutter_js: ^0.8.7
   reorderable_grid_view: ^2.2.8
+  package_info_plus: ^9.0.1
+  url_launcher: ^6.3.2
 
 # screen_brightness_ios 2.1.4+ uses Flutter 3.38 scene APIs
 # (registrar.addSceneDelegate) and fails to compile on Flutter 3.35.
