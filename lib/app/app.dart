@@ -4,9 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:jive/domain/app_update_info.dart';
+
 import '../shared/app_states.dart';
 import '../shared/app_update_dialog.dart';
+import '../shared/double_back_exit_scope.dart';
 import '../data/download/download_providers.dart';
 import '../data/theme_mode_preferences.dart';
 import '../data/update/app_update_service.dart';
@@ -164,7 +165,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     final gateway = ref.read(appUpdateGatewayProvider);
     final update = await gateway.checkForUpdate();
     if (!mounted || update == null) return;
-    await showAppUpdateDialog(context, update:update, gateway: gateway);
+    await showAppUpdateDialog(context, update: update, gateway: gateway);
   }
 
   @override
@@ -199,7 +200,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   Widget build(BuildContext context) {
     final isTablet = MediaQuery.sizeOf(context).shortestSide >= 600;
-    return Scaffold(
+    final scaffold = Scaffold(
       extendBody: true,
       body: IndexedStack(
         index: index,
@@ -232,6 +233,9 @@ class _AppShellState extends ConsumerState<AppShell> {
         ),
       ),
     );
+    final isAndroid =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    return isAndroid ? DoubleBackExitScope(child: scaffold) : scaffold;
   }
 }
 
