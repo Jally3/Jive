@@ -13,6 +13,8 @@ Future<T?> showAppAnchoredMenu<T>({
   required BuildContext anchorContext,
   required WidgetBuilder builder,
   double width = 280,
+  bool matchAnchorWidth = false,
+  double? maxWidth,
   double gap = 8,
 }) {
   final anchorBox = anchorContext.findRenderObject() as RenderBox?;
@@ -30,7 +32,11 @@ Future<T?> showAppAnchoredMenu<T>({
   const edgeGap = 12.0;
   final safeLeft = media.padding.left + edgeGap;
   final safeRight = overlaySize.width - media.padding.right - edgeGap;
-  final menuWidth = math.min(width, safeRight - safeLeft);
+  final requestedWidth = matchAnchorWidth ? anchorRect.width : width;
+  final cappedWidth = maxWidth == null
+      ? requestedWidth
+      : math.min(requestedWidth, maxWidth);
+  final menuWidth = math.min(cappedWidth, safeRight - safeLeft);
   final idealLeft = anchorRect.center.dx - menuWidth / 2;
   final left = idealLeft.clamp(safeLeft, safeRight - menuWidth).toDouble();
   final below =
@@ -77,7 +83,12 @@ Future<T?> showAppAnchoredMenu<T>({
                 elevation: 10,
                 shadowColor: Colors.black.withValues(alpha: 0.22),
                 clipBehavior: Clip.antiAlias,
-                borderRadius: BorderRadius.circular(18),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(
+                    color: menuContext.appColors.divider.withValues(alpha: 0.7),
+                  ),
+                ),
                 child: SingleChildScrollView(child: builder(menuContext)),
               ),
             ),
@@ -122,10 +133,20 @@ class AppAnchoredMenuItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListTile(
-    leading: Icon(icon),
-    title: Text(title),
-    subtitle: subtitle == null ? null : Text(subtitle!),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+    leading: Icon(icon, size: 20),
+    title: Text(
+      title,
+      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    ),
+    subtitle: subtitle == null
+        ? null
+        : Text(subtitle!, style: const TextStyle(fontSize: 11.5, height: 1.3)),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+    horizontalTitleGap: 10,
+    minLeadingWidth: 20,
+    minTileHeight: subtitle == null ? 44 : 54,
+    dense: true,
+    visualDensity: const VisualDensity(vertical: -2),
     onTap: onTap,
   );
 }

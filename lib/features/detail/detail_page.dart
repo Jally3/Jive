@@ -96,6 +96,8 @@ class DetailPageLayout {
   }
 }
 
+enum _RelationshipAction { follow, favorite, stopFollowing, remove }
+
 class VideoDetailPage extends ConsumerStatefulWidget {
   const VideoDetailPage({super.key, required this.video});
   final Video video;
@@ -912,8 +914,16 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           : favorite
           ? Icons.favorite
           : Icons.favorite_outline;
-      if (supportsFollow && !favorite && !following) {
-        return _followMenuButton(v, ref, isLoading: favs.isLoading);
+      if (supportsFollow) {
+        return _relationshipMenuButton(
+          v,
+          ref,
+          label: label,
+          icon: icon,
+          favorite: favorite,
+          following: following,
+          isLoading: favs.isLoading,
+        );
       }
       return SizedBox(
         key: const ValueKey('detail-relationship-button'),
@@ -927,15 +937,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                     final controller = ref.read(
                       favoriteControllerProvider.notifier,
                     );
-                    if (following) {
-                      await _showStopFollowingSheet(v.globalId, controller);
-                    } else if (supportsFollow && favorite) {
-                      await _showFavoriteOptionsSheet(v, controller);
-                    } else {
-                      await controller.toggle(v);
-                      if (mounted) {
-                        showAppToast(context, favorite ? '已取消收藏' : '已收藏');
-                      }
+                    await controller.toggle(v);
+                    if (mounted) {
+                      showAppToast(context, favorite ? '已取消收藏' : '已收藏');
                     }
                   } catch (_) {
                     if (mounted) {
@@ -957,31 +961,42 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     },
   );
 
-  Widget _followMenuButton(
+  Widget _relationshipMenuButton(
     Video video,
     WidgetRef ref, {
+    required String label,
+    required IconData icon,
+    required bool favorite,
+    required bool following,
     required bool isLoading,
   }) => SizedBox(
     key: const ValueKey('detail-relationship-button'),
-    width: 96,
+    width: _layout.isTablet ? 200 : 176,
     height: 48,
     child: Builder(
       builder: (anchorContext) => OutlinedButton.icon(
         onPressed: isLoading
             ? null
-            : () => _openFollowMenu(anchorContext, video, ref),
+            : () => _openRelationshipMenu(
+                anchorContext,
+                video,
+                ref,
+                favorite: favorite,
+                following: following,
+              ),
         style: OutlinedButton.styleFrom(
           foregroundColor: anchorContext.appColors.text,
           padding: const EdgeInsets.symmetric(horizontal: 6),
         ),
-        icon: const Icon(Icons.add, size: 18),
-        label: const FittedBox(
+        icon: Icon(icon, size: 18),
+        label: FittedBox(
           fit: BoxFit.scaleDown,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('追更', maxLines: 1, softWrap: false),
-              Icon(Icons.arrow_drop_down, size: 16),
+              Text(label, maxLines: 1, softWrap: false),
+              const SizedBox(width: 2),
+              const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
             ],
           ),
         ),
@@ -989,130 +1004,112 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     ),
   );
 
-  Future<void> _openFollowMenu(
+  Future<void> _openRelationshipMenu(
     BuildContext anchorContext,
     Video video,
-    WidgetRef ref,
-  ) async {
-    final follow = await showAppAnchoredMenu<bool>(
+    WidgetRef ref, {
+    required bool favorite,
+    required bool following,
+  }) async {
+    final action = await showAppAnchoredMenu<_RelationshipAction>(
       anchorContext: anchorContext,
-      width: 200,
+      matchAnchorWidth: true,
+      maxWidth: 280,
       builder: (menuContext) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            AppAnchoredMenuItem(
-              key: const ValueKey('detail-follow-menu-follow'),
-              icon: Icons.add_alert_outlined,
-              title: '追更',
-              subtitle: '有新集时提醒',
-              onTap: () => Navigator.pop(menuContext, true),
-            ),
-            AppAnchoredMenuItem(
-              key: const ValueKey('detail-follow-menu-favorite'),
-              icon: Icons.favorite_outline,
-              title: '仅收藏',
-              subtitle: '保存但不提醒',
-              onTap: () => Navigator.pop(menuContext, false),
-            ),
+            if (following) ...[
+              AppAnchoredMenuItem(
+                key: const ValueKey('detail-follow-menu-stop'),
+                icon: Icons.notifications_off_outlined,
+                title: '取消追更',
+                subtitle: '停止新集提醒，保留收藏',
+                onTap: () => Navigator.pop(
+                  menuContext,
+                  _RelationshipAction.stopFollowing,
+                ),
+              ),
+              AppAnchoredMenuItem(
+                key: const ValueKey('detail-follow-menu-remove'),
+                icon: Icons.delete_outline,
+                title: '取消追更并移除',
+                subtitle: '同时从个人内容库移除',
+                onTap: () =>
+                    Navigator.pop(menuContext, _RelationshipAction.remove),
+              ),
+            ] else ...[
+              AppAnchoredMenuItem(
+                key: const ValueKey('detail-follow-menu-follow'),
+                icon: Icons.add_alert_outlined,
+                title: favorite ? '开启追更' : '追更并收藏',
+                subtitle: '有新集时提醒',
+                onTap: () =>
+                    Navigator.pop(menuContext, _RelationshipAction.follow),
+              ),
+              AppAnchoredMenuItem(
+                key: const ValueKey('detail-follow-menu-favorite'),
+                icon: favorite ? Icons.delete_outline : Icons.favorite_outline,
+                title: favorite ? '取消收藏' : '仅收藏',
+                subtitle: favorite ? '从个人内容库移除' : '保存但不提醒',
+                onTap: () => Navigator.pop(
+                  menuContext,
+                  favorite
+                      ? _RelationshipAction.remove
+                      : _RelationshipAction.favorite,
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
-    if (follow != null) {
-      await _saveFromFollowMenu(video, ref, follow: follow);
+    if (action != null) {
+      await _saveRelationshipAction(video, ref, action: action);
     }
   }
 
-  Future<void> _saveFromFollowMenu(
+  Future<void> _saveRelationshipAction(
     Video video,
     WidgetRef ref, {
-    required bool follow,
+    required _RelationshipAction action,
   }) async {
     try {
       final controller = ref.read(favoriteControllerProvider.notifier);
-      if (follow) {
-        await controller.follow(video);
-        if (mounted) showAppToast(context, '已追更并收藏，有新集时会提醒你');
-      } else {
-        await controller.toggle(video);
-        if (mounted) showAppToast(context, '已收藏');
+      switch (action) {
+        case _RelationshipAction.follow:
+          await controller.follow(video);
+          if (mounted) showAppToast(context, '已追更，有新集时会提醒你');
+          return;
+        case _RelationshipAction.favorite:
+          await controller.toggle(video);
+          if (mounted) showAppToast(context, '已收藏');
+          return;
+        case _RelationshipAction.stopFollowing:
+          await controller.stopFollowing(video.globalId, keepFavorite: true);
+          if (mounted) showAppToast(context, '已取消追更，收藏仍保留');
+          return;
+        case _RelationshipAction.remove:
+          final wasFollowing = ref
+              .read(favoriteControllerProvider)
+              .value
+              ?.where((item) => item.video.globalId == video.globalId)
+              .firstOrNull
+              ?.isFollowing;
+          await controller.stopFollowing(video.globalId, keepFavorite: false);
+          if (mounted) {
+            showAppToast(
+              context,
+              wasFollowing == true ? '已取消追更并移除收藏' : '已取消收藏',
+            );
+          }
+          return;
       }
     } catch (_) {
       if (mounted) {
         showAppToast(context, '保存失败，请重试');
       }
-    }
-  }
-
-  Future<void> _showStopFollowingSheet(
-    String globalId,
-    FavoriteController controller,
-  ) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ListTile(title: Text('停止追更？')),
-            ListTile(
-              leading: const Icon(Icons.notifications_off_outlined),
-              title: const Text('停止提醒，保留收藏'),
-              onTap: () => Navigator.pop(sheetContext, 'keep'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('从个人内容库移除'),
-              onTap: () => Navigator.pop(sheetContext, 'remove'),
-            ),
-            ListTile(
-              title: const Text('取消'),
-              onTap: () => Navigator.pop(sheetContext),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (action == null) return;
-    await controller.stopFollowing(globalId, keepFavorite: action == 'keep');
-  }
-
-  Future<void> _showFavoriteOptionsSheet(
-    Video video,
-    FavoriteController controller,
-  ) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ListTile(title: Text('个人内容库')),
-            ListTile(
-              leading: const Icon(Icons.add_alert_outlined),
-              title: const Text('开启追更'),
-              onTap: () => Navigator.pop(sheetContext, 'follow'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('从个人内容库移除'),
-              onTap: () => Navigator.pop(sheetContext, 'remove'),
-            ),
-            ListTile(
-              title: const Text('取消'),
-              onTap: () => Navigator.pop(sheetContext),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (action == 'follow') {
-      await controller.follow(video);
-      if (mounted) showAppToast(context, '已加入追更，有新集时会提醒你');
-    } else if (action == 'remove') {
-      await controller.toggle(video);
     }
   }
 

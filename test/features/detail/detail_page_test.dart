@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -334,6 +335,12 @@ void main() {
 
     await tester.tap(relationshipButton);
     await tester.pumpAndSettle();
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('app-anchored-menu-surface')))
+          .width,
+      tester.getSize(relationshipButton).width,
+    );
     expect(find.text('追更并收藏'), findsOneWidget);
     expect(find.text('有新集时提醒'), findsOneWidget);
     expect(find.text('仅收藏'), findsOneWidget);
@@ -351,7 +358,9 @@ void main() {
 
     await tester.tap(relationshipButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('开启追更'));
+    expect(find.text('开启追更'), findsOneWidget);
+    expect(find.text('取消收藏'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('detail-follow-menu-follow')));
     await tester.pumpAndSettle();
     record = container.read(favoriteControllerProvider).requireValue.single;
     expect(record.isFollowing, isTrue);
@@ -359,6 +368,18 @@ void main() {
       find.descendant(of: relationshipButton, matching: find.text('已追更')),
       findsOneWidget,
     );
+
+    await tester.tap(relationshipButton);
+    await tester.pumpAndSettle();
+    expect(find.text('取消追更'), findsOneWidget);
+    expect(find.text('停止新集提醒，保留收藏'), findsOneWidget);
+    expect(find.text('取消追更并移除'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('detail-follow-menu-stop')));
+    await tester.pumpAndSettle();
+    record = container.read(favoriteControllerProvider).requireValue.single;
+    expect(record.isFollowing, isFalse);
+    expect(record.isFavorite, isTrue);
+    expect(find.text('已取消追更，收藏仍保留'), findsOneWidget);
   });
 
   testWidgets('single-item content only offers favorite', (tester) async {
@@ -407,10 +428,16 @@ void main() {
       of: find.byKey(const ValueKey('skip-intro-0')),
       matching: find.byType(Radio<int>),
     );
-    expect(tester.getSize(menuSurface).width, 272);
+    expect(
+      tester.getSize(menuSurface).width,
+      math.min(
+        tester.getSize(find.byKey(const ValueKey('skip-intro-button'))).width,
+        280,
+      ),
+    );
     expect(
       tester.getTopLeft(menuTitle).dy - tester.getTopLeft(menuSurface).dy,
-      lessThanOrEqualTo(16),
+      lessThanOrEqualTo(18),
     );
     expect(
       tester.getTopLeft(firstRadio).dx,

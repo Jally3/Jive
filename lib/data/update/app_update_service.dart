@@ -53,6 +53,7 @@ class AppUpdateService implements AppUpdateGateway {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       final update = AppUpdateInfo.tryParse(decoded);
       if (update == null ||
+          !update.updatePromptEnabled ||
           compareVersionNames(update.versionName, currentVersionName) != 1) {
         return null;
       }

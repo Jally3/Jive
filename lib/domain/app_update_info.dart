@@ -2,11 +2,13 @@ class AppUpdateInfo {
   const AppUpdateInfo({
     required this.versionName,
     required this.apkUrl,
+    required this.updatePromptEnabled,
     this.releaseNotes = const [],
   });
 
   final String versionName;
   final Uri apkUrl;
+  final bool updatePromptEnabled;
   final List<String> releaseNotes;
 
   static AppUpdateInfo? tryParse(Object? value) {
@@ -23,6 +25,9 @@ class AppUpdateInfo {
     }
 
     final rawNotes = json['releaseNotes'];
+    final updatePromptEnabled = json['updatePromptEnabled'] is bool
+        ? json['updatePromptEnabled'] as bool
+        : true;
     final releaseNotes = rawNotes is List
         ? rawNotes
               .whereType<String>()
@@ -34,6 +39,7 @@ class AppUpdateInfo {
     return AppUpdateInfo(
       versionName: versionName,
       apkUrl: apkUrl,
+      updatePromptEnabled: updatePromptEnabled,
       releaseNotes: releaseNotes,
     );
   }

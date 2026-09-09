@@ -42,6 +42,22 @@ void main() {
     expect(await service.checkForUpdate(), isNull);
   });
 
+  test('returns null when update prompts are explicitly disabled', () async {
+    final service = AppUpdateService(
+      manifestUri: manifestUri,
+      currentVersionName: () async => '1.0.13',
+      client: MockClient(
+        (_) async => http.Response('''{
+            "latestVersionName": "1.0.14",
+            "apkUrl": "https://example.com/jive.apk",
+            "updatePromptEnabled": false
+          }''', 200),
+      ),
+    );
+
+    expect(await service.checkForUpdate(), isNull);
+  });
+
   test('uses version name and ignores APK build number fields', () async {
     final service = AppUpdateService(
       manifestUri: manifestUri,
@@ -85,6 +101,7 @@ void main() {
     final update = AppUpdateInfo(
       versionName: '1.0.14',
       apkUrl: Uri.parse('https://example.com/jive.apk'),
+      updatePromptEnabled: true,
     );
 
     expect(await service.openDownload(update), isTrue);

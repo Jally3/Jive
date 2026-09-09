@@ -108,6 +108,7 @@ App 完成启动并显示首页
   "platform": "android",
   "latestVersionName": "1.0.14",
   "apkUrl": "https://download.example.com/jive/jive-1.0.14.apk",
+  "updatePromptEnabled": true,
   "releaseNotes": [
     "修复部分视频无法播放的问题",
     "优化电视遥控器操作体验"
@@ -124,6 +125,7 @@ App 完成启动并显示首页
 | `platform` | string | 是 | 必须为 `android` |
 | `latestVersionName` | string | 是 | 展示用，去除首尾空白后不能为空，最长 32 字符 |
 | `apkUrl` | string | 是 | 必须为 HTTPS，host 非空 |
+| `updatePromptEnabled` | boolean | 否 | 是否允许展示更新提示；缺失或类型错误时默认为 `true`，以兼容旧配置 |
 | `releaseNotes` | string[] | 否 | 最多 8 条，每条最多 100 字符；非法项忽略 |
 | `publishedAt` | string | 否 | ISO 8601，仅用于诊断和展示扩展，不参与版本判断 |
 
@@ -138,6 +140,7 @@ App 完成启动并显示首页
 
 ### FR-4 更新弹窗
 
+- `updatePromptEnabled` 为 `false` 时静默跳过本次更新提示。
 - 标题：`发现新版本 {versionName}`。
 - 正文优先逐行展示 `releaseNotes`；为空时显示“新版本已经发布，是否前往下载？”。
 - 操作按钮：`稍后`、`立即下载`。

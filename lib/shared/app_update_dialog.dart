@@ -17,11 +17,9 @@ Future<void> showAppUpdateDialog(
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420, maxHeight: 320),
         child: SingleChildScrollView(
-          child: Text(
-            update.releaseNotes.isEmpty
-                ? '新版本已经发布，是否前往下载？'
-                : update.releaseNotes.map((note) => '• $note').join('\n'),
-          ),
+          child: update.releaseNotes.isEmpty
+              ? const Text('新版本已经发布，是否前往下载？')
+              : _ReleaseNotes(notes: update.releaseNotes),
         ),
       ),
       actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
@@ -58,6 +56,48 @@ Future<void> showAppUpdateDialog(
       ],
     ),
   );
+}
+
+class _ReleaseNotes extends StatelessWidget {
+  const _ReleaseNotes({required this.notes});
+
+  final List<String> notes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < notes.length; index++)
+          Padding(
+            padding: EdgeInsets.only(bottom: index == notes.length - 1 ? 0 : 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${index + 1}、',
+                  key: ValueKey('app-update-note-number-$index'),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    _withoutLeadingListMarker(notes[index]),
+                    key: ValueKey('app-update-note-content-$index'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+String _withoutLeadingListMarker(String note) {
+  return note
+      .replaceFirst(RegExp(r'^\s*[\u2022·▪◦]\s*'), '')
+      .replaceFirst(RegExp(r'^\s*\d+\s*(?:[、．]|\.\s+)\s*'), '')
+      .trim();
 }
 
 ButtonStyle _laterButtonStyle(BuildContext context) =>

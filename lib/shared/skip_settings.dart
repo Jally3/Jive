@@ -73,7 +73,8 @@ class SkipSettingsBlock extends ConsumerWidget {
     if (!context.mounted) return;
     final saved = await showAppAnchoredMenu<int>(
       anchorContext: context,
-      width: 200,
+      matchAnchorWidth: true,
+      maxWidth: 280,
       builder: (_) => picker,
     );
     if (saved != null && context.mounted) {
@@ -104,6 +105,7 @@ class _SkipStatusButton extends StatelessWidget {
         style: OutlinedButton.styleFrom(
           foregroundColor: anchorContext.appColors.text,
           padding: const EdgeInsets.symmetric(horizontal: 10),
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -120,8 +122,8 @@ class _SkipStatusButton extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 2),
-            const Icon(Icons.keyboard_arrow_down, size: 18),
+            const SizedBox(width: 4),
+            const Icon(Icons.keyboard_arrow_down_rounded, size: 17),
           ],
         ),
       ),
@@ -190,10 +192,10 @@ class _SkipPickerState extends State<_SkipPicker> {
   @override
   Widget build(BuildContext context) => Padding(
     padding: EdgeInsets.fromLTRB(
+      18,
       16,
-      12,
-      16,
-      12 + MediaQuery.viewInsetsOf(context).bottom,
+      18,
+      14 + MediaQuery.viewInsetsOf(context).bottom,
     ),
     child: custom ? _customEditor() : _presets(),
   );
@@ -215,11 +217,14 @@ class _SkipPickerState extends State<_SkipPicker> {
         }
       },
       child: ListTileTheme(
-        data: const ListTileThemeData(
+        data: ListTileThemeData(
           contentPadding: EdgeInsets.zero,
-          horizontalTitleGap: 8,
+          horizontalTitleGap: 10,
           minLeadingWidth: 20,
           minVerticalPadding: 0,
+          minTileHeight: 42,
+          dense: true,
+          textColor: context.appColors.text,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -227,9 +232,13 @@ class _SkipPickerState extends State<_SkipPicker> {
           children: [
             Text(
               title,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+              style: const TextStyle(
+                fontSize: 18,
+                height: 1.25,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             for (final seconds in [0, ...skipDurationPresets])
               RadioListTile<int>(
                 key: ValueKey(
@@ -237,9 +246,25 @@ class _SkipPickerState extends State<_SkipPicker> {
                 ),
                 value: seconds,
                 contentPadding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
+                visualDensity: const VisualDensity(
+                  horizontal: -2,
+                  vertical: -3,
+                ),
+                activeColor: context.appColors.accentForeground,
                 controlAffinity: ListTileControlAffinity.leading,
-                title: Text(seconds == 0 ? '关闭' : '$seconds 秒'),
+                title: Text(
+                  seconds == 0 ? '关闭' : '$seconds 秒',
+                  style: TextStyle(
+                    fontSize: 16,
+                    height: 1.2,
+                    fontWeight: selectedValue == seconds
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                    color: selectedValue == seconds
+                        ? context.appColors.accentForeground
+                        : context.appColors.text,
+                  ),
+                ),
               ),
             RadioListTile<int>(
               key: ValueKey(
@@ -247,18 +272,32 @@ class _SkipPickerState extends State<_SkipPicker> {
               ),
               value: customValue,
               contentPadding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
+              visualDensity: const VisualDensity(horizontal: -2, vertical: -3),
+              activeColor: context.appColors.accentForeground,
               controlAffinity: ListTileControlAffinity.leading,
-              title: const Text('自定义'),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                widget.isIntro ? '播放开始时自动跳过所选时长' : '剩余所选时长时自动结束或播放下一集',
+              title: Text(
+                '自定义',
                 style: TextStyle(
-                  color: context.appColors.secondary,
-                  fontSize: 12,
+                  fontSize: 16,
+                  height: 1.2,
+                  fontWeight: selectedValue == customValue
+                      ? FontWeight.w600
+                      : FontWeight.w400,
+                  color: selectedValue == customValue
+                      ? context.appColors.accentForeground
+                      : context.appColors.text,
                 ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Divider(height: 1, color: context.appColors.divider),
+            const SizedBox(height: 10),
+            Text(
+              widget.isIntro ? '播放开始时自动跳过所选时长' : '剩余所选时长时自动结束或播放下一集',
+              style: TextStyle(
+                color: context.appColors.secondary,
+                fontSize: 12,
+                height: 1.4,
               ),
             ),
           ],
@@ -273,7 +312,11 @@ class _SkipPickerState extends State<_SkipPicker> {
     children: [
       Text(
         '自定义${widget.isIntro ? '片头' : '片尾'}时长',
-        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+        style: const TextStyle(
+          fontSize: 18,
+          height: 1.25,
+          fontWeight: FontWeight.w700,
+        ),
       ),
       const SizedBox(height: 16),
       TextField(
