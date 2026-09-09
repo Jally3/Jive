@@ -270,6 +270,7 @@ Future<ProviderContainer> _pumpPlayerPage(
   double textScale = 1,
   bool isTv = false,
   ThemeData? theme,
+  Map<String, Duration> episodeResumePositions = const {},
 }) async {
   final container = ProviderContainer(
     overrides: [
@@ -302,6 +303,7 @@ Future<ProviderContainer> _pumpPlayerPage(
           video: video,
           episode: episode ?? video.episodes.first,
           resumePosition: resumePosition,
+          episodeResumePositions: episodeResumePositions,
         ),
       ),
     ),
@@ -988,6 +990,52 @@ void main() {
     await _unmountPlayerPage(tester);
   });
 
+  testWidgets('light landscape player keeps overlay text readable', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(844, 390);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final video = _playableSeries('https://example.com');
+
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+      theme: buildLightTheme(),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+
+    final videoSurface = find.byKey(const ValueKey('player-video-surface'));
+    expect(
+      DefaultTextStyle.of(tester.element(videoSurface)).style.color,
+      AppColors.text,
+    );
+    expect(IconTheme.of(tester.element(videoSurface)).color, AppColors.text);
+    expect(find.byKey(const ValueKey('player-top-scrim')), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.text('测试剧集 · 第1集')).style?.color,
+      Colors.white,
+    );
+    expect(tester.widget<Text>(find.text('1×')).style?.color, Colors.white);
+    expect(tester.widget<Text>(find.text('选集')).style?.color, Colors.white);
+
+    await tester.tap(find.byKey(const ValueKey('player-episode-menu')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.text('第1集')).style?.color,
+      AppColors.accent,
+    );
+    expect(tester.widget<Text>(find.text('第2集')).style?.color, AppColors.text);
+
+    await _unmountPlayerPage(tester);
+  });
+
   testWidgets('PlayerPage fits a 9:16 video at 320x568 with text scale 2', (
     tester,
   ) async {
@@ -1261,6 +1309,40 @@ void main() {
       await _unmountPlayerPage(tester);
     },
   );
+
+  testWidgets('switching episodes restores that episode saved position', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(844, 390);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    videoPlatform.initializationPlan = [
+      _InitializationResult.success,
+      _InitializationResult.success,
+    ];
+    final video = _playableSeries('https://old.example.com');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+      episodeResumePositions: const {'episode:2': Duration(minutes: 2)},
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('player-next-episode')));
+    await _pumpUntil(tester, () => videoPlatform.dataSources.length == 2);
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-1')).evaluate().isNotEmpty,
+    );
+
+    expect(videoPlatform.seekPositions, contains(const Duration(minutes: 2)));
+    await _unmountPlayerPage(tester);
+  });
 
   testWidgets(
     'portrait player keeps the episode panel and hides overlay episode nav',

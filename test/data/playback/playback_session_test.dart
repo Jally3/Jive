@@ -132,6 +132,28 @@ void main() {
     await session.close(proxy);
   });
 
+  test('offline-only cache miss never contacts the network', () async {
+    var requested = false;
+    final client = MockClient((request) async {
+      requested = true;
+      return http.Response('unexpected', 200);
+    });
+
+    final preparation = await PlaybackSession.prepare(
+      selection: _selection(),
+      proxy: proxy,
+      parser: HlsParser(client: client),
+      client: client,
+      cacheManager: manager,
+      store: store,
+      offlineOnly: true,
+    );
+
+    expect(preparation.session, isNull);
+    expect(preparation.status.reason, PlaybackFallbackReason.cacheUnavailable);
+    expect(requested, isFalse);
+  });
+
   test(
     'online prepare persists the proxy manifest for later offline use',
     () async {

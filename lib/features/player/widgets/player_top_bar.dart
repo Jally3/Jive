@@ -26,32 +26,57 @@ class PlayerTopBar extends StatelessWidget {
         child: IgnorePointer(
           ignoring: !visible,
           child: Align(
-            alignment: Alignment.topLeft,
-            child: SafeArea(
-              top: false,
-              left: false,
-              right: false,
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      key: const ValueKey('fullscreen-back'),
-                      onPressed: onBack,
-                      tooltip: fullScreen ? '退出全屏' : '返回',
-                      icon: const Icon(Icons.arrow_back),
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              width: double.infinity,
+              child: DecoratedBox(
+                key: const ValueKey('player-top-scrim'),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xB3000000), Colors.transparent],
+                  ),
+                ),
+                child: SafeArea(
+                  top: false,
+                  left: false,
+                  right: false,
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          key: const ValueKey('fullscreen-back'),
+                          onPressed: onBack,
+                          tooltip: fullScreen ? '退出全屏' : '返回',
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            color: Colors.white,
+                          ),
+                        ),
+                        Flexible(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black87,
+                                  blurRadius: 4,
+                                  offset: Offset(0, 1),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    Flexible(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),

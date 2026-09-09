@@ -23,6 +23,7 @@ import '../../data/playback/prefetch_policy.dart';
 import '../../data/playback/skip_policy.dart';
 import '../../data/vod_source/adapters/age_adapter.dart';
 import '../../data/history_repository.dart';
+import '../../data/offline_progress_repository.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_adapter.dart';
 import '../../data/vod_source/vod_source_registry.dart';
@@ -55,11 +56,17 @@ class PlayerPage extends ConsumerStatefulWidget {
     required this.episode,
     this.resumePosition = Duration.zero,
     this.selection,
+    this.episodeSelections = const {},
+    this.episodeResumePositions = const {},
+    this.offlineOnly = false,
   });
   final Video video;
   final Episode episode;
   final Duration resumePosition;
   final PlaybackSelection? selection;
+  final Map<String, PlaybackSelection> episodeSelections;
+  final Map<String, Duration> episodeResumePositions;
+  final bool offlineOnly;
   @override
   ConsumerState<PlayerPage> createState() => _PlayerPageState();
 }
@@ -67,6 +74,7 @@ class PlayerPage extends ConsumerStatefulWidget {
 class _PlayerPageState extends ConsumerState<PlayerPage>
     with WidgetsBindingObserver {
   late final HistoryRepository historyRepository;
+  late final OfflineProgressRepository offlineProgressRepository;
   VideoPlayerController? controller;
   late Episode episode;
   PlaybackSelection? _selection;
@@ -154,6 +162,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   /// 退出播放器时是否立即清理本次播放的缓存条目（自动清理设置驱动）。
   /// 设置未加载完成前保守起见不清理（默认项是 1 小时后，不退出即清）。
   bool _cleanCacheOnExit = false;
+  Set<String> _downloadedEpisodeKeys = const {};
 
   SkipPolicy _skipPolicy = const SkipPolicy();
   bool _introSkipped = false;
@@ -169,6 +178,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     // Cache provider-backed dependencies while the ConsumerState is mounted.
     // dispose() must not access ref because its BuildContext is deactivated.
     historyRepository = ref.read(historyRepositoryProvider);
+    offlineProgressRepository = ref.read(offlineProgressRepositoryProvider);
+    _updateDownloadedEpisodeKeys(
+      ref.read(downloadTasksProvider).value ?? const [],
+    );
+    ref.listenManual(downloadTasksProvider, (_, next) {
+      _updateDownloadedEpisodeKeys(next.value ?? const []);
+    });
     final lifecycleState = WidgetsBinding.instance.lifecycleState;
     _isAppForeground =
         lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
@@ -236,10 +252,36 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       PlaybackStatus? preparedStatus;
       if (target != null) {
         try {
+          if (widget.offlineOnly) {
+            final preparation = await _prepareSession(
+              target,
+              generation,
+              offlineOnly: true,
+            );
+            if (preparation.session == null ||
+                preparation.status.mode != PlaybackMode.cachePlayback) {
+              if (mounted && generation == setupGeneration) {
+                setState(() {
+                  failed = true;
+                  initializing = false;
+                  errorMessage = '该集离线文件不完整，请重新下载';
+                });
+              }
+              return;
+            }
+            session = preparation.session;
+            preparedStatus = preparation.status;
+            target = target.copyWith(
+              playbackSource: target.playbackSource.copyWith(
+                format: PlaybackFormat.hls,
+              ),
+            );
+          }
           // Try the cache before resolving an unknown URL through the network.
           // Downloaded HLS endpoints are often extensionless and cannot be
           // reconstructed from the persisted URL alone.
-          if (target.playbackSource.format == PlaybackFormat.unknown &&
+          if (!widget.offlineOnly &&
+              target.playbackSource.format == PlaybackFormat.unknown &&
               target.hasStableIdentity &&
               !target.playbackSource.url.toString().contains('/m3u8/?url=')) {
             final offlinePreparation = await _prepareSession(
@@ -257,7 +299,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               preparedStatus = offlinePreparation.status;
             }
           }
-          if (session == null) {
+          if (!widget.offlineOnly && session == null) {
             target = await _resolvePlaybackSource(target);
             if (!mounted || generation != setupGeneration) return;
             _selection = target;
@@ -361,7 +403,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           if (session != null) await _closeSession(session);
           return;
         }
-        if (session != null) {
+        if (session != null && widget.offlineOnly) {
+          await _closeSession(session);
+          session = null;
+        }
+        if (session != null && !widget.offlineOnly) {
           await _closeSession(session);
           session = null;
           if (!mounted || generation != setupGeneration) return;
@@ -502,8 +548,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   Future<PlaybackSessionPreparation> _prepareSession(
     PlaybackSelection target,
-    int generation,
-  ) async {
+    int generation, {
+    bool offlineOnly = false,
+  }) async {
     try {
       final proxy = _proxy ??= LocalProxyServer();
       await proxy.start();
@@ -523,6 +570,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         client: client,
         cacheManager: cacheManager,
         store: cacheManager?.store,
+        offlineOnly: offlineOnly,
         onCacheBypass: (reason) {
           _setPlaybackStatus(
             PlaybackStatus(
@@ -645,6 +693,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         _disposeDetachedPlayback(detached),
       ]);
       if (!mounted || generation != setupGeneration) return;
+      if (widget.offlineOnly) {
+        await _setup(oldPosition);
+        return;
+      }
       final source = ref
           .read(vodSourceRegistryProvider)
           .maybeWhen(
@@ -690,13 +742,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
   }
 
-  /// 播放期定时任务：保存观看进度，并按当前播放位置重锚定预取窗口，
+  /// 播放期定时任务：每 15 秒保存观看进度，并按当前播放位置重锚定预取窗口，
   /// 让预取始终维持在播放点前方一个窗口（seek 后也会在下一拍跟上）。
   void _startPlaybackTimer() {
     saveTimer?.cancel();
     if (!_isAppForeground || controller?.value.isPlaying != true) return;
     saveTimer = Timer.periodic(
-      const Duration(seconds: 5),
+      const Duration(seconds: 15),
       (_) => _onPlaybackTick(),
     );
   }
@@ -739,6 +791,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       manifestFingerprint: _activeSession?.manifestFingerprint,
     );
     await historyRepository.save(record);
+    final key = offlineProgressKey(
+      sourceId: record.video.sourceId,
+      sourceVideoId: record.video.sourceVideoId,
+      playbackLineIdentity: record.playbackLineIdentity,
+      episodeIdentity: record.episodeIdentity,
+    );
+    if (widget.offlineOnly || _downloadedEpisodeKeys.contains(key)) {
+      await offlineProgressRepository.saveWatchRecord(record);
+    }
   }
 
   void _handlePlayerValueChanged() {
@@ -1033,7 +1094,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       _disposeDetachedPlayback(detached),
     ]);
     if (!mounted || generation != setupGeneration) return;
-    await _setup(Duration.zero);
+    await _setup(
+      widget.episodeResumePositions[episode.identity] ?? Duration.zero,
+    );
   }
 
   Future<PlaybackSelection> _resolvePlaybackSource(
@@ -1183,6 +1246,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   PlaybackSelection? _selectionForEpisodeInCurrentLine(Episode next) {
+    final bundled = widget.episodeSelections[next.identity];
+    if (bundled != null) return bundled;
     final currentSelection = _selection;
     if (currentSelection == null) return selectionFor(widget.video, next);
     final line = widget.video.playbackLines
@@ -1212,6 +1277,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         headers: currentSelection.playbackSource.headers,
       ),
     );
+  }
+
+  void _updateDownloadedEpisodeKeys(List<DownloadTask> tasks) {
+    _downloadedEpisodeKeys = {
+      for (final task in tasks)
+        if (task.status == DownloadTaskStatus.completed)
+          offlineProgressKeyForTask(task),
+    };
   }
 
   void _showControls() {
@@ -1732,12 +1805,19 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   }
 
   Widget _darkPlayerSurface(Widget child) {
+    final darkTheme = buildDarkTheme();
     return Theme(
-      data: buildDarkTheme(),
-      child: ColoredBox(
-        key: const ValueKey('player-video-surface'),
-        color: Colors.black,
-        child: child,
+      data: darkTheme,
+      child: DefaultTextStyle.merge(
+        style: const TextStyle(color: AppColors.text),
+        child: IconTheme.merge(
+          data: const IconThemeData(color: AppColors.text),
+          child: ColoredBox(
+            key: const ValueKey('player-video-surface'),
+            color: Colors.black,
+            child: child,
+          ),
+        ),
       ),
     );
   }

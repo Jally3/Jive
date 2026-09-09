@@ -455,9 +455,8 @@ class DownloadTaskManager {
     }
   }
 
-  /// Removes the task record while keeping its cache entry by default.
-  /// Set [deleteCache] when the user explicitly wants to remove both.
-  Future<void> removeTask(String taskId, {bool deleteCache = false}) async {
+  /// Removes both the task record and its downloaded local files.
+  Future<void> removeTask(String taskId) async {
     final task = _tasks[taskId];
     if (task == null) return;
     if (task.status == DownloadTaskStatus.queued ||
@@ -467,12 +466,13 @@ class DownloadTaskManager {
       if (running != null) await running;
     }
     final latest = _tasks[taskId] ?? task;
-    if (deleteCache &&
-        latest.contentKeyHash != null &&
-        latest.revisionKeyHash != null) {
-      await cacheManager.deleteEntry(
+    if (latest.contentKeyHash != null && latest.revisionKeyHash != null) {
+      final result = await cacheManager.deleteEntry(
         '${latest.contentKeyHash}|${latest.revisionKeyHash}',
       );
+      if (result == DeleteResult.blocked || result == DeleteResult.failed) {
+        throw StateError('本地文件删除失败');
+      }
     }
     _tasks.remove(taskId);
     _pendingSelections.remove(taskId);

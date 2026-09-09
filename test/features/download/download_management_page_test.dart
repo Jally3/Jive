@@ -11,6 +11,7 @@ import 'package:jive/data/download/download_network_policy.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/features/download/download_management_page.dart';
+import 'package:jive/data/offline_progress_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeDiskSpace implements DiskSpaceProvider {
@@ -213,7 +214,8 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('全部继续'), findsOneWidget);
     expect(find.text('全部暂停'), findsOneWidget);
-    expect(find.text('62% · 188 MB'), findsOneWidget);
+    expect(find.text('62%'), findsOneWidget);
+    expect(find.text('188 MB'), findsOneWidget);
     expect(find.byKey(const ValueKey('download-pause-1')), findsOneWidget);
     expect(find.byTooltip('取消下载'), findsNothing);
     expect(find.byTooltip('删除任务记录'), findsNothing);
@@ -241,6 +243,51 @@ void main() {
       isTrue,
     );
   });
+
+  testWidgets(
+    'completed download separates watch progress and size without dimming actions',
+    (tester) async {
+      final task = _task('1', DownloadTaskStatus.completed);
+      final watched = OfflineEpisodeProgress(
+        key: offlineProgressKeyForTask(task),
+        positionMs: 7000,
+        durationMs: 10000,
+        updatedAt: DateTime(2026),
+        completed: false,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            downloadTasksProvider.overrideWith((ref) => Stream.value([task])),
+            offlineProgressProvider.overrideWith(
+              (ref) async => {watched.key: watched},
+            ),
+          ],
+          child: const MaterialApp(home: DownloadManagementPage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('测试影片'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('看到 0:07 / 0:10'), findsOneWidget);
+      expect(find.textContaining('70%'), findsNothing);
+      expect(find.text('500 MB'), findsOneWidget);
+      final row = find.byKey(const ValueKey('download-task-row-1'));
+      expect(
+        find.descendant(of: row, matching: find.byType(Opacity)),
+        findsNothing,
+      );
+      expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.descendant(of: row, matching: find.text('第1集')))
+            .style
+            ?.color,
+        AppPalette.dark.secondary,
+      );
+    },
+  );
 
   testWidgets('select all button toggles all visible tasks', (tester) async {
     final tasks = [
@@ -282,6 +329,35 @@ void main() {
           .map((item) => item.value),
       everyElement(isFalse),
     );
+  });
+
+  testWidgets('deleting tasks always includes their local files', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          downloadTasksProvider.overrideWith(
+            (ref) => Stream.value([_task('1', DownloadTaskStatus.completed)]),
+          ),
+        ],
+        child: const MaterialApp(home: DownloadManagementPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('测试影片'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('编辑任务'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Checkbox));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('批量删除下载？'), findsOneWidget);
+    expect(find.textContaining('下载任务及其本地文件'), findsOneWidget);
+    expect(find.text('同时删除本地文件'), findsNothing);
   });
 
   testWidgets('paused task with unknown size uses a static empty progress', (

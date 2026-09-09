@@ -54,6 +54,7 @@ lib/data/
 ├── video_repository.dart              # 内容访问门面：按 adapterType 分发列表/详情/Feed，详情短缓存、敏感内容过滤
 ├── library_repository.dart            # 内容库 v2 与旧收藏兼容迁移；追更控制器负责分源限流检查、失败隔离及已读状态
 ├── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取、单条删除、watchHistoryProvider
+├── offline_progress_repository.dart   # 显式下载剧集的轻量逐集观看进度：稳定身份索引、串行写入、最多 100 条
 ├── theme_mode_preferences.dart         # 外观模式持久化：跟随系统/日间/夜间与 themeModeProvider
 └── search_history_store.dart          # 搜索关键词本地历史：去重、最近优先、最多 20 条
 ```
