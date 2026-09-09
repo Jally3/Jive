@@ -1,8 +1,11 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../shared/app_states.dart';
 import '../../data/download/download_providers.dart';
+import '../../data/download/download_network_policy.dart';
 import '../../data/download/download_task_manager.dart';
 import '../../domain/video.dart';
 import '../../shared/app_toast.dart';
@@ -432,13 +435,22 @@ class _DownloadManagementPageState
               await manager.pause(task.taskId);
             }
           case 'resume':
-            if (task.status == DownloadTaskStatus.paused ||
-                task.status == DownloadTaskStatus.failed) {
-              await manager.resume(task.taskId);
-            }
+            break;
           case 'delete':
             await manager.removeTask(task.taskId, deleteCache: deleteCache);
         }
+      }
+      if (action == 'resume') {
+        await _resumeTasksWithPolicy(
+          manager,
+          tasks
+              .where(
+                (task) =>
+                    task.status == DownloadTaskStatus.paused ||
+                    task.status == DownloadTaskStatus.failed,
+              )
+              .toList(),
+        );
       }
       if (mounted) {
         showAppToast(context, '批量操作已完成');
@@ -546,12 +558,16 @@ class _DownloadManagementPageState
       final tasks = ref
           .read(downloadTasksProvider)
           .maybeWhen(data: (value) => value, orElse: () => <DownloadTask>[]);
-      for (final task in tasks) {
-        if (task.status == DownloadTaskStatus.paused ||
-            task.status == DownloadTaskStatus.failed) {
-          await manager.resume(task.taskId);
-        }
-      }
+      await _resumeTasksWithPolicy(
+        manager,
+        tasks
+            .where(
+              (task) =>
+                  task.status == DownloadTaskStatus.paused ||
+                  task.status == DownloadTaskStatus.failed,
+            )
+            .toList(),
+      );
     } catch (_) {
       if (mounted) {
         showAppToast(context, '批量恢复失败，请重试');
@@ -578,6 +594,93 @@ class _DownloadManagementPageState
     }
   }
 
+  Future<void> _resumeTask(DownloadTask task) => _runTaskAction(
+    task,
+    (manager) async => _resumeTasksWithPolicy(manager, [task]),
+  );
+
+  Future<void> _resumeTasksWithPolicy(
+    DownloadTaskManager manager,
+    List<DownloadTask> tasks,
+  ) async {
+    final blocked = <DownloadTask>[];
+    var unavailable = false;
+    for (final task in tasks) {
+      final result = await manager.resume(task.taskId);
+      switch (result) {
+        case DownloadResumeResult.started:
+          break;
+        case DownloadResumeResult.blockedByCellular:
+          blocked.add(task);
+        case DownloadResumeResult.unavailable:
+          unavailable = true;
+      }
+    }
+    if (unavailable && mounted) {
+      showAppToast(context, '当前无网络，连接后将自动继续');
+    }
+    if (blocked.isEmpty || !mounted) return;
+
+    final allowAlways = await _confirmCellularResume(blocked);
+    if (allowAlways == null || !mounted) return;
+    if (allowAlways) {
+      await ref.read(allowCellularDownloadsProvider.notifier).setAllowed(true);
+    }
+    for (final task in blocked) {
+      await manager.resume(task.taskId, allowCellularOnce: true);
+    }
+  }
+
+  Future<bool?> _confirmCellularResume(List<DownloadTask> tasks) async {
+    var allowAlways = false;
+    final knownRemaining = tasks.every((task) => task.totalBytes > 0);
+    final remainingBytes = tasks.fold<int>(
+      0,
+      (sum, task) => sum + max(0, task.totalBytes - task.downloadedBytes),
+    );
+    final target = tasks.length == 1
+        ? '《${tasks.single.title}》${tasks.single.episodeName}'
+        : '${tasks.length} 个任务';
+    final estimate = knownRemaining
+        ? '，预计还需 ${_formatBytes(remainingBytes)}'
+        : '';
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('使用蜂窝网络继续下载？'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('$target$estimate，可能产生流量费用。'),
+              SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text('以后允许蜂窝网络下载'),
+                subtitle: allowAlways ? Text('其他等待 Wi-Fi 的任务也将继续') : null,
+                value: allowAlways,
+                onChanged: (value) =>
+                    setDialogState(() => allowAlways = value ?? false),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, allowAlways),
+              child: Text('继续下载'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _summary(List<DownloadTask> tasks) {
     final transferring = tasks
         .where(
@@ -595,6 +698,13 @@ class _DownloadManagementPageState
           (task) =>
               task.status == DownloadTaskStatus.paused ||
               task.status == DownloadTaskStatus.failed,
+        )
+        .length;
+    final waitingForNetwork = tasks
+        .where(
+          (task) =>
+              task.status == DownloadTaskStatus.paused &&
+              task.pauseReason == DownloadPauseReason.network,
         )
         .length;
     final downloadedBytes = tasks.fold<int>(
@@ -623,7 +733,9 @@ class _DownloadManagementPageState
                           ),
                           SizedBox(height: 2),
                           Text(
-                            '暂无进行中的下载',
+                            waitingForNetwork > 0
+                                ? '$waitingForNetwork 个任务等待网络'
+                                : '暂无进行中的下载',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -757,6 +869,14 @@ class _DownloadManagementPageState
             task.status == DownloadTaskStatus.queued);
     final hasKnownProgress =
         task.totalBytes > 0 || task.expectedResourceCount > 0;
+    final networkPaused =
+        task.status == DownloadTaskStatus.paused &&
+        task.pauseReason == DownloadPauseReason.network;
+    final networkAccess = ref.watch(downloadNetworkAccessProvider);
+    final networkWaitText =
+        networkAccess == DownloadNetworkAccess.cellularBlocked
+        ? '等待 Wi-Fi'
+        : '等待网络';
     final progress = task.status == DownloadTaskStatus.completed
         ? 1.0
         : task.totalBytes > 0
@@ -795,6 +915,8 @@ class _DownloadManagementPageState
       DownloadTaskStatus.downloading when !hasKnownProgress =>
         '正在解析 · $sizeText',
       DownloadTaskStatus.queued when !hasKnownProgress => '等待开始 · $sizeText',
+      DownloadTaskStatus.paused when networkPaused =>
+        '$networkWaitText${progressText == null ? '' : ' · $progressText'} · $sizeText',
       DownloadTaskStatus.paused when !hasKnownProgress => '等待继续 · $sizeText',
       _ => '$progressText · $sizeText',
     };
@@ -811,10 +933,7 @@ class _DownloadManagementPageState
               (manager) => manager.pause(task.taskId, waitUntilPaused: true),
             ),
             DownloadTaskStatus.paused ||
-            DownloadTaskStatus.failed => () => _runTaskAction(
-              task,
-              (manager) => manager.resume(task.taskId),
-            ),
+            DownloadTaskStatus.failed => () => _resumeTask(task),
             DownloadTaskStatus.completed => () => _playTask(context, ref, task),
             DownloadTaskStatus.cancelled => null,
           };
@@ -844,7 +963,11 @@ class _DownloadManagementPageState
           visualDensity: VisualDensity.compact,
           constraints: BoxConstraints.tightFor(width: 36, height: 32),
           padding: EdgeInsets.zero,
-          tooltip: task.status == DownloadTaskStatus.failed ? '重试' : '继续',
+          tooltip: task.status == DownloadTaskStatus.failed
+              ? '重试'
+              : networkPaused
+              ? '$networkWaitText，点击继续'
+              : '继续',
           onPressed: primaryAction,
           icon: Icon(Icons.play_arrow, size: 24),
         ),

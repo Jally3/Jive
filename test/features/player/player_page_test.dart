@@ -564,8 +564,8 @@ void main() {
       expect(find.text('简介'), findsOneWidget);
       expect(find.text('这是一部测试剧集的简介。'), findsOneWidget);
       expect(find.text('选集（3）'), findsOneWidget);
-      expect(find.text('跳过片头'), findsOneWidget);
-      expect(find.text('跳过片尾'), findsOneWidget);
+      expect(find.byKey(const ValueKey('skip-intro-button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('skip-outro-button')), findsOneWidget);
       expect(find.widgetWithText(ChoiceChip, '第1集'), findsOneWidget);
       expect(find.widgetWithText(ChoiceChip, '第2集'), findsOneWidget);
       expect(find.widgetWithText(ChoiceChip, '第3集'), findsOneWidget);
@@ -604,12 +604,20 @@ void main() {
       await tester.pump();
 
       final heading = tester.widget<Text>(find.text('简介'));
-      final skipHeading = tester.widget<Text>(find.text('跳过片头'));
+      final skipButton = tester.widget<OutlinedButton>(
+        find.descendant(
+          of: find.byKey(const ValueKey('skip-intro-button')),
+          matching: find.byType(OutlinedButton),
+        ),
+      );
       final unselected = tester.widget<ChoiceChip>(
         find.widgetWithText(ChoiceChip, '第2集'),
       );
       expect(heading.style?.color, AppPalette.light.text);
-      expect(skipHeading.style?.color, AppPalette.light.text);
+      expect(
+        skipButton.style?.foregroundColor?.resolve(const {}),
+        AppPalette.light.text,
+      );
       expect(unselected.labelStyle?.color, AppPalette.light.secondary);
     },
   );

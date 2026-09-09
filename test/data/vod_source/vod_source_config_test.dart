@@ -84,52 +84,23 @@ void main() {
     },
   );
 
-  test('falls back to the bundled asset when remote fails', () async {
+  test('returns empty on first launch when remote fails', () async {
     final client = MockClient((request) async => http.Response('oops', 500));
     final sources = await VodSourceConfig().load(client: client);
-    expect(sources, isNotEmpty);
+    expect(sources, isEmpty);
   });
 
-  test('falls back to the bundled asset when remote is empty', () async {
+  test('returns empty on first launch when remote is empty', () async {
     final client = MockClient(
       (request) async => http.Response('{"sources": []}', 200),
     );
     final sources = await VodSourceConfig().load(client: client);
-    expect(sources, isNotEmpty);
+    expect(sources, isEmpty);
   });
 
-  test('falls back to the bundled asset when remote throws', () async {
+  test('returns empty on first launch when remote throws', () async {
     final client = MockClient((request) async => throw Exception('network'));
     final sources = await VodSourceConfig().load(client: client);
-    expect(sources, isNotEmpty);
+    expect(sources, isEmpty);
   });
-
-  test('forceLocalAsset is off so startup prefers remote config', () {
-    expect(VodSourceConfig.forceLocalAsset, isFalse);
-  });
-
-  test(
-    'bundled asset still includes age and plugin sources as fallback',
-    () async {
-      final client = MockClient((request) async => http.Response('oops', 500));
-      final sources = await VodSourceConfig().load(client: client);
-      expect(sources.map((s) => s.id), contains('age'));
-      expect(
-        sources.map((s) => s.id),
-        containsAll([
-          'ddys',
-          'olevod',
-          'czzy',
-          'youknow',
-          'libvio',
-          'thanju',
-          'dbku',
-        ]),
-      );
-      expect(
-        sources.firstWhere((s) => s.id == 'dbku').adapterType,
-        'syncnext_plugin',
-      );
-    },
-  );
 }

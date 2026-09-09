@@ -7,6 +7,7 @@ import 'package:jive/data/playback/ad_filter.dart';
 import 'package:jive/data/cache/cache_index.dart';
 import 'package:jive/data/cache/cache_manager.dart';
 import 'package:jive/data/download/download_task_manager.dart';
+import 'package:jive/data/download/download_network_policy.dart';
 import 'package:jive/data/playback/hls_parser.dart';
 import 'package:jive/data/playback/local_proxy.dart';
 import 'package:jive/data/playback/playback_session.dart';
@@ -94,6 +95,58 @@ PlaybackSelection _selectionFor(int index) {
 }
 
 void main() {
+  test('cellular gate waits and supports a one-time task override', () async {
+    final directory = Directory.systemTemp.createTempSync(
+      'jive_download_cellular_test',
+    );
+    final store = CacheIndexStore(directory);
+    final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+    await cache.initialize();
+    final requested = <String>[];
+    final client = MockClient((request) async {
+      requested.add(request.url.toString());
+      if (request.url.path.endsWith('.m3u8')) {
+        return http.Response(
+          '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+          200,
+        );
+      }
+      return http.Response('Gsegment', 200);
+    });
+    final manager = DownloadTaskManager(
+      store: store,
+      cacheManager: cache,
+      client: client,
+      resolveSelection: (_) async => _selection(),
+      initialNetworkAccess: DownloadNetworkAccess.cellularBlocked,
+    );
+    await manager.initialize();
+
+    final task = await manager.enqueue(_selection());
+    expect(task.status, DownloadTaskStatus.paused);
+    expect(task.pauseReason, DownloadPauseReason.network);
+    expect(requested, isEmpty);
+    expect(
+      await manager.resume(task.taskId),
+      DownloadResumeResult.blockedByCellular,
+    );
+
+    expect(
+      await manager.resume(task.taskId, allowCellularOnce: true),
+      DownloadResumeResult.started,
+    );
+    for (var i = 0; i < 100; i++) {
+      if (manager.tasks.single.status == DownloadTaskStatus.completed) break;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(manager.tasks.single.status, DownloadTaskStatus.completed);
+    expect(requested, isNotEmpty);
+
+    await manager.dispose();
+    await cache.flush();
+    directory.deleteSync(recursive: true);
+  });
+
   test('AES-128 key and encrypted segments remain playable offline', () async {
     final directory = Directory.systemTemp.createTempSync(
       'jive_download_aes_test',

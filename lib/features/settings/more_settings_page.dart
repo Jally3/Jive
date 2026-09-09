@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../data/cache/cache_controller.dart';
 import '../../data/cache/cache_ttl_policy.dart';
+import '../../data/download/download_network_policy.dart';
 import '../../data/playback/prefetch_policy.dart';
 import '../../data/theme_mode_preferences.dart';
 import '../cache/cache_management_page.dart';
@@ -105,6 +106,26 @@ Future<void> _selectTtl(
   }
 }
 
+Future<bool> _confirmCellularDownloads(BuildContext context) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('允许蜂窝网络下载？'),
+        content: Text('下载视频可能消耗较多移动数据。开启后，其他正在等待 Wi-Fi 的任务也会继续。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text('允许'),
+          ),
+        ],
+      ),
+    ) ??
+    false;
+
 class MoreSettingsPage extends ConsumerStatefulWidget {
   const MoreSettingsPage({super.key});
 
@@ -172,6 +193,38 @@ class _MoreSettingsPageState extends ConsumerState<MoreSettingsPage> {
                   onChanged: (value) => ref
                       .read(prefetchModeProvider.notifier)
                       .setMode(value ? PrefetchMode.auto : PrefetchMode.off),
+                );
+              },
+            ),
+          ],
+        ),
+        SizedBox(height: 16),
+        _SettingsSection(
+          title: '下载',
+          children: [
+            Consumer(
+              builder: (context, ref, _) {
+                final preference = ref.watch(allowCellularDownloadsProvider);
+                final allowed = preference.value ?? false;
+                return SwitchListTile(
+                  secondary: Icon(Icons.cell_tower_outlined),
+                  title: Text('允许蜂窝网络下载'),
+                  subtitle: Text(
+                    allowed ? '已允许使用移动数据，可能产生流量费用' : '仅在 Wi-Fi 或有线网络下下载',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  value: allowed,
+                  onChanged: preference.isLoading
+                      ? null
+                      : (value) async {
+                          if (value &&
+                              !await _confirmCellularDownloads(context)) {
+                            return;
+                          }
+                          await ref
+                              .read(allowCellularDownloadsProvider.notifier)
+                              .setAllowed(value);
+                        },
                 );
               },
             ),

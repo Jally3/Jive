@@ -1,6 +1,7 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../network/connectivity_provider.dart';
 
 /// 预加载模式：auto 按网络类型自适应窗口，off 完全关闭预取。
 enum PrefetchMode { auto, off }
@@ -13,11 +14,6 @@ const Duration prefetchAheadWifi = Duration(seconds: 300);
 
 /// 蜂窝网络下的预取目标：领先播放位置的时长。
 const Duration prefetchAheadCellular = Duration(seconds: 120);
-
-/// 当前网络类型；抽出为 provider 便于测试覆盖。
-final connectivityResultsProvider = StreamProvider<List<ConnectivityResult>>(
-  (ref) => Connectivity().onConnectivityChanged,
-);
 
 final prefetchModeProvider =
     AsyncNotifierProvider<PrefetchModeNotifier, PrefetchMode>(

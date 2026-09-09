@@ -7,7 +7,11 @@ import 'package:jive/shared/video_card.dart';
 
 const _video = Video(id: '1', title: '测试影片', sourceId: 'storm');
 
-Future<void> _pumpCard(WidgetTester tester, {VoidCallback? onTap}) async {
+Future<void> _pumpCard(
+  WidgetTester tester, {
+  VoidCallback? onTap,
+  VideoCardOverlay? overlay,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildTheme(),
@@ -16,7 +20,11 @@ Future<void> _pumpCard(WidgetTester tester, {VoidCallback? onTap}) async {
           child: SizedBox(
             width: 200,
             height: 320,
-            child: VideoCard(video: _video, onTap: onTap ?? () {}),
+            child: VideoCard(
+              video: _video,
+              onTap: onTap ?? () {},
+              overlay: overlay,
+            ),
           ),
         ),
       ),
@@ -67,5 +75,43 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(_cardForegroundDecoration(tester), isNull);
+  });
+
+  testWidgets('renders latest episode and unread episode badge on poster', (
+    tester,
+  ) async {
+    await _pumpCard(
+      tester,
+      overlay: const VideoCardOverlay(
+        bottomLabel: '更新至 第12集',
+        badgeLabel: '新增2集',
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('video-card-bottom-label')),
+      findsOneWidget,
+    );
+    expect(find.text('更新至 第12集'), findsOneWidget);
+    expect(find.byKey(const ValueKey('video-card-badge')), findsOneWidget);
+    expect(find.text('新增2集'), findsOneWidget);
+    final badge = find.byKey(const ValueKey('video-card-badge'));
+    expect(tester.widget<CustomPaint>(badge).painter, isNotNull);
+    expect(tester.widget<Text>(find.text('新增2集')).style?.color, Colors.white);
+    final poster = find.byType(AspectRatio).first;
+    expect(tester.getRect(badge).top, tester.getRect(poster).top);
+    expect(tester.getRect(badge).right, tester.getRect(poster).right);
+  });
+
+  testWidgets('keeps latest episode when unread badge is absent', (
+    tester,
+  ) async {
+    await _pumpCard(
+      tester,
+      overlay: const VideoCardOverlay(bottomLabel: '更新至 第12集'),
+    );
+
+    expect(find.text('更新至 第12集'), findsOneWidget);
+    expect(find.byKey(const ValueKey('video-card-badge')), findsNothing);
   });
 }

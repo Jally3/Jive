@@ -122,7 +122,6 @@ AppErrorView（重试 → 回到等待源，再进 AppShell）
 
 ```yaml
 assets:
-  - config/vod_sources.json
   - assets/branding/splash_logo.png
 ```
 

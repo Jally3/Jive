@@ -6,6 +6,7 @@ import '../vod_source/vod_source_registry.dart';
 import '../../domain/playback_selection.dart';
 import '../../domain/video.dart';
 import '../cache/cache_providers.dart';
+import './download_network_policy.dart';
 import './download_task_manager.dart';
 
 final downloadManagerProvider = FutureProvider<DownloadTaskManager>((
@@ -19,6 +20,7 @@ final downloadManagerProvider = FutureProvider<DownloadTaskManager>((
     store: cache.store,
     cacheManager: cache,
     client: client,
+    initialNetworkAccess: ref.read(downloadNetworkAccessProvider),
     resolveSelection: (task) async {
       final source = registry.findById(task.sourceId);
       if (source == null) return null;
@@ -48,6 +50,10 @@ final downloadManagerProvider = FutureProvider<DownloadTaskManager>((
     },
   );
   await manager.initialize();
+  await manager.setNetworkAccess(ref.read(downloadNetworkAccessProvider));
+  ref.listen<DownloadNetworkAccess>(downloadNetworkAccessProvider, (_, next) {
+    unawaited(manager.setNetworkAccess(next));
+  });
   ref.onDispose(() {
     unawaited(manager.dispose().whenComplete(client.close));
   });

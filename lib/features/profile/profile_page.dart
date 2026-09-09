@@ -7,6 +7,7 @@ import '../../data/download/download_task_manager.dart';
 import '../../data/history_repository.dart';
 import '../../data/library_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
+import '../../domain/library.dart';
 import '../../domain/watch_record.dart';
 import '../../shared/video_card.dart';
 import '../../shared/video_grid.dart';
@@ -21,8 +22,9 @@ class ProfilePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final expanded = MediaQuery.sizeOf(context).width > 600;
+    final unreadFollowCount = ref.watch(unreadFollowUpdateCountProvider);
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: SafeArea(
         // bottom: false：让收藏/历史网格延伸到底部毛玻璃导航栏下方透出。
         bottom: false,
@@ -63,6 +65,12 @@ class ProfilePage extends ConsumerWidget {
                   indicatorWeight: 3,
                   dividerColor: Colors.transparent,
                   tabs: [
+                    Tab(
+                      child: _TabLabelWithBadge(
+                        label: '追更',
+                        badgeCount: unreadFollowCount,
+                      ),
+                    ),
                     Tab(text: '收藏'),
                     Tab(text: '最近观看'),
                   ],
@@ -70,13 +78,66 @@ class ProfilePage extends ConsumerWidget {
               ),
             ),
             Expanded(
-              child: TabBarView(children: [_FavoritesTab(), _HistoryTab()]),
+              child: TabBarView(
+                children: [
+                  _LibraryTab(mode: _LibraryMode.following),
+                  _LibraryTab(mode: _LibraryMode.favorite),
+                  _HistoryTab(),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _TabLabelWithBadge extends StatelessWidget {
+  const _TabLabelWithBadge({required this.label, required this.badgeCount});
+
+  final String label;
+  final int badgeCount;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: badgeCount > 0 ? '$label，$badgeCount 部内容有更新' : label,
+    excludeSemantics: true,
+    child: Padding(
+      padding: EdgeInsets.only(right: badgeCount > 0 ? 10 : 0),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Text(label),
+          if (badgeCount > 0)
+            Positioned(
+              right: -16,
+              top: -7,
+              child: Container(
+                key: const ValueKey('follow-tab-update-badge'),
+                constraints: const BoxConstraints(minWidth: 16),
+                height: 16,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.redAccent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  badgeCount > 99 ? '99+' : '$badgeCount',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _QuickActions extends ConsumerWidget {
@@ -108,6 +169,9 @@ class _QuickActions extends ConsumerWidget {
             Expanded(
               child: _QuickActionCard(
                 icon: Icons.download_outlined,
+                leading: _DownloadStatusIcon(
+                  tasks: tasks.value ?? const <DownloadTask>[],
+                ),
                 title: expanded ? '离线下载' : '下载',
                 subtitle: downloadSubtitle,
                 compact: compact,
@@ -158,6 +222,9 @@ class _QuickActions extends ConsumerWidget {
               task.status == DownloadTaskStatus.downloading,
         )
         .toList();
+    final paused = tasks
+        .where((task) => task.status == DownloadTaskStatus.paused)
+        .length;
     final completed = tasks
         .where((task) => task.status == DownloadTaskStatus.completed)
         .length;
@@ -167,6 +234,9 @@ class _QuickActions extends ConsumerWidget {
       return progress == null
           ? '${active.length} 个下载中'
           : '${active.length} 个下载中 · $progress%';
+    }
+    if (paused > 0) {
+      return compact ? '$paused个已暂停' : '$paused 个下载已暂停';
     }
     if (completed > 0) return '已下载 $completed 部';
     return expanded ? '暂无下载' : '无下载';
@@ -190,6 +260,7 @@ class _QuickActionCard extends StatelessWidget {
     required this.subtitle,
     required this.onTap,
     required this.compact,
+    this.leading,
   });
 
   final IconData icon;
@@ -197,6 +268,7 @@ class _QuickActionCard extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
   final bool compact;
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -216,11 +288,12 @@ class _QuickActionCard extends StatelessWidget {
           padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 12),
           child: Row(
             children: [
-              Icon(
-                icon,
-                size: compact ? 18 : 20,
-                color: context.appColors.secondary,
-              ),
+              leading ??
+                  Icon(
+                    icon,
+                    size: compact ? 18 : 20,
+                    color: context.appColors.secondary,
+                  ),
               SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -257,33 +330,348 @@ class _QuickActionCard extends StatelessWidget {
   );
 }
 
-class _FavoritesTab extends ConsumerWidget {
-  const _FavoritesTab();
+class _DownloadStatusIcon extends StatefulWidget {
+  const _DownloadStatusIcon({required this.tasks});
+
+  final List<DownloadTask> tasks;
+
+  @override
+  State<_DownloadStatusIcon> createState() => _DownloadStatusIconState();
+}
+
+class _DownloadStatusIconState extends State<_DownloadStatusIcon>
+    with TickerProviderStateMixin {
+  late final AnimationController _loop = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1300),
+  );
+  late final AnimationController _completion = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 700),
+  );
+  int _previousActive = 0;
+  int _previousCompleted = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _previousActive = _activeCount(widget.tasks);
+    _previousCompleted = _completedCount(widget.tasks);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncLoop();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DownloadStatusIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final active = _activeCount(widget.tasks);
+    final completed = _completedCount(widget.tasks);
+    if (_previousActive > active && completed > _previousCompleted) {
+      _completion.forward(from: 0);
+    }
+    _previousActive = active;
+    _previousCompleted = completed;
+    _syncLoop();
+  }
+
+  void _syncLoop() {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final shouldAnimate =
+        !reduceMotion &&
+        widget.tasks.any(
+          (item) =>
+              item.status == DownloadTaskStatus.queued ||
+              item.status == DownloadTaskStatus.downloading,
+        );
+    if (shouldAnimate && !_loop.isAnimating) {
+      _loop.repeat();
+    } else if (!shouldAnimate) {
+      _loop.stop();
+      _loop.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _loop.dispose();
+    _completion.dispose();
+    super.dispose();
+  }
+
+  static int _activeCount(List<DownloadTask> tasks) => tasks
+      .where(
+        (item) =>
+            item.status == DownloadTaskStatus.queued ||
+            item.status == DownloadTaskStatus.downloading,
+      )
+      .length;
+
+  static int _completedCount(List<DownloadTask> tasks) =>
+      tasks.where((item) => item.status == DownloadTaskStatus.completed).length;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final downloading = widget.tasks
+        .where((item) => item.status == DownloadTaskStatus.downloading)
+        .toList();
+    final hasQueued = widget.tasks.any(
+      (item) => item.status == DownloadTaskStatus.queued,
+    );
+    final hasPaused = widget.tasks.any(
+      (item) => item.status == DownloadTaskStatus.paused,
+    );
+    final hasFailed = widget.tasks.any(
+      (item) => item.status == DownloadTaskStatus.failed,
+    );
+    final hasCompleted = widget.tasks.any(
+      (item) => item.status == DownloadTaskStatus.completed,
+    );
+    final progress = downloading.isEmpty
+        ? 0.0
+        : downloading.fold<double>(0, (sum, item) => sum + item.progress) /
+              downloading.length;
+
+    return SizedBox.square(
+      dimension: 24,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_loop, _completion]),
+        builder: (context, _) {
+          final completing = _completion.isAnimating;
+          final loopValue = _loop.value;
+          final fall = reduceMotion || downloading.isEmpty
+              ? 0.0
+              : -11 + Curves.easeIn.transform(loopValue) * 22;
+          final fallingOpacity = reduceMotion || downloading.isEmpty
+              ? 1.0
+              : loopValue < 0.15
+              ? loopValue / 0.15
+              : loopValue < 0.75
+              ? 1.0
+              : (1 - loopValue) / 0.25;
+          final queuedOpacity = reduceMotion || !hasQueued
+              ? 1.0
+              : 0.72 + (0.28 * (1 - (loopValue * 2 - 1).abs()));
+          final completionScale = completing
+              ? 1 + 0.18 * Curves.easeOutBack.transform(_completion.value)
+              : 1.0;
+          final icon = completing
+              ? Icons.check
+              : hasPaused && downloading.isEmpty && !hasQueued
+              ? Icons.play_arrow_rounded
+              : hasFailed && downloading.isEmpty
+              ? Icons.download_outlined
+              : hasCompleted && downloading.isEmpty && !hasQueued
+              ? Icons.download_done_outlined
+              : Icons.arrow_downward;
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              if (downloading.isNotEmpty)
+                Positioned.fill(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(end: progress.clamp(0, 1)),
+                    duration: const Duration(milliseconds: 250),
+                    builder: (_, value, __) => CircularProgressIndicator(
+                      value: value,
+                      strokeWidth: 2,
+                      color: context.appColors.accentForeground,
+                      backgroundColor: context.appColors.divider,
+                    ),
+                  ),
+                ),
+              Center(
+                child: ClipOval(
+                  child: SizedBox.square(
+                    dimension: 19,
+                    child: Center(
+                      child: Transform.translate(
+                        key: const ValueKey('profile-download-falling-icon'),
+                        offset: Offset(0, fall),
+                        child: Transform.scale(
+                          scale: completionScale,
+                          child: Opacity(
+                            opacity: downloading.isNotEmpty
+                                ? fallingOpacity
+                                : queuedOpacity,
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 200),
+                              transitionBuilder: (child, animation) =>
+                                  FadeTransition(
+                                    opacity: animation,
+                                    child: ScaleTransition(
+                                      scale: animation,
+                                      child: child,
+                                    ),
+                                  ),
+                              child: Icon(
+                                widget.tasks.isEmpty
+                                    ? Icons.download_outlined
+                                    : icon,
+                                key: ValueKey(icon),
+                                size: 17,
+                                color: context.appColors.secondary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (hasFailed)
+                const Positioned(
+                  right: -1,
+                  top: -1,
+                  child: Icon(Icons.error, size: 9, color: Colors.redAccent),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+enum _LibraryMode { following, favorite }
+
+class _LibraryTab extends ConsumerWidget {
+  const _LibraryTab({required this.mode});
+
+  final _LibraryMode mode;
+
+  bool get _isFollowing => mode == _LibraryMode.following;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) => ref
       .watch(favoriteControllerProvider)
       .when(
         loading: () => AppLoadingView(),
         error: (error, _) => AppErrorView(
-          message: '收藏加载失败',
+          message: '${_isFollowing ? '追更' : '收藏'}加载失败',
           onRetry: () => ref.invalidate(favoriteControllerProvider),
         ),
-        data: (records) => records.isEmpty
-            ? AppEmptyView(
-                icon: Icons.favorite_outline,
-                message: '还没有收藏\n去首页或搜索页收藏喜欢的视频',
+        data: (records) {
+          final visible = records
+              .where(
+                (record) => _isFollowing
+                    ? record.isFollowing
+                    : record.isFavorite && !record.isFollowing,
               )
-            : VideoGrid(
-                videos: records.map((record) => record.video).toList(),
-                bottomPadding: 96,
-                onTap: (video) => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => VideoDetailPage(video: video),
+              .toList();
+          return visible.isEmpty
+              ? AppEmptyView(
+                  icon: _isFollowing
+                      ? Icons.notifications_none
+                      : Icons.favorite_outline,
+                  message: _isFollowing
+                      ? '还没有追更内容\n可在剧集详情页开启追更'
+                      : '还没有收藏内容\n可在详情页收藏喜欢的视频',
+                )
+              : _libraryGrid(context, ref, visible);
+        },
+      );
+
+  Widget _libraryGrid(
+    BuildContext context,
+    WidgetRef ref,
+    List<FavoriteRecord> records,
+  ) {
+    final sorted = [...records]
+      ..sort((a, b) {
+        if (_isFollowing) {
+          final unread =
+              (b.hasUnreadUpdate ? 1 : 0) - (a.hasUnreadUpdate ? 1 : 0);
+          if (unread != 0) return unread;
+        }
+        return b.updatedAt.compareTo(a.updatedAt);
+      });
+    final videos = [
+      for (final record in sorted)
+        record.video.copyWith(remarks: _followSummary(record)),
+    ];
+    final recordsById = {
+      for (final record in sorted) record.video.globalId: record,
+    };
+    final unreadCount = sorted.where((item) => item.hasUnreadUpdate).length;
+    final grid = VideoGrid(
+      videos: videos,
+      bottomPadding: 96,
+      overlayBuilder: _isFollowing
+          ? (video) => _followOverlay(recordsById[video.globalId])
+          : null,
+      headerSlivers: _isFollowing
+          ? [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          unreadCount > 0 ? '$unreadCount 部内容有更新' : '下拉可检查追更更新',
+                          style: TextStyle(color: context.appColors.secondary),
+                        ),
+                      ),
+                      if (unreadCount > 0)
+                        TextButton(
+                          onPressed: () => ref
+                              .read(favoriteControllerProvider.notifier)
+                              .markAllViewed(),
+                          child: const Text('全部标为已读'),
+                        ),
+                    ],
                   ),
                 ),
               ),
-      );
+            ]
+          : const [],
+      onTap: (video) async {
+        if (_isFollowing) {
+          await ref
+              .read(favoriteControllerProvider.notifier)
+              .markViewed(video.globalId);
+        }
+        if (!context.mounted) return;
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)),
+        );
+      },
+    );
+    if (!_isFollowing) return grid;
+    return RefreshIndicator(
+      onRefresh: () => ref
+          .read(favoriteControllerProvider.notifier)
+          .checkForUpdates(force: true),
+      child: grid,
+    );
+  }
+
+  String _followSummary(FavoriteRecord record) {
+    if (!record.isFollowing) return record.video.remarks;
+    if (record.sourceUnavailable) return '追更 · 来源异常';
+    if (record.checkError != null) return '追更 · 检查失败';
+    return record.latestEpisodeLabel.isEmpty ? '追更 · 等待检查' : '追更';
+  }
+
+  VideoCardOverlay? _followOverlay(FavoriteRecord? record) {
+    if (record == null || record.latestEpisodeLabel.trim().isEmpty) return null;
+    final latest = record.latestEpisodeLabel.trim();
+    final canShowUnreadBadge =
+        !record.sourceUnavailable && record.checkError == null;
+    return VideoCardOverlay(
+      bottomLabel: latest.startsWith('更新至') ? latest : '更新至 $latest',
+      badgeLabel: canShowUnreadBadge && record.hasUnreadUpdate
+          ? '新增${record.unreadAddedCount}集'
+          : null,
+    );
+  }
 }
 
 class _HistoryTab extends ConsumerWidget {

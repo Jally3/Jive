@@ -29,7 +29,7 @@ VOD API / 本地存储
 多源切换数据流：
 
 ```text
-VodSourceRegistry（内置源列表，来自 config/vod_sources.json）
+VodSourceRegistry（在线源列表，远端失败时使用最近一次成功缓存）
     ↓ 提供 VodSource + 对应 Adapter
 selectedVodSourceProvider（全局浏览源，持久化到 SharedPreferences）
     ↓
@@ -109,7 +109,7 @@ lib/domain/
 lib/data/
 ├── video_repository.dart    # VideoRepositoryImpl 统一入口，按 source/ref/feed 请求
 └── vod_source/
-    ├── vod_source_config.dart   # 从 assets 读取 config/vod_sources.json
+    ├── vod_source_config.dart   # 在线加载源列表并缓存最近一次成功配置
     ├── vod_source_registry.dart # 内置源列表 + adapter 映射；vodSourceRegistryProvider
     ├── vod_source_adapter.dart  # VodSourceAdapter + 可选 VideoFeedSourceAdapter 能力
     ├── vod_source_preferences.dart   # selectedVodSourceProvider（持久化全局源）

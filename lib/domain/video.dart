@@ -112,6 +112,18 @@ class Video {
 
   String get globalId => '$sourceId:$sourceVideoId';
 
+  /// Conservative first-phase classification for the relationship button.
+  /// Explicit completion/single-item signals win over episodic categories.
+  bool get supportsFollowUpdates {
+    final text = '$category $remarks'.toLowerCase();
+    const completedSignals = ['完结', '全集', '全片', '正片', '电影'];
+    if (episodes.length <= 1 || completedSignals.any(text.contains)) {
+      return false;
+    }
+    const episodicSignals = ['剧', '动漫', '动画', '番', '综艺', '真人秀'];
+    return episodicSignals.any(text.contains) || episodes.length > 1;
+  }
+
   VideoRef get ref =>
       VideoRef(sourceId: sourceId, sourceVideoId: sourceVideoId);
 

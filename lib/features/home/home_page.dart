@@ -8,6 +8,7 @@ import '../../data/content/category_nav.dart';
 import '../../data/content/content_filter_policy.dart';
 import '../../data/content/my_channels_store.dart';
 import '../../data/history_repository.dart';
+import '../../data/library_repository.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
 import '../../domain/video.dart';
@@ -16,6 +17,7 @@ import '../../domain/vod_source.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/source_selector.dart';
 import '../../shared/video_grid.dart';
+import '../../shared/video_card.dart';
 import '../detail/detail_page.dart';
 import './category_channels_page.dart';
 import './continue_watching_row.dart';
@@ -684,6 +686,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _body(VodSource source) {
+    final unreadUpdates = ref.watch(unreadFollowUpdatesByGlobalIdProvider);
     final c = controller;
     if (c == null) {
       return _stateScrollView(source, AppLoadingView());
@@ -722,6 +725,12 @@ class _HomePageState extends ConsumerState<HomePage> {
         child: VideoGrid(
           videos: c.items,
           onTap: _open,
+          overlayBuilder: (video) {
+            final added = unreadUpdates[video.globalId];
+            return added == null
+                ? null
+                : VideoCardOverlay(badgeLabel: '新增$added集');
+          },
           topPadding: 12,
           bottomPadding: 96,
           controller: _scrollController,
