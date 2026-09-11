@@ -158,6 +158,7 @@ void main() {
       AppUpdateInfo(
         versionName: '1.0.14',
         apkUrl: Uri.parse('https://example.com/jive.apk'),
+        updatePromptEnabled: true,
         releaseNotes: const ['修复播放失败'],
       ),
     );

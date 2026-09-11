@@ -3,9 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/theme.dart';
 import '../data/playback/skip_policy.dart';
+import 'app_anchored_menu.dart';
 import 'app_toast.dart';
 
-/// 详情页 / 非全屏播放器底部：按当前影片设置跳过片头、片尾时长。
+/// Compact, shared intro/outro settings for details and portrait player info.
 class SkipSettingsBlock extends ConsumerWidget {
   const SkipSettingsBlock({super.key, required this.videoGlobalId});
 
@@ -16,152 +17,339 @@ class SkipSettingsBlock extends ConsumerWidget {
     final policy =
         ref.watch(skipPolicyProvider(videoGlobalId)).value ??
         const SkipPolicy();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        _SkipChipRow(
-          label: '跳过片头',
-          current: policy.introSeconds,
-          valueKeyPrefix: 'skip-intro',
-          onChanged: (seconds) => ref
-              .read(skipPolicyProvider(videoGlobalId).notifier)
-              .setIntroSeconds(seconds),
+        Expanded(
+          child: _SkipStatusButton(
+            key: const ValueKey('skip-intro-button'),
+            label: '片头',
+            current: policy.introSeconds,
+            onPressed: (anchorContext) => _openPicker(
+              anchorContext,
+              ref,
+              isIntro: true,
+              current: policy.introSeconds,
+            ),
+          ),
         ),
-        const SizedBox(height: 12),
-        _SkipChipRow(
-          label: '跳过片尾',
-          current: policy.outroSeconds,
-          valueKeyPrefix: 'skip-outro',
-          onChanged: (seconds) => ref
-              .read(skipPolicyProvider(videoGlobalId).notifier)
-              .setOutroSeconds(seconds),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _SkipStatusButton(
+            key: const ValueKey('skip-outro-button'),
+            label: '片尾',
+            current: policy.outroSeconds,
+            onPressed: (anchorContext) => _openPicker(
+              anchorContext,
+              ref,
+              isIntro: false,
+              current: policy.outroSeconds,
+            ),
+          ),
         ),
       ],
     );
   }
+
+  Future<void> _openPicker(
+    BuildContext context,
+    WidgetRef ref, {
+    required bool isIntro,
+    required int current,
+  }) async {
+    Future<void> save(int seconds) async {
+      final notifier = ref.read(skipPolicyProvider(videoGlobalId).notifier);
+      if (isIntro) {
+        await notifier.setIntroSeconds(seconds);
+      } else {
+        await notifier.setOutroSeconds(seconds);
+      }
+    }
+
+    final picker = _SkipPicker(
+      isIntro: isIntro,
+      current: current,
+      onSave: save,
+    );
+    if (!context.mounted) return;
+    final saved = await showAppAnchoredMenu<int>(
+      anchorContext: context,
+      matchAnchorWidth: true,
+      maxWidth: 280,
+      builder: (_) => picker,
+    );
+    if (saved != null && context.mounted) {
+      final part = isIntro ? '片头' : '片尾';
+      showAppToast(context, saved == 0 ? '已关闭跳过$part' : '已设置跳过$part $saved 秒');
+    }
+  }
 }
 
-class _SkipChipRow extends StatelessWidget {
-  const _SkipChipRow({
+class _SkipStatusButton extends StatelessWidget {
+  const _SkipStatusButton({
+    super.key,
     required this.label,
     required this.current,
-    required this.valueKeyPrefix,
-    required this.onChanged,
+    required this.onPressed,
   });
 
   final String label;
   final int current;
-  final String valueKeyPrefix;
-  final ValueChanged<int> onChanged;
+  final ValueChanged<BuildContext> onPressed;
 
   @override
-  Widget build(BuildContext context) {
-    final customSelected = current > 0 && !isSkipPreset(current);
-    final colors = context.appColors;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: colors.text,
-          ),
+  Widget build(BuildContext context) => SizedBox(
+    height: 46,
+    child: Builder(
+      builder: (anchorContext) => OutlinedButton(
+        onPressed: () => onPressed(anchorContext),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: anchorContext.appColors.text,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
         ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _chip(
-              key: ValueKey('$valueKeyPrefix-off'),
-              text: '关闭',
-              selected: current <= 0,
-              onSelected: () => onChanged(0),
-            ),
-            for (final seconds in skipDurationPresets)
-              _chip(
-                key: ValueKey('$valueKeyPrefix-$seconds'),
-                text: '$seconds 秒',
-                selected: current == seconds,
-                onSelected: () => onChanged(seconds),
+            Flexible(child: Text('$label · ')),
+            Flexible(
+              child: Text(
+                current <= 0 ? '关闭' : '$current秒',
+                style: TextStyle(
+                  color: current <= 0
+                      ? anchorContext.appColors.secondary
+                      : anchorContext.appColors.accentForeground,
+                  fontWeight: current <= 0 ? FontWeight.w400 : FontWeight.w600,
+                ),
               ),
-            _chip(
-              key: ValueKey('$valueKeyPrefix-custom'),
-              text: customSelected ? '$current 秒' : '自定义',
-              selected: customSelected,
-              onSelected: () async {
-                final custom = await showCustomSkipSecondsDialog(
-                  context,
-                  current: current,
-                );
-                if (custom != null) onChanged(custom);
-              },
             ),
+            const SizedBox(width: 4),
+            const Icon(Icons.keyboard_arrow_down_rounded, size: 17),
           ],
         ),
-      ],
-    );
-  }
-
-  Widget _chip({
-    required Key key,
-    required String text,
-    required bool selected,
-    required VoidCallback onSelected,
-  }) => ChoiceChip(
-    key: key,
-    label: Text(text),
-    selected: selected,
-    showCheckmark: false,
-    onSelected: (_) => onSelected(),
+      ),
+    ),
   );
 }
 
-Future<int?> showCustomSkipSecondsDialog(
-  BuildContext context, {
-  required int current,
-}) async {
-  final initial = current > 0 && !isSkipPreset(current) ? '$current' : '';
-  final editor = TextEditingController(text: initial);
-  final result = await showDialog<int>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('自定义跳过时长'),
-      content: TextField(
+class _SkipPicker extends StatefulWidget {
+  const _SkipPicker({
+    required this.isIntro,
+    required this.current,
+    required this.onSave,
+  });
+
+  final bool isIntro;
+  final int current;
+  final Future<void> Function(int seconds) onSave;
+
+  @override
+  State<_SkipPicker> createState() => _SkipPickerState();
+}
+
+class _SkipPickerState extends State<_SkipPicker> {
+  bool custom = false;
+  bool saving = false;
+  late final TextEditingController editor = TextEditingController(
+    text: widget.current > 0 && !isSkipPreset(widget.current)
+        ? '${widget.current}'
+        : '',
+  );
+  String? error;
+
+  @override
+  void dispose() {
+    editor.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save(int seconds) async {
+    if (saving) return;
+    setState(() => saving = true);
+    try {
+      await widget.onSave(seconds);
+      if (mounted) Navigator.pop(context, seconds);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          saving = false;
+          error = '保存失败，请重试';
+        });
+      }
+    }
+  }
+
+  void _saveCustom() {
+    final seconds = int.tryParse(editor.text.trim());
+    if (seconds == null ||
+        seconds < skipDurationMin ||
+        seconds > skipDurationMax) {
+      setState(() => error = '请输入 $skipDurationMin–$skipDurationMax 秒');
+      return;
+    }
+    _save(seconds);
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(
+      18,
+      16,
+      18,
+      14 + MediaQuery.viewInsetsOf(context).bottom,
+    ),
+    child: custom ? _customEditor() : _presets(),
+  );
+
+  Widget _presets() {
+    final title = widget.isIntro ? '跳过片头' : '跳过片尾';
+    const customValue = -1;
+    final selectedValue = widget.current > 0 && !isSkipPreset(widget.current)
+        ? customValue
+        : widget.current;
+    return RadioGroup<int>(
+      groupValue: selectedValue,
+      onChanged: (value) {
+        if (saving || value == null) return;
+        if (value == customValue) {
+          setState(() => custom = true);
+        } else {
+          _save(value);
+        }
+      },
+      child: ListTileTheme(
+        data: ListTileThemeData(
+          contentPadding: EdgeInsets.zero,
+          horizontalTitleGap: 10,
+          minLeadingWidth: 20,
+          minVerticalPadding: 0,
+          minTileHeight: 42,
+          dense: true,
+          textColor: context.appColors.text,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 18,
+                height: 1.25,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            for (final seconds in [0, ...skipDurationPresets])
+              RadioListTile<int>(
+                key: ValueKey(
+                  'skip-${widget.isIntro ? 'intro' : 'outro'}-$seconds',
+                ),
+                value: seconds,
+                contentPadding: EdgeInsets.zero,
+                visualDensity: const VisualDensity(
+                  horizontal: -2,
+                  vertical: -3,
+                ),
+                activeColor: context.appColors.accentForeground,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(
+                  seconds == 0 ? '关闭' : '$seconds 秒',
+                  style: TextStyle(
+                    fontSize: 16,
+                    height: 1.2,
+                    fontWeight: selectedValue == seconds
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                    color: selectedValue == seconds
+                        ? context.appColors.accentForeground
+                        : context.appColors.text,
+                  ),
+                ),
+              ),
+            RadioListTile<int>(
+              key: ValueKey(
+                'skip-${widget.isIntro ? 'intro' : 'outro'}-custom',
+              ),
+              value: customValue,
+              contentPadding: EdgeInsets.zero,
+              visualDensity: const VisualDensity(horizontal: -2, vertical: -3),
+              activeColor: context.appColors.accentForeground,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Text(
+                '自定义',
+                style: TextStyle(
+                  fontSize: 16,
+                  height: 1.2,
+                  fontWeight: selectedValue == customValue
+                      ? FontWeight.w600
+                      : FontWeight.w400,
+                  color: selectedValue == customValue
+                      ? context.appColors.accentForeground
+                      : context.appColors.text,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Divider(height: 1, color: context.appColors.divider),
+            const SizedBox(height: 10),
+            Text(
+              widget.isIntro ? '播放开始时自动跳过所选时长' : '剩余所选时长时自动结束或播放下一集',
+              style: TextStyle(
+                color: context.appColors.secondary,
+                fontSize: 12,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _customEditor() => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        '自定义${widget.isIntro ? '片头' : '片尾'}时长',
+        style: const TextStyle(
+          fontSize: 18,
+          height: 1.25,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 16),
+      TextField(
         controller: editor,
         autofocus: true,
         keyboardType: TextInputType.number,
         textInputAction: TextInputAction.done,
-        decoration: const InputDecoration(hintText: '1–600', suffixText: '秒'),
-        onSubmitted: (value) {
-          final seconds = int.tryParse(value.trim());
-          Navigator.pop(dialogContext, seconds);
-        },
+        decoration: InputDecoration(
+          hintText: '$skipDurationMin–$skipDurationMax',
+          suffixText: '秒',
+          errorText: error,
+        ),
+        onSubmitted: (_) => _saveCustom(),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () {
-            final seconds = int.tryParse(editor.text.trim());
-            Navigator.pop(dialogContext, seconds);
-          },
-          child: const Text('确定'),
-        ),
-      ],
-    ),
+      const SizedBox(height: 16),
+      Row(
+        children: [
+          TextButton(
+            onPressed: saving ? null : () => setState(() => custom = false),
+            child: const Text('取消'),
+          ),
+          const Spacer(),
+          FilledButton(
+            onPressed: saving ? null : _saveCustom,
+            child: saving
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('保存'),
+          ),
+        ],
+      ),
+    ],
   );
-  editor.dispose();
-  if (result == null) return null;
-  if (result < skipDurationMin || result > skipDurationMax) {
-    if (context.mounted) {
-      showAppToast(context, '请输入 $skipDurationMin–$skipDurationMax 秒');
-    }
-    return null;
-  }
-  return result;
 }

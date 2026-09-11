@@ -8,7 +8,7 @@
 lib/
 ├── main.dart                          # 应用入口：设置状态栏样式，启动 ProviderScope/JiveApp
 └── app/
-    ├── app.dart                       # 根组件 JiveApp 与 AppShell：主题、闪屏最短展示+源加载闸门、三页底部导航壳、下载生命周期联动
+    ├── app.dart                       # 根组件 JiveApp 与 AppShell：主题、启动闸门、三页导航、下载生命周期及追更前台检查/提醒角标
     └── theme.dart                     # 「夜幕影院 / 暖昼」双主题：AppPalette 与 ThemeData
 ```
 
@@ -17,14 +17,20 @@ lib/
 ```text
 lib/shared/
 ├── app_states.dart                    # 通用状态视图：AppLoadingView / AppEmptyView / AppErrorView
+├── app_anchored_menu.dart             # 圆角锚点下拉菜单：按钮居中定位、安全区避让、下滑淡入动画和统一菜单项
 ├── app_update_dialog.dart             # Android 新版本弹窗：更新说明、稍后和外部下载跳转
 ├── app_toast.dart                     # 全局居中 toast：挂 root Overlay，2 秒自消，同时只显示一条
 ├── double_back_exit_scope.dart        # Android 根页面返回拦截：2 秒内连续返回两次才退出应用
 ├── is_tv.dart                         # isTvProvider：经 jive/device 通道判断是否 Android TV（iOS/失败恒 false）
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
 ├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
+<<<<<<< HEAD
 ├── skip_settings.dart                 # 跳过片头/片尾芯片选择：详情页与非全屏播放器底部共用
 ├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、TMDB 排名/评分徽标、观看进度条、TV 焦点描边
+=======
+├── skip_settings.dart                 # 同行收起的片头/片尾状态按钮与锚点下拉菜单：详情页和非全屏播放器共用
+├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、观看进度条、TV 焦点描边
+>>>>>>> codex/jive-dev
 └── video_grid.dart                    # 自适应视频网格 VideoGrid：两列/四列 sliver 布局、动态卡片比例
 ```
 
@@ -40,7 +46,7 @@ lib/domain/
 ├── tmdb_catalog.dart                  # TMDB Catalog 模型：条目、媒体类型、五种筛选范围与快照解析
 ├── video_search_target.dart           # 跨源搜索目标：脱离 VideoRef 统一承载标题/别名/年份/媒体类型/季数
 ├── vod_source.dart                    # VOD 源模型 VodSource：JSON 解析、HTTPS 与启用状态校验
-├── library.dart                       # 收藏记录 FavoriteRecord（含 JSON 反序列化容错）
+├── library.dart                       # 统一内容库记录 FavoriteRecord：收藏/追更状态、剧集版本、未读更新与兼容解析
 ├── watch_record.dart                  # 观看历史 WatchRecord：进度、完播标记、时间线/manifest 版本指纹
 ├── playback_progress.dart             # 播放进度值对象 PlaybackProgress：归一化、完播阈值、续播位置
 ├── playback_selection.dart            # 一次播放的完整定位 PlaybackSelection：源/视频/线路/剧集身份 + 播放地址
@@ -55,8 +61,9 @@ lib/data/
 ├── catalog/
 │   └── tmdb_catalog_repository.dart # Catalog API、ETag、请求合并、退避及持久化/打包快照降级
 ├── video_repository.dart              # 内容访问门面：按 adapterType 分发列表/详情/Feed，详情短缓存、敏感内容过滤
-├── library_repository.dart            # 收藏持久化：SharedPreferences 存储，写操作串行队列防并发损坏
+├── library_repository.dart            # 内容库 v2 与旧收藏兼容迁移；追更控制器负责分源限流检查、失败隔离及已读状态
 ├── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取、单条删除、watchHistoryProvider
+├── offline_progress_repository.dart   # 显式下载剧集的轻量逐集观看进度：稳定身份索引、串行写入、最多 100 条
 ├── theme_mode_preferences.dart         # 外观模式持久化：跟随系统/日间/夜间与 themeModeProvider
 └── search_history_store.dart          # 搜索关键词本地历史：去重、最近优先、最多 20 条
 ```
@@ -67,7 +74,7 @@ lib/data/
 
 ```text
 lib/data/vod_source/
-├── vod_source_config.dart             # 源列表加载：远端优先 → 远端缓存 → 内置资产，仅放行启用的 HTTPS 源
+├── vod_source_config.dart             # 源列表加载：远端优先 → 最近成功缓存；无配置时返回空列表并由启动页提示重试
 ├── vod_source_registry.dart           # 源注册表 VodSourceRegistry 与内置 Adapter 表、vodSourceRegistryProvider
 ├── vod_source_adapter.dart            # Adapter 接口，及可选 Feed 能力与剧集播放解析扩展
 ├── vod_source_preferences.dart        # 全局当前源 selectedVodSourceProvider：持久化选择、白名单与 HTTPS 校验
@@ -133,6 +140,13 @@ lib/data/cache/
 └── cache_controller.dart              # 缓存页状态 cacheControllerProvider：统计刷新、单条删除、批量清理播放缓存
 ```
 
+## 网络（`lib/data/network/`）
+
+```text
+lib/data/network/
+└── connectivity_provider.dart          # 共享网络状态：首次读取当前连接，持续发布 Wi-Fi/蜂窝/断网变化
+```
+
 ## 下载（`lib/data/download/`）
 
 下载复用 playback 的解析能力与 cache 的存储配额，任务产物即缓存条目。
@@ -140,8 +154,9 @@ lib/data/cache/
 ```text
 lib/data/download/
 ├── download_manager.dart              # 边下边播分片预取器 SegmentPrefetcher：并发抓取、指数退避、窗口随播放位置重锚定
-├── download_task_manager.dart         # 显式下载引擎 DownloadTaskManager：任务持久化、并发许可池、暂停/恢复/断点续下、速度采样与 UI 进度合并发布
-├── download_providers.dart            # 下载装配 downloadManagerProvider：注入缓存与剧集选择回解析，联动 App 生命周期
+├── download_network_policy.dart       # 离线下载网络策略：蜂窝网络开关持久化与当前网络准入判定
+├── download_task_manager.dart         # 显式下载引擎 DownloadTaskManager：任务持久化、网络闸门、单次蜂窝授权、暂停/恢复/断点续与进度发布
+├── download_providers.dart            # 下载装配 downloadManagerProvider：注入缓存、剧集回解析与网络准入联动
 └── platform_disk_space.dart           # 磁盘空间通道 PlatformDiskSpaceProvider：MethodChannel(jive/cache) 读容量/可用空间
 ```
 
@@ -168,7 +183,7 @@ lib/features/
 │   ├── multi_source_search_controller.dart  # 多源搜索控制器：并行探测各可搜索源、逐源分页与状态聚合
 │   └── search_launch_request.dart      # 跨页面搜索导航请求：携带关键词、起始来源与当前源审阅模式
 ├── detail/
-│   ├── detail_page.dart               # 详情页 VideoDetailPage：详情加载、线路/选集分组、收藏、下载、切源与按影片跳过片头/片尾；平板加大封面、限制主按钮宽度、剧集等宽网格
+│   ├── detail_page.dart               # 详情页 VideoDetailPage：详情加载、动态收藏/追更、下载、切源与片头片尾设置；响应式动作行和剧集网格
 │   ├── detail_source_controller.dart  # 详情页跨源探测 DetailSourceController：备用源搜索匹配与状态机
 │   └── detail_more_sources_sheet.dart # 「全部来源」底栏：备用源状态列表与一键探测
 ├── player/
@@ -185,7 +200,7 @@ lib/features/
 │       ├── playback_status_indicator.dart # 播放链路状态圆点：颜色区分边下边播/缓存/代理/直连，长按看详情
 │       └── player_info_panel.dart         # 竖屏播放器下方信息面板：跳过片头/片尾、简介与分组选集
 ├── profile/
-│   └── profile_page.dart              # 「我的」页：收藏/历史双 tab 网格，设置/下载/源管理入口
+│   └── profile_page.dart              # 「我的」页：追更与收藏/历史双 tab，更新置顶/已读；下载快捷入口含状态进度动画
 ├── cache/
 │   └── cache_management_page.dart     # 缓存管理页：用量统计、配额展示、单条删除与清空确认
 ├── download/

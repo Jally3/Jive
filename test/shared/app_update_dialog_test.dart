@@ -26,7 +26,8 @@ void main() {
     final update = AppUpdateInfo(
       versionName: '1.0.14',
       apkUrl: Uri.parse('https://example.com/jive.apk'),
-      releaseNotes: const ['修复播放失败', '优化电视操作'],
+      updatePromptEnabled: true,
+      releaseNotes: const ['• 1、修复播放失败', '2. 优化电视操作'],
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -45,7 +46,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('发现新版本 1.0.14'), findsOneWidget);
-    expect(find.textContaining('修复播放失败'), findsOneWidget);
+    expect(find.text('1、'), findsOneWidget);
+    expect(find.text('2、'), findsOneWidget);
+    expect(find.text('修复播放失败'), findsOneWidget);
+    expect(find.text('优化电视操作'), findsOneWidget);
+    expect(find.textContaining('•'), findsNothing);
     final laterButton = find.widgetWithText(OutlinedButton, '稍后');
     final downloadButton = find.widgetWithText(FilledButton, '立即下载');
     expect(
@@ -71,6 +76,46 @@ void main() {
     expect(find.text('发现新版本 1.0.14'), findsNothing);
   });
 
+  testWidgets('wrapped release notes align with the body after the number', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final gateway = _FakeGateway();
+    final update = AppUpdateInfo(
+      versionName: '1.0.14',
+      apkUrl: Uri.parse('https://example.com/jive.apk'),
+      updatePromptEnabled: true,
+      releaseNotes: const ['新增蜂窝网络下载开关、网络切换暂停及单次继续授权，并优化等待网络时的状态提示'],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildLightTheme(),
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () =>
+                showAppUpdateDialog(context, update: update, gateway: gateway),
+            child: const Text('show'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('show'));
+    await tester.pumpAndSettle();
+
+    final number = find.byKey(const ValueKey('app-update-note-number-0'));
+    final content = find.byKey(const ValueKey('app-update-note-content-0'));
+    expect(
+      tester.getTopLeft(content).dx,
+      greaterThan(tester.getTopLeft(number).dx),
+    );
+    expect(
+      tester.getSize(content).height,
+      greaterThan(tester.getSize(number).height),
+    );
+  });
+
   testWidgets('later closes the dialog without opening download', (
     tester,
   ) async {
@@ -78,6 +123,7 @@ void main() {
     final update = AppUpdateInfo(
       versionName: '1.0.14',
       apkUrl: Uri.parse('https://example.com/jive.apk'),
+      updatePromptEnabled: true,
     );
     await tester.pumpWidget(
       MaterialApp(

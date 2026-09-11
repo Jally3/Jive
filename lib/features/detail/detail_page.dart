@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -13,6 +14,7 @@ import '../../data/vod_source/vod_source_registry.dart';
 import '../../domain/video.dart';
 import '../../domain/playback_selection.dart';
 import '../../domain/vod_source.dart';
+import '../../shared/app_anchored_menu.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/is_tv.dart';
 import '../../shared/skip_settings.dart';
@@ -94,6 +96,8 @@ class DetailPageLayout {
   }
 }
 
+enum _RelationshipAction { follow, favorite, stopFollowing, remove }
+
 class VideoDetailPage extends ConsumerStatefulWidget {
   const VideoDetailPage({super.key, required this.video});
   final Video video;
@@ -167,6 +171,11 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         detail = merged;
       });
       sc!.markActiveLoaded(merged);
+      unawaited(
+        ref
+            .read(favoriteControllerProvider.notifier)
+            .markViewed(merged.globalId),
+      );
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     } finally {
@@ -319,6 +328,29 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           builder: (context, setSheetState) => Consumer(
             builder: (context, ref, _) {
               final tasks = ref.watch(downloadTasksProvider).value ?? [];
+              final addedIndexes = <int>{
+                for (
+                  var index = 0;
+                  index < sc!.activeVideo.episodes.length;
+                  index++
+                )
+                  if (_taskForEpisode(tasks, sc!.activeVideo.episodes[index])
+                      case final task?
+                      when task.status != DownloadTaskStatus.cancelled)
+                    index,
+              };
+              final availableIndexes = {
+                for (
+                  var index = 0;
+                  index < sc!.activeVideo.episodes.length;
+                  index++
+                )
+                  if (!addedIndexes.contains(index)) index,
+              };
+              final effectiveChecked = checked.intersection(availableIndexes);
+              final allAvailableSelected =
+                  availableIndexes.isNotEmpty &&
+                  effectiveChecked.length == availableIndexes.length;
               return SafeArea(
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -338,37 +370,36 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                               ),
                             ),
                             TextButton(
-                              onPressed: () {
-                                setSheetState(() {
-                                  if (checked.length ==
-                                      sc!.activeVideo.episodes.length) {
-                                    checked.clear();
-                                  } else {
-                                    checked.addAll(
-                                      List.generate(
-                                        sc!.activeVideo.episodes.length,
-                                        (index) => index,
-                                      ),
-                                    );
-                                  }
-                                });
-                              },
-                              child: Text(
-                                checked.length ==
-                                        sc!.activeVideo.episodes.length
-                                    ? '取消全选'
-                                    : '全选',
-                              ),
+                              onPressed: availableIndexes.isEmpty
+                                  ? null
+                                  : () {
+                                      setSheetState(() {
+                                        if (allAvailableSelected) {
+                                          checked.clear();
+                                        } else {
+                                          checked
+                                            ..clear()
+                                            ..addAll(availableIndexes);
+                                        }
+                                      });
+                                    },
+                              child: Text(allAvailableSelected ? '取消全选' : '全选'),
                             ),
                           ],
                         ),
-                        Text(
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.start,
+                          children: [
+                            Expanded(child:   Text(
+
                           '下载时自动跳过广告片段',
                           style: TextStyle(
                             fontSize: 12,
                             color: context.appColors.secondary,
                           ),
-                        ),
+                        ),)
+                           ],),
+                       
                         Divider(),
                         Expanded(
                           child: ListView.builder(
@@ -376,9 +407,28 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                             itemBuilder: (_, index) {
                               final episode = sc!.activeVideo.episodes[index];
                               final task = _taskForEpisode(tasks, episode);
+                              final alreadyAdded =
+                                  task != null &&
+                                  task.status != DownloadTaskStatus.cancelled;
                               return CheckboxListTile(
-                                value: checked.contains(index),
-                                title: Text(episode.name),
+                                key: ValueKey('download-episode-$index'),
+                                value: alreadyAdded || checked.contains(index),
+                                checkboxShape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                fillColor: alreadyAdded
+                                    ? WidgetStatePropertyAll(
+                                        context.appColors.accentPressed.withValues(alpha: .2))
+                                      
+                                    : null,
+                                title: Text(
+                                  episode.name,
+                                  style: alreadyAdded
+                                      ? TextStyle(
+                                          color: context.appColors.tertiary,
+                                        )
+                                      : null,
+                                ),
                                 subtitle: task == null
                                     ? null
                                     : Text(
@@ -389,6 +439,10 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                                         ),
                                       ),
                                 onChanged: (value) {
+                                  if (alreadyAdded) {
+                                    showAppToast(this.context, '已经添加到下载');
+                                    return;
+                                  }
                                   setSheetState(() {
                                     if (value == true) {
                                       checked.add(index);
@@ -401,16 +455,67 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
                             },
                           ),
                         ),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: checked.isEmpty
-                                ? null
-                                : () =>
-                                      Navigator.pop(context, checked.toList()),
-                            icon: Icon(Icons.download),
-                            label: Text('确认下载（${checked.length} 集）'),
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SizedBox(
+                                height: 48,
+                                child: OutlinedButton.icon(
+                                  key: const ValueKey(
+                                    'download-management-button',
+                                  ),
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    if (!mounted) return;
+                                    Navigator.of(this.context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            DownloadManagementPage(),
+                                      ),
+                                    );
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor:
+                                        context.appColors.secondary,
+                                    side: BorderSide(
+                                      color: context.appColors.tertiary,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                    ),
+                                  ),
+                                  icon: Icon(Icons.download_done_outlined),
+                                  label: Text('下载管理'),
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: SizedBox(
+                                height: 48,
+                                child: FilledButton.icon(
+                                  key: const ValueKey(
+                                    'confirm-download-button',
+                                  ),
+                                  onPressed: effectiveChecked.isEmpty
+                                      ? null
+                                      : () => Navigator.pop(
+                                          context,
+                                          effectiveChecked.toList(),
+                                        ),
+                                  style: FilledButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                    ),
+                                  ),
+                                  icon: Icon(Icons.download),
+                                  label: Text(
+                                    '确认下载（${effectiveChecked.length} 集）',
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -427,22 +532,34 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   }
 
   DownloadTask? _taskForEpisode(List<DownloadTask> tasks, Episode episode) {
-    final active = sc?.activeVideo;
-    final lineIdentity = active == null
-        ? null
-        : preferredPlaybackLine(active)?.identity;
-    return tasks
+    final matches = tasks
         .where(
           (task) =>
               task.sourceId == sc?.activeVideo.sourceId &&
               task.sourceVideoId == sc?.activeVideo.sourceVideoId &&
-              task.playbackLineIdentity == lineIdentity &&
-              (task.episodeIdentity == episode.identity ||
-                  (episode.identity.isEmpty &&
-                      (task.episodeId == episode.id ||
-                          task.episodeName == episode.name))),
+              _sameDownloadEpisode(task, episode),
         )
-        .firstOrNull;
+        .toList();
+    return matches
+            .where((task) => task.status != DownloadTaskStatus.cancelled)
+            .firstOrNull ??
+        matches.firstOrNull;
+  }
+
+  bool _sameDownloadEpisode(DownloadTask task, Episode episode) {
+    if (task.episodeIdentity.isNotEmpty &&
+        episode.identity.isNotEmpty &&
+        task.episodeIdentity == episode.identity) {
+      return true;
+    }
+    if (task.episodeId.isNotEmpty &&
+        episode.id.isNotEmpty &&
+        task.episodeId == episode.id) {
+      return true;
+    }
+    return task.episodeName.trim().isNotEmpty &&
+        task.episodeName.trim().toLowerCase() ==
+            episode.name.trim().toLowerCase();
   }
 
   String _downloadTaskSummary(DownloadTask task) {
@@ -553,11 +670,17 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         centerTitle: true,
         actions: [
           IconButton(
-            tooltip: '下载管理',
-            icon: Icon(Icons.download_done_outlined),
-            onPressed: () => Navigator.of(
-              context,
-            ).push(MaterialPageRoute(builder: (_) => DownloadManagementPage())),
+            key: const ValueKey('detail-download-button'),
+            tooltip: '下载',
+            icon: _downloadButtonIcon(),
+            onPressed:
+                sc == null ||
+                    loading ||
+                    resolving ||
+                    downloadResolving ||
+                    sc!.activeVideo.episodes.isEmpty
+                ? null
+                : _chooseDownloads,
           ),
         ],
       ),
@@ -649,19 +772,18 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   Widget _actionRow(Video v) {
     final row = Row(
       children: [
-        // 播放 : 下载 ≈ 65 : 35，收藏收起为同高图标按钮。
-        Expanded(flex: 13, child: _playBtn(v)),
+        Expanded(child: _playBtn(v)),
         SizedBox(width: 8),
-        Expanded(flex: 7, child: _downloadBtn(v)),
-        SizedBox(width: 8),
-        _favBtn(v),
+        _relationshipBtn(v),
       ],
     );
     if (!_layout.isTablet) return row;
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: _layout.actionRowMaxWidth),
+        constraints: BoxConstraints(
+          maxWidth: math.min(_layout.actionRowMaxWidth, 500),
+        ),
         child: row,
       ),
     );
@@ -765,64 +887,232 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     ),
   );
 
-  Widget _downloadBtn(Video v) => SizedBox(
-    height: 48,
-    child: OutlinedButton.icon(
-      onPressed: v.episodes.isEmpty || resolving || downloadResolving
-          ? null
-          : _chooseDownloads,
-      // 次操作用普通文字色，把琥珀色留给播放主按钮。
-      // 窄屏下按钮仅约 78px，收紧横向留白并让标签缩放，避免“下载”折行。
-      style: OutlinedButton.styleFrom(
-        foregroundColor: context.appColors.text,
-        padding: EdgeInsets.symmetric(horizontal: 8),
-      ),
-      icon: downloadResolving
-          ? SizedBox.square(
-              dimension: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(Icons.download_outlined),
-      label: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text('下载', maxLines: 1, softWrap: false),
-      ),
-    ),
-  );
+  Widget _downloadButtonIcon() => downloadResolving
+      ? const SizedBox.square(
+          dimension: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        )
+      : const Icon(Icons.download_outlined);
 
-  Widget _favBtn(Video v) => Consumer(
+  Widget _relationshipBtn(Video v) => Consumer(
     builder: (_, ref, _) {
       final favs = ref.watch(favoriteControllerProvider);
-      final fav =
-          favs.value?.any((i) => i.video.globalId == v.globalId) ?? false;
-      return SizedBox.square(
-        dimension: 48,
-        child: OutlinedButton(
+      final record = favs.value
+          ?.where((item) => item.video.globalId == v.globalId)
+          .firstOrNull;
+      final favorite = record?.isFavorite ?? false;
+      final following = record?.isFollowing ?? false;
+      final supportsFollow = v.supportsFollowUpdates;
+      final label = following
+          ? '已追更'
+          : supportsFollow
+          ? (favorite ? '已收藏' : '追更')
+          : (favorite ? '已收藏' : '收藏');
+      final icon = following
+          ? Icons.check
+          : supportsFollow && !favorite
+          ? Icons.add
+          : favorite
+          ? Icons.favorite
+          : Icons.favorite_outline;
+      if (supportsFollow) {
+        return _relationshipMenuButton(
+          v,
+          ref,
+          label: label,
+          icon: icon,
+          favorite: favorite,
+          following: following,
+          isLoading: favs.isLoading,
+        );
+      }
+      return SizedBox(
+        key: const ValueKey('detail-relationship-button'),
+        width: 96,
+        height: 48,
+        child: OutlinedButton.icon(
           onPressed: favs.isLoading
               ? null
               : () async {
                   try {
-                    await ref
-                        .read(favoriteControllerProvider.notifier)
-                        .toggle(v);
+                    final controller = ref.read(
+                      favoriteControllerProvider.notifier,
+                    );
+                    await controller.toggle(v);
                     if (mounted) {
-                      showAppToast(context, fav ? '已取消收藏' : '已收藏');
+                      showAppToast(context, favorite ? '已取消收藏' : '已收藏');
                     }
                   } catch (_) {
                     if (mounted) {
-                      showAppToast(context, '收藏保存失败，请重试');
+                      showAppToast(context, '保存失败，请重试');
                     }
                   }
                 },
           style: OutlinedButton.styleFrom(
             foregroundColor: context.appColors.text,
-            padding: EdgeInsets.zero,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
           ),
-          child: Icon(fav ? Icons.favorite : Icons.favorite_outline, size: 20),
+          icon: Icon(icon, size: 18),
+          label: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(label, maxLines: 1, softWrap: false),
+          ),
         ),
       );
     },
   );
+
+  Widget _relationshipMenuButton(
+    Video video,
+    WidgetRef ref, {
+    required String label,
+    required IconData icon,
+    required bool favorite,
+    required bool following,
+    required bool isLoading,
+  }) => SizedBox(
+    key: const ValueKey('detail-relationship-button'),
+    width: _layout.isTablet ? 200 : 176,
+    height: 48,
+    child: Builder(
+      builder: (anchorContext) => OutlinedButton.icon(
+        onPressed: isLoading
+            ? null
+            : () => _openRelationshipMenu(
+                anchorContext,
+                video,
+                ref,
+                favorite: favorite,
+                following: following,
+              ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: anchorContext.appColors.text,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+        ),
+        icon: Icon(icon, size: 18),
+        label: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label, maxLines: 1, softWrap: false),
+              const SizedBox(width: 2),
+              const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Future<void> _openRelationshipMenu(
+    BuildContext anchorContext,
+    Video video,
+    WidgetRef ref, {
+    required bool favorite,
+    required bool following,
+  }) async {
+    final action = await showAppAnchoredMenu<_RelationshipAction>(
+      anchorContext: anchorContext,
+      matchAnchorWidth: true,
+      maxWidth: 280,
+      builder: (menuContext) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (following) ...[
+              AppAnchoredMenuItem(
+                key: const ValueKey('detail-follow-menu-stop'),
+                icon: Icons.notifications_off_outlined,
+                title: '取消追更',
+                subtitle: '停止新集提醒，保留收藏',
+                onTap: () => Navigator.pop(
+                  menuContext,
+                  _RelationshipAction.stopFollowing,
+                ),
+              ),
+              AppAnchoredMenuItem(
+                key: const ValueKey('detail-follow-menu-remove'),
+                icon: Icons.delete_outline,
+                title: '取消追更并移除',
+                subtitle: '同时从个人内容库移除',
+                onTap: () =>
+                    Navigator.pop(menuContext, _RelationshipAction.remove),
+              ),
+            ] else ...[
+              AppAnchoredMenuItem(
+                key: const ValueKey('detail-follow-menu-follow'),
+                icon: Icons.add_alert_outlined,
+                title: favorite ? '开启追更' : '追更并收藏',
+                subtitle: '有新集时提醒',
+                onTap: () =>
+                    Navigator.pop(menuContext, _RelationshipAction.follow),
+              ),
+              AppAnchoredMenuItem(
+                key: const ValueKey('detail-follow-menu-favorite'),
+                icon: favorite ? Icons.delete_outline : Icons.favorite_outline,
+                title: favorite ? '取消收藏' : '仅收藏',
+                subtitle: favorite ? '从个人内容库移除' : '保存但不提醒',
+                onTap: () => Navigator.pop(
+                  menuContext,
+                  favorite
+                      ? _RelationshipAction.remove
+                      : _RelationshipAction.favorite,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+    if (action != null) {
+      await _saveRelationshipAction(video, ref, action: action);
+    }
+  }
+
+  Future<void> _saveRelationshipAction(
+    Video video,
+    WidgetRef ref, {
+    required _RelationshipAction action,
+  }) async {
+    try {
+      final controller = ref.read(favoriteControllerProvider.notifier);
+      switch (action) {
+        case _RelationshipAction.follow:
+          await controller.follow(video);
+          if (mounted) showAppToast(context, '已追更，有新集时会提醒你');
+          return;
+        case _RelationshipAction.favorite:
+          await controller.toggle(video);
+          if (mounted) showAppToast(context, '已收藏');
+          return;
+        case _RelationshipAction.stopFollowing:
+          await controller.stopFollowing(video.globalId, keepFavorite: true);
+          if (mounted) showAppToast(context, '已取消追更，收藏仍保留');
+          return;
+        case _RelationshipAction.remove:
+          final wasFollowing = ref
+              .read(favoriteControllerProvider)
+              .value
+              ?.where((item) => item.video.globalId == video.globalId)
+              .firstOrNull
+              ?.isFollowing;
+          await controller.stopFollowing(video.globalId, keepFavorite: false);
+          if (mounted) {
+            showAppToast(
+              context,
+              wasFollowing == true ? '已取消追更并移除收藏' : '已取消收藏',
+            );
+          }
+          return;
+      }
+    } catch (_) {
+      if (mounted) {
+        showAppToast(context, '保存失败，请重试');
+      }
+    }
+  }
 
   Widget _sourceSection() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,

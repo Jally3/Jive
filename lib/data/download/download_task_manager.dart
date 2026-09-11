@@ -15,6 +15,7 @@ import '../cache/content_key.dart';
 import '../playback/hls_parser.dart';
 import '../playback/playback_url_resolver.dart';
 import '../cache/url_normalizer.dart';
+import 'download_network_policy.dart';
 
 const String downloadTaskFileName = 'download_tasks.json';
 const int downloadFilterVersion = 1;
@@ -42,6 +43,10 @@ enum DownloadFailureReason {
   cancelled,
 }
 
+enum DownloadPauseReason { user, network, lifecycle }
+
+enum DownloadResumeResult { started, blockedByCellular, unavailable }
+
 class DownloadTask {
   const DownloadTask({
     required this.taskId,
@@ -65,6 +70,7 @@ class DownloadTask {
     this.filterVersion = downloadFilterVersion,
     this.filterConfidence,
     this.error,
+    this.pauseReason,
     this.createdAtMs = 0,
     this.updatedAtMs = 0,
   });
@@ -90,6 +96,7 @@ class DownloadTask {
   final int filterVersion;
   final double? filterConfidence;
   final DownloadFailureReason? error;
+  final DownloadPauseReason? pauseReason;
   final int createdAtMs;
   final int updatedAtMs;
 
@@ -109,7 +116,9 @@ class DownloadTask {
     int? filterVersion,
     double? filterConfidence,
     DownloadFailureReason? error,
+    DownloadPauseReason? pauseReason,
     bool clearError = false,
+    bool clearPauseReason = false,
     int? createdAtMs,
     int? updatedAtMs,
     String? playbackUrl,
@@ -137,6 +146,7 @@ class DownloadTask {
     filterVersion: filterVersion ?? this.filterVersion,
     filterConfidence: filterConfidence ?? this.filterConfidence,
     error: clearError ? null : (error ?? this.error),
+    pauseReason: clearPauseReason ? null : (pauseReason ?? this.pauseReason),
     createdAtMs: createdAtMs ?? this.createdAtMs,
     updatedAtMs: updatedAtMs ?? this.updatedAtMs,
   );
@@ -164,6 +174,7 @@ class DownloadTask {
     'filterVersion': filterVersion,
     'filterConfidence': filterConfidence,
     'error': error?.name,
+    'pauseReason': pauseReason?.name,
     'createdAtMs': createdAtMs,
     'updatedAtMs': updatedAtMs,
   };
@@ -194,6 +205,7 @@ class DownloadTask {
       filterVersion: _nonNegative(json['filterVersion']),
       filterConfidence: (json['filterConfidence'] as num?)?.toDouble(),
       error: _failure(json['error']),
+      pauseReason: _pauseReason(json['pauseReason']),
       createdAtMs: _nonNegative(json['createdAtMs']),
       updatedAtMs: _nonNegative(json['updatedAtMs']),
     );
@@ -210,7 +222,9 @@ class DownloadTaskManager {
     required this.client,
     required this.resolveSelection,
     this.concurrency = 5,
+    DownloadNetworkAccess initialNetworkAccess = DownloadNetworkAccess.allowed,
   }) : assert(concurrency > 0),
+       _networkAccess = initialNetworkAccess,
        _permits = _DownloadPermitPool(concurrency),
        _urlResolver = PlaybackUrlResolver(client: client);
 
@@ -227,10 +241,12 @@ class DownloadTaskManager {
   final Set<String> _pauseRequested = {};
   final Set<String> _cancelRequested = {};
   final Set<String> _lifecyclePaused = {};
+  final Set<String> _cellularOverrides = {};
   final Map<String, Map<String, int>> _resourceLengths = {};
   final Map<String, List<({int atMs, int bytes})>> _speedSamples = {};
   final Map<String, Timer> _speedTimers = {};
   Timer? _progressEmitTimer;
+  DownloadNetworkAccess _networkAccess;
   Future<void> _persistTail = Future<void>.value();
   final StreamController<List<DownloadTask>> _changes =
       StreamController<List<DownloadTask>>.broadcast();
@@ -338,6 +354,7 @@ class DownloadTaskManager {
       }
     }
     final now = DateTime.now().millisecondsSinceEpoch;
+    final networkBlocked = _networkAccess != DownloadNetworkAccess.allowed;
     final task = DownloadTask(
       taskId: '${contentKey.hash}:$now:${Random().nextInt(1 << 20)}',
       sourceId: selection.sourceId,
@@ -347,7 +364,10 @@ class DownloadTaskManager {
       episodeIdentity: selection.episodeIdentity,
       episodeId: selection.episode.id,
       episodeName: selection.episode.name,
-      status: DownloadTaskStatus.queued,
+      status: networkBlocked
+          ? DownloadTaskStatus.paused
+          : DownloadTaskStatus.queued,
+      pauseReason: networkBlocked ? DownloadPauseReason.network : null,
       playbackUrl: selection.playbackSource.url.toString(),
       contentKeyHash: contentKey.hash,
       createdAtMs: now,
@@ -361,12 +381,24 @@ class DownloadTaskManager {
     return task;
   }
 
-  Future<void> pause(String taskId, {bool waitUntilPaused = false}) async {
+  Future<void> pause(
+    String taskId, {
+    bool waitUntilPaused = false,
+    DownloadPauseReason reason = DownloadPauseReason.user,
+  }) async {
+    if (reason == DownloadPauseReason.user) {
+      _cellularOverrides.remove(taskId);
+    }
     _pauseRequested.add(taskId);
     final task = _tasks[taskId];
     if (task != null && task.status == DownloadTaskStatus.queued) {
-      await _set(task.copyWith(status: DownloadTaskStatus.paused));
+      await _set(
+        task.copyWith(status: DownloadTaskStatus.paused, pauseReason: reason),
+      );
       return;
+    }
+    if (task != null && task.status == DownloadTaskStatus.downloading) {
+      await _set(task.copyWith(pauseReason: reason));
     }
     if (waitUntilPaused) {
       // 正在写入的分片需要完整落盘后才能安全停止。允许交互层等待这个
@@ -376,22 +408,42 @@ class DownloadTaskManager {
     }
   }
 
-  Future<void> resume(String taskId) async {
+  Future<DownloadResumeResult> resume(
+    String taskId, {
+    bool allowCellularOnce = false,
+  }) async {
+    if (_networkAccess == DownloadNetworkAccess.unavailable) {
+      return DownloadResumeResult.unavailable;
+    }
+    if (_networkAccess == DownloadNetworkAccess.cellularBlocked &&
+        !allowCellularOnce &&
+        !_cellularOverrides.contains(taskId)) {
+      return DownloadResumeResult.blockedByCellular;
+    }
+    if (allowCellularOnce) _cellularOverrides.add(taskId);
     _pauseRequested.remove(taskId);
     _cancelRequested.remove(taskId);
     final task = _tasks[taskId];
-    if (task == null || task.status == DownloadTaskStatus.completed) return;
-    if (_running.containsKey(taskId)) return;
+    if (task == null || task.status == DownloadTaskStatus.completed) {
+      return DownloadResumeResult.started;
+    }
+    if (_running.containsKey(taskId)) return DownloadResumeResult.started;
     await _set(
-      task.copyWith(status: DownloadTaskStatus.queued, clearError: true),
+      task.copyWith(
+        status: DownloadTaskStatus.queued,
+        clearError: true,
+        clearPauseReason: true,
+      ),
     );
     _pendingSelections[taskId] = null;
     _pumpQueue();
+    return DownloadResumeResult.started;
   }
 
   Future<void> cancel(String taskId) async {
     _cancelRequested.add(taskId);
     _pauseRequested.remove(taskId);
+    _cellularOverrides.remove(taskId);
     final task = _tasks[taskId];
     if (task != null) {
       await _set(
@@ -403,9 +455,8 @@ class DownloadTaskManager {
     }
   }
 
-  /// Removes the task record while keeping its cache entry by default.
-  /// Set [deleteCache] when the user explicitly wants to remove both.
-  Future<void> removeTask(String taskId, {bool deleteCache = false}) async {
+  /// Removes both the task record and its downloaded local files.
+  Future<void> removeTask(String taskId) async {
     final task = _tasks[taskId];
     if (task == null) return;
     if (task.status == DownloadTaskStatus.queued ||
@@ -415,17 +466,19 @@ class DownloadTaskManager {
       if (running != null) await running;
     }
     final latest = _tasks[taskId] ?? task;
-    if (deleteCache &&
-        latest.contentKeyHash != null &&
-        latest.revisionKeyHash != null) {
-      await cacheManager.deleteEntry(
+    if (latest.contentKeyHash != null && latest.revisionKeyHash != null) {
+      final result = await cacheManager.deleteEntry(
         '${latest.contentKeyHash}|${latest.revisionKeyHash}',
       );
+      if (result == DeleteResult.blocked || result == DeleteResult.failed) {
+        throw StateError('本地文件删除失败');
+      }
     }
     _tasks.remove(taskId);
     _pendingSelections.remove(taskId);
     _pauseRequested.remove(taskId);
     _cancelRequested.remove(taskId);
+    _cellularOverrides.remove(taskId);
     await _persist();
     _emit();
   }
@@ -486,7 +539,42 @@ class DownloadTaskManager {
     );
   }
 
-  Future<void> retry(String taskId) => resume(taskId);
+  Future<DownloadResumeResult> retry(String taskId) => resume(taskId);
+
+  Future<void> setNetworkAccess(DownloadNetworkAccess access) async {
+    final changed = access != _networkAccess;
+    _networkAccess = access;
+    if (changed) _cellularOverrides.clear();
+
+    if (access == DownloadNetworkAccess.allowed) {
+      final taskIds = tasks
+          .where(
+            (task) =>
+                task.status == DownloadTaskStatus.paused &&
+                task.pauseReason == DownloadPauseReason.network,
+          )
+          .map((task) => task.taskId)
+          .toList();
+      for (final taskId in taskIds) {
+        await resume(taskId);
+      }
+      _pumpQueue();
+      return;
+    }
+
+    final taskIds = tasks
+        .where(
+          (task) =>
+              (task.status == DownloadTaskStatus.queued ||
+                  task.status == DownloadTaskStatus.downloading) &&
+              !_cellularOverrides.contains(task.taskId),
+        )
+        .map((task) => task.taskId)
+        .toList();
+    for (final taskId in taskIds) {
+      await pause(taskId, reason: DownloadPauseReason.network);
+    }
+  }
 
   Future<void> pauseAll() async {
     for (final task in tasks) {
@@ -502,7 +590,7 @@ class DownloadTaskManager {
       if (task.status == DownloadTaskStatus.queued ||
           task.status == DownloadTaskStatus.downloading) {
         _lifecyclePaused.add(task.taskId);
-        await pause(task.taskId);
+        await pause(task.taskId, reason: DownloadPauseReason.lifecycle);
       }
     }
   }
@@ -531,7 +619,10 @@ class DownloadTaskManager {
     final queued = tasks.where(
       (task) =>
           task.status == DownloadTaskStatus.queued &&
-          !_running.containsKey(task.taskId),
+          !_running.containsKey(task.taskId) &&
+          (_networkAccess == DownloadNetworkAccess.allowed ||
+              (_networkAccess == DownloadNetworkAccess.cellularBlocked &&
+                  _cellularOverrides.contains(task.taskId))),
     );
     for (final task in queued) {
       if (_running.length >= concurrency) break;
@@ -1024,6 +1115,14 @@ DownloadFailureReason? _failure(Object? value) {
   return DownloadFailureReason.values.firstWhere(
     (item) => item.name == value,
     orElse: () => throw const FormatException('未知下载失败原因'),
+  );
+}
+
+DownloadPauseReason? _pauseReason(Object? value) {
+  if (value == null) return null;
+  return DownloadPauseReason.values.firstWhere(
+    (item) => item.name == value,
+    orElse: () => throw const FormatException('未知下载暂停原因'),
   );
 }
 

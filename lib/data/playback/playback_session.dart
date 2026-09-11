@@ -71,6 +71,7 @@ class PlaybackSession {
     required http.Client client,
     CacheManager? cacheManager,
     CacheIndexStore? store,
+    bool offlineOnly = false,
     Duration timeout = const Duration(seconds: 15),
     void Function(PlaybackFallbackReason reason)? onCacheBypass,
   }) async {
@@ -114,6 +115,16 @@ class PlaybackSession {
             );
           }
         }
+      }
+
+      if (offlineOnly) {
+        return const PlaybackSessionPreparation(
+          session: null,
+          status: PlaybackStatus(
+            mode: PlaybackMode.direct,
+            reason: PlaybackFallbackReason.cacheUnavailable,
+          ),
+        );
       }
 
       final decision = await parser

@@ -4,12 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../shared/app_states.dart';
 import '../../data/search_history_store.dart';
+import '../../data/library_repository.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
 import '../../data/vod_source/vod_source_registry.dart';
 import '../../domain/video.dart';
 import '../../domain/vod_source.dart';
 import '../../shared/video_grid.dart';
+import '../../shared/video_card.dart';
 import '../detail/detail_page.dart';
 import './multi_source_search_controller.dart';
 import './search_launch_request.dart';
@@ -395,6 +397,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   Widget _body() {
+    final unreadUpdates = ref.watch(unreadFollowUpdatesByGlobalIdProvider);
     final state = controller!.state;
     if (state.keyword.isEmpty) {
       return _SearchIdleView(onSelect: _applyHistoryKeyword);
@@ -423,6 +426,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         child: VideoGrid(
           videos: activeState.items,
           onTap: _open,
+          overlayBuilder: (video) {
+            final added = unreadUpdates[video.globalId];
+            return added == null
+                ? null
+                : VideoCardOverlay(badgeLabel: '新增$added集');
+          },
           bottomPadding: activeState.loading ? 168 : 96,
         ),
       ),

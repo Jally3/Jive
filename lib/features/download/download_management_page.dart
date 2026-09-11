@@ -1,10 +1,16 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../shared/app_states.dart';
 import '../../data/download/download_providers.dart';
+import '../../data/download/download_network_policy.dart';
 import '../../data/download/download_task_manager.dart';
+import '../../data/offline_progress_repository.dart';
+import '../../data/history_repository.dart';
 import '../../domain/video.dart';
+import '../../domain/playback_selection.dart';
 import '../../shared/app_toast.dart';
 import '../cache/cache_management_page.dart';
 import '../player/player_page.dart';
@@ -297,9 +303,9 @@ class _DownloadManagementPageState
               if (i < tasks.length - 1)
                 Divider(
                   height: 1,
-                  indent: 24,
-                  endIndent: 16,
-                  color: context.appColors.divider,
+                  indent: 32,
+                  endIndent: 24,
+                  color: context.appColors.divider.withValues(alpha: 0.55),
                 ),
             ],
           ],
@@ -358,33 +364,16 @@ class _DownloadManagementPageState
     });
   }
 
-  /// 删除确认弹窗：返回是否确认，以及是否连带删除本地文件。
-  Future<({bool confirmed, bool deleteCache})> _confirmDelete({
+  /// 删除下载任务时始终一并删除对应的本地文件。
+  Future<bool> _confirmDelete({
     required String title,
     required String message,
-  }) async {
-    var deleteCache = false;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+  }) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
           title: Text(title),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(message),
-              CheckboxListTile(
-                value: deleteCache,
-                onChanged: (value) =>
-                    setDialogState(() => deleteCache = value ?? false),
-                title: Text('同时删除本地文件'),
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                dense: true,
-              ),
-            ],
-          ),
+          content: Text(message),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -396,21 +385,17 @@ class _DownloadManagementPageState
             ),
           ],
         ),
-      ),
-    );
-    return (confirmed: confirmed ?? false, deleteCache: deleteCache);
-  }
+      ) ??
+      false;
 
   Future<void> _handleBatchAction(String action) async {
     if (batchBusy || selectedTaskIds.isEmpty) return;
-    var deleteCache = false;
     if (action == 'delete') {
-      final result = await _confirmDelete(
-        title: '批量删除任务记录？',
-        message: '将删除 ${selectedTaskIds.length} 条任务记录。',
+      final confirmed = await _confirmDelete(
+        title: '批量删除下载？',
+        message: '将删除 ${selectedTaskIds.length} 个下载任务及其本地文件，此操作无法撤销。',
       );
-      if (!result.confirmed) return;
-      deleteCache = result.deleteCache;
+      if (!confirmed) return;
     }
     if (!mounted) return;
     setState(() => batchBusy = true);
@@ -432,13 +417,23 @@ class _DownloadManagementPageState
               await manager.pause(task.taskId);
             }
           case 'resume':
-            if (task.status == DownloadTaskStatus.paused ||
-                task.status == DownloadTaskStatus.failed) {
-              await manager.resume(task.taskId);
-            }
+            break;
           case 'delete':
-            await manager.removeTask(task.taskId, deleteCache: deleteCache);
+            await manager.removeTask(task.taskId);
+            await ref.read(offlineProgressRepositoryProvider).removeTask(task);
         }
+      }
+      if (action == 'resume') {
+        await _resumeTasksWithPolicy(
+          manager,
+          tasks
+              .where(
+                (task) =>
+                    task.status == DownloadTaskStatus.paused ||
+                    task.status == DownloadTaskStatus.failed,
+              )
+              .toList(),
+        );
       }
       if (mounted) {
         showAppToast(context, '批量操作已完成');
@@ -546,12 +541,16 @@ class _DownloadManagementPageState
       final tasks = ref
           .read(downloadTasksProvider)
           .maybeWhen(data: (value) => value, orElse: () => <DownloadTask>[]);
-      for (final task in tasks) {
-        if (task.status == DownloadTaskStatus.paused ||
-            task.status == DownloadTaskStatus.failed) {
-          await manager.resume(task.taskId);
-        }
-      }
+      await _resumeTasksWithPolicy(
+        manager,
+        tasks
+            .where(
+              (task) =>
+                  task.status == DownloadTaskStatus.paused ||
+                  task.status == DownloadTaskStatus.failed,
+            )
+            .toList(),
+      );
     } catch (_) {
       if (mounted) {
         showAppToast(context, '批量恢复失败，请重试');
@@ -578,6 +577,93 @@ class _DownloadManagementPageState
     }
   }
 
+  Future<void> _resumeTask(DownloadTask task) => _runTaskAction(
+    task,
+    (manager) async => _resumeTasksWithPolicy(manager, [task]),
+  );
+
+  Future<void> _resumeTasksWithPolicy(
+    DownloadTaskManager manager,
+    List<DownloadTask> tasks,
+  ) async {
+    final blocked = <DownloadTask>[];
+    var unavailable = false;
+    for (final task in tasks) {
+      final result = await manager.resume(task.taskId);
+      switch (result) {
+        case DownloadResumeResult.started:
+          break;
+        case DownloadResumeResult.blockedByCellular:
+          blocked.add(task);
+        case DownloadResumeResult.unavailable:
+          unavailable = true;
+      }
+    }
+    if (unavailable && mounted) {
+      showAppToast(context, '当前无网络，连接后将自动继续');
+    }
+    if (blocked.isEmpty || !mounted) return;
+
+    final allowAlways = await _confirmCellularResume(blocked);
+    if (allowAlways == null || !mounted) return;
+    if (allowAlways) {
+      await ref.read(allowCellularDownloadsProvider.notifier).setAllowed(true);
+    }
+    for (final task in blocked) {
+      await manager.resume(task.taskId, allowCellularOnce: true);
+    }
+  }
+
+  Future<bool?> _confirmCellularResume(List<DownloadTask> tasks) async {
+    var allowAlways = false;
+    final knownRemaining = tasks.every((task) => task.totalBytes > 0);
+    final remainingBytes = tasks.fold<int>(
+      0,
+      (sum, task) => sum + max(0, task.totalBytes - task.downloadedBytes),
+    );
+    final target = tasks.length == 1
+        ? '《${tasks.single.title}》${tasks.single.episodeName}'
+        : '${tasks.length} 个任务';
+    final estimate = knownRemaining
+        ? '，预计还需 ${_formatBytes(remainingBytes)}'
+        : '';
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('使用蜂窝网络继续下载？'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('$target$estimate，可能产生流量费用。'),
+              SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text('以后允许蜂窝网络下载'),
+                subtitle: allowAlways ? Text('其他等待 Wi-Fi 的任务也将继续') : null,
+                value: allowAlways,
+                onChanged: (value) =>
+                    setDialogState(() => allowAlways = value ?? false),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, allowAlways),
+              child: Text('继续下载'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _summary(List<DownloadTask> tasks) {
     final transferring = tasks
         .where(
@@ -595,6 +681,13 @@ class _DownloadManagementPageState
           (task) =>
               task.status == DownloadTaskStatus.paused ||
               task.status == DownloadTaskStatus.failed,
+        )
+        .length;
+    final waitingForNetwork = tasks
+        .where(
+          (task) =>
+              task.status == DownloadTaskStatus.paused &&
+              task.pauseReason == DownloadPauseReason.network,
         )
         .length;
     final downloadedBytes = tasks.fold<int>(
@@ -623,7 +716,9 @@ class _DownloadManagementPageState
                           ),
                           SizedBox(height: 2),
                           Text(
-                            '暂无进行中的下载',
+                            waitingForNetwork > 0
+                                ? '$waitingForNetwork 个任务等待网络'
+                                : '暂无进行中的下载',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -757,6 +852,14 @@ class _DownloadManagementPageState
             task.status == DownloadTaskStatus.queued);
     final hasKnownProgress =
         task.totalBytes > 0 || task.expectedResourceCount > 0;
+    final networkPaused =
+        task.status == DownloadTaskStatus.paused &&
+        task.pauseReason == DownloadPauseReason.network;
+    final networkAccess = ref.watch(downloadNetworkAccessProvider);
+    final networkWaitText =
+        networkAccess == DownloadNetworkAccess.cellularBlocked
+        ? '等待 Wi-Fi'
+        : '等待网络';
     final progress = task.status == DownloadTaskStatus.completed
         ? 1.0
         : task.totalBytes > 0
@@ -770,12 +873,37 @@ class _DownloadManagementPageState
         ? null
         : 0.0;
     final isCompleted = task.status == DownloadTaskStatus.completed;
+    var watched = ref
+        .watch(offlineProgressProvider)
+        .value?[offlineProgressKeyForTask(task)];
+    if (watched == null) {
+      final latest = (ref.watch(watchHistoryProvider).value ?? const [])
+          .where(
+            (record) =>
+                record.video.sourceId == task.sourceId &&
+                record.video.sourceVideoId == task.sourceVideoId &&
+                record.playbackLineIdentity == task.playbackLineIdentity &&
+                record.episodeIdentity == task.episodeIdentity,
+          )
+          .firstOrNull;
+      if (latest != null) {
+        watched = OfflineEpisodeProgress(
+          key: offlineProgressKeyForTask(task),
+          positionMs: latest.positionMs,
+          durationMs: latest.durationMs,
+          updatedAt: latest.updatedAt,
+          completed: latest.completed,
+        );
+      }
+    }
+    final watchedEnough = watched != null && watched.progress >= 2 / 3;
     final showProgress =
         hasKnownProgress &&
         switch (task.status) {
           DownloadTaskStatus.downloading ||
           DownloadTaskStatus.queued ||
           DownloadTaskStatus.paused => true,
+          DownloadTaskStatus.completed => watched != null,
           _ => false,
         };
     final displayedBytes = isCompleted && task.totalBytes > 0
@@ -785,18 +913,20 @@ class _DownloadManagementPageState
     final progressText = progress == null
         ? null
         : '${(progress * 100).round()}%';
-    final metaText = switch (task.status) {
-      DownloadTaskStatus.completed => sizeText,
-      DownloadTaskStatus.failed =>
-        '${downloadFailureText(task.error)} · $sizeText',
-      DownloadTaskStatus.cancelled => '已取消 · $sizeText',
-      DownloadTaskStatus.downloading when _isFinalizing(task) =>
-        '整理中 · $sizeText',
-      DownloadTaskStatus.downloading when !hasKnownProgress =>
-        '正在解析 · $sizeText',
-      DownloadTaskStatus.queued when !hasKnownProgress => '等待开始 · $sizeText',
-      DownloadTaskStatus.paused when !hasKnownProgress => '等待继续 · $sizeText',
-      _ => '$progressText · $sizeText',
+    final statusText = switch (task.status) {
+      DownloadTaskStatus.completed when watched?.completed == true => '已看完',
+      DownloadTaskStatus.completed when watched != null =>
+        '看到 ${_formatDuration(watched.positionMs)} / ${_formatDuration(watched.durationMs)}',
+      DownloadTaskStatus.completed => '已下载',
+      DownloadTaskStatus.failed => downloadFailureText(task.error),
+      DownloadTaskStatus.cancelled => '已取消',
+      DownloadTaskStatus.downloading when _isFinalizing(task) => '整理中',
+      DownloadTaskStatus.downloading when !hasKnownProgress => '正在解析',
+      DownloadTaskStatus.queued when !hasKnownProgress => '等待开始',
+      DownloadTaskStatus.paused when networkPaused =>
+        '$networkWaitText${progressText == null ? '' : ' · $progressText'}',
+      DownloadTaskStatus.paused when !hasKnownProgress => '等待继续',
+      _ => progressText ?? '',
     };
     final showSpeed = switch (task.status) {
       DownloadTaskStatus.downloading || DownloadTaskStatus.queued => true,
@@ -811,10 +941,7 @@ class _DownloadManagementPageState
               (manager) => manager.pause(task.taskId, waitUntilPaused: true),
             ),
             DownloadTaskStatus.paused ||
-            DownloadTaskStatus.failed => () => _runTaskAction(
-              task,
-              (manager) => manager.resume(task.taskId),
-            ),
+            DownloadTaskStatus.failed => () => _resumeTask(task),
             DownloadTaskStatus.completed => () => _playTask(context, ref, task),
             DownloadTaskStatus.cancelled => null,
           };
@@ -844,17 +971,25 @@ class _DownloadManagementPageState
           visualDensity: VisualDensity.compact,
           constraints: BoxConstraints.tightFor(width: 36, height: 32),
           padding: EdgeInsets.zero,
-          tooltip: task.status == DownloadTaskStatus.failed ? '重试' : '继续',
+          tooltip: task.status == DownloadTaskStatus.failed
+              ? '重试'
+              : networkPaused
+              ? '$networkWaitText，点击继续'
+              : '继续',
           onPressed: primaryAction,
           icon: Icon(Icons.play_arrow, size: 24),
         ),
         DownloadTaskStatus.completed => IconButton(
           visualDensity: VisualDensity.compact,
-          constraints: BoxConstraints.tightFor(width: 36, height: 32),
+          constraints: BoxConstraints.tightFor(width: 36, height: 36),
           padding: EdgeInsets.zero,
           tooltip: '播放',
           onPressed: primaryAction,
-          icon: Icon(Icons.play_circle_outline, size: 24),
+          style: IconButton.styleFrom(
+            backgroundColor: context.appColors.elevated,
+            foregroundColor: context.appColors.text,
+          ),
+          icon: Icon(Icons.play_arrow, size: 22),
         ),
         DownloadTaskStatus.cancelled => null,
       };
@@ -893,6 +1028,9 @@ class _DownloadManagementPageState
                       style: TextStyle(
                         fontSize: nested ? 15 : 16,
                         fontWeight: FontWeight.w600,
+                        color: watchedEnough
+                            ? context.appColors.secondary
+                            : context.appColors.text,
                       ),
                     ),
                   ),
@@ -900,23 +1038,25 @@ class _DownloadManagementPageState
                 ],
               ),
               if (showProgress) ...[
-                SizedBox(height: nested ? 2 : 8),
+                SizedBox(height: 5),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 4,
+                    value: watched?.progress ?? progress,
+                    minHeight: 3,
                     backgroundColor: context.appColors.divider,
-                    color: context.appColors.accent,
+                    color: watchedEnough
+                        ? context.appColors.secondary
+                        : context.appColors.accent,
                   ),
                 ),
               ],
-              SizedBox(height: nested ? 3 : 8),
+              SizedBox(height: 4),
               Row(
                 children: [
                   Expanded(
                     child: Text(
-                      metaText,
+                      statusText,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -937,6 +1077,14 @@ class _DownloadManagementPageState
                       ),
                     ),
                   ],
+                  SizedBox(width: 12),
+                  Text(
+                    sizeText,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: context.appColors.secondary,
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -952,32 +1100,96 @@ class _DownloadManagementPageState
     DownloadTask task,
   ) async {
     final manager = await _manager(ref);
-    final selection = await manager.selectionForTask(task);
+    final tasks =
+        manager.tasks
+            .where(
+              (item) =>
+                  item.status == DownloadTaskStatus.completed &&
+                  item.sourceId == task.sourceId &&
+                  item.sourceVideoId == task.sourceVideoId &&
+                  item.playbackLineIdentity == task.playbackLineIdentity,
+            )
+            .toList()
+          ..sort((a, b) {
+            final rank = _episodeRank(a).compareTo(_episodeRank(b));
+            if (rank != 0) return rank;
+            return a.createdAtMs.compareTo(b.createdAtMs);
+          });
+    final restored = await Future.wait(tasks.map(manager.selectionForTask));
+    final selectionsByIdentity = <String, PlaybackSelection>{};
+    for (final item in restored.whereType<PlaybackSelection>()) {
+      if (item.hasStableIdentity) {
+        selectionsByIdentity.putIfAbsent(item.episodeIdentity, () => item);
+      }
+    }
+    final selections = selectionsByIdentity.values.toList();
+    final selection = selections
+        .where((item) => item.episodeIdentity == task.episodeIdentity)
+        .firstOrNull;
     if (!context.mounted) return;
     if (selection == null || !selection.hasStableIdentity) {
       showAppToast(context, '无法恢复该下载的播放信息，请重新下载');
       return;
     }
     final episode = selection.episode;
+    final episodes = selections.map((item) => item.episode).toList();
+    final progress = ref.read(offlineProgressProvider).value ?? const {};
+    final latestHistory = ref.read(watchHistoryProvider).value ?? const [];
+    final resumePositions = <String, Duration>{};
+    for (final item in selections) {
+      final record =
+          progress[offlineProgressKey(
+            sourceId: item.sourceId,
+            sourceVideoId: item.sourceVideoId,
+            playbackLineIdentity: item.playbackLineIdentity,
+            episodeIdentity: item.episodeIdentity,
+          )];
+      final history = latestHistory
+          .where(
+            (entry) =>
+                entry.video.sourceId == item.sourceId &&
+                entry.video.sourceVideoId == item.sourceVideoId &&
+                entry.playbackLineIdentity == item.playbackLineIdentity &&
+                entry.episodeIdentity == item.episodeIdentity,
+          )
+          .firstOrNull;
+      final completed = record?.completed ?? history?.completed ?? false;
+      final positionMs = record?.positionMs ?? history?.positionMs;
+      if (positionMs != null && !completed) {
+        resumePositions[item.episodeIdentity] = Duration(
+          milliseconds: positionMs,
+        );
+      }
+    }
     final video = Video(
       id: task.sourceVideoId,
       title: task.title,
       sourceId: task.sourceId,
       sourceVideoId: task.sourceVideoId,
-      episodes: [episode],
+      episodes: episodes,
       playbackLines: [
         PlaybackLine(
           id: task.playbackLineIdentity,
           name: task.playbackLineIdentity,
           identity: task.playbackLineIdentity,
-          episodes: [episode],
+          episodes: episodes,
         ),
       ],
     );
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) =>
-            PlayerPage(video: video, episode: episode, selection: selection),
+        builder: (_) => PlayerPage(
+          video: video,
+          episode: episode,
+          selection: selection,
+          resumePosition:
+              resumePositions[selection.episodeIdentity] ?? Duration.zero,
+          episodeSelections: {
+            for (final item in selections) item.episodeIdentity: item,
+          },
+          episodeResumePositions: resumePositions,
+          offlineOnly: true,
+        ),
       ),
     );
   }
@@ -991,6 +1203,16 @@ class _DownloadManagementPageState
       task.completedResourceCount >= task.expectedResourceCount;
 
   static String _formatSpeed(int bytes) => '${_formatBytes(bytes)}/s';
+
+  static String _formatDuration(int milliseconds) {
+    final duration = Duration(milliseconds: milliseconds);
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0
+        ? '$hours:$minutes:$seconds'
+        : '${duration.inMinutes}:$seconds';
+  }
 
   static String _formatBytes(int bytes) {
     if (bytes <= 0) return '0 B';

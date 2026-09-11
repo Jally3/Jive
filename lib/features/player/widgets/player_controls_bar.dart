@@ -314,6 +314,7 @@ class PlayerControlsBar extends StatelessWidget {
                                     child: PopupMenuButton<double>(
                                       key: speedMenuKey,
                                       tooltip: '播放速度',
+                                      color: AppColors.elevated,
                                       initialValue: playbackSpeed,
                                       constraints: BoxConstraints(
                                         minWidth: 112,
@@ -325,31 +326,66 @@ class PlayerControlsBar extends StatelessWidget {
                                       itemBuilder: (_) => const [
                                         PopupMenuItem(
                                           value: 0.5,
-                                          child: Text('0.5×'),
+                                          child: Text(
+                                            '0.5×',
+                                            style: TextStyle(
+                                              color: AppColors.text,
+                                            ),
+                                          ),
                                         ),
                                         PopupMenuItem(
                                           value: 0.75,
-                                          child: Text('0.75×'),
+                                          child: Text(
+                                            '0.75×',
+                                            style: TextStyle(
+                                              color: AppColors.text,
+                                            ),
+                                          ),
                                         ),
                                         PopupMenuItem(
                                           value: 1.0,
-                                          child: Text('正常'),
+                                          child: Text(
+                                            '正常',
+                                            style: TextStyle(
+                                              color: AppColors.text,
+                                            ),
+                                          ),
                                         ),
                                         PopupMenuItem(
                                           value: 1.25,
-                                          child: Text('1.25×'),
+                                          child: Text(
+                                            '1.25×',
+                                            style: TextStyle(
+                                              color: AppColors.text,
+                                            ),
+                                          ),
                                         ),
                                         PopupMenuItem(
                                           value: 1.5,
-                                          child: Text('1.5×'),
+                                          child: Text(
+                                            '1.5×',
+                                            style: TextStyle(
+                                              color: AppColors.text,
+                                            ),
+                                          ),
                                         ),
                                         PopupMenuItem(
                                           value: 2.0,
-                                          child: Text('2×'),
+                                          child: Text(
+                                            '2×',
+                                            style: TextStyle(
+                                              color: AppColors.text,
+                                            ),
+                                          ),
                                         ),
                                         PopupMenuItem(
                                           value: 3.0,
-                                          child: Text('3×'),
+                                          child: Text(
+                                            '3×',
+                                            style: TextStyle(
+                                              color: AppColors.text,
+                                            ),
+                                          ),
                                         ),
                                       ],
                                       child: Padding(
@@ -367,6 +403,7 @@ class PlayerControlsBar extends StatelessWidget {
                                               style: const TextStyle(
                                                 fontSize: 12,
                                                 fontWeight: FontWeight.w700,
+                                                color: Colors.white,
                                               ),
                                             ),
                                           ],
@@ -382,6 +419,7 @@ class PlayerControlsBar extends StatelessWidget {
                                       child: PopupMenuButton<Episode>(
                                         key: episodeMenuKey,
                                         tooltip: '选集',
+                                        color: AppColors.elevated,
                                         constraints: const BoxConstraints(
                                           maxHeight: 320,
                                           minWidth: 128,
@@ -404,7 +442,7 @@ class PlayerControlsBar extends StatelessWidget {
                                                     color:
                                                         isCurrentEpisode(item)
                                                         ? AppColors.accent
-                                                        : null,
+                                                        : AppColors.text,
                                                   ),
                                                 ),
                                               ),
@@ -420,6 +458,7 @@ class PlayerControlsBar extends StatelessWidget {
                                             style: TextStyle(
                                               fontSize: 12,
                                               fontWeight: FontWeight.w700,
+                                              color: Colors.white,
                                             ),
                                           ),
                                         ),

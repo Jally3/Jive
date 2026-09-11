@@ -1,13 +1,16 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jive/app/theme.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/playback/prefetch_policy.dart';
 import 'package:jive/data/playback/skip_policy.dart';
 import 'package:jive/data/history_repository.dart';
+import 'package:jive/data/library_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
@@ -87,11 +90,20 @@ class _FakeDetailRepository implements VideoRepository {
     if (failSources.contains(source.id)) {
       throw const VideoDataException('请求失败');
     }
+    final episodes = _episodes(activeEpisodes);
     return Video(
       id: ref.sourceVideoId,
       title: '测试剧集',
       sourceId: source.id,
-      episodes: _episodes(activeEpisodes),
+      episodes: episodes,
+      playbackLines: [
+        PlaybackLine(
+          id: 'line',
+          name: 'm3u8',
+          identity: 'line',
+          episodes: episodes,
+        ),
+      ],
     );
   }
 
@@ -106,6 +118,7 @@ ProviderContainer _container(
   _FakeDetailRepository repository, {
   bool delayRegistry = false,
   bool isTv = false,
+  List<DownloadTask> downloadTasks = const [],
 }) => ProviderContainer(
   overrides: [
     videoRepositoryProvider.overrideWithValue(repository),
@@ -116,6 +129,7 @@ ProviderContainer _container(
       return VodSourceRegistry(_sources, const {});
     }),
     isTvProvider.overrideWith((ref) async => isTv),
+    downloadTasksProvider.overrideWith((ref) => Stream.value(downloadTasks)),
   ],
 );
 
@@ -306,6 +320,96 @@ void main() {
     expect(playButton.focusNode?.hasFocus, isFalse);
   });
 
+  testWidgets('followable content lets the user choose follow or favorite', (
+    tester,
+  ) async {
+    final container = _container(_FakeDetailRepository());
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+    await tester.pump();
+    final relationshipButton = find.byKey(
+      const ValueKey('detail-relationship-button'),
+    );
+
+    await tester.tap(relationshipButton);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('app-anchored-menu-surface')))
+          .width,
+      tester.getSize(relationshipButton).width,
+    );
+    expect(find.text('追更并收藏'), findsOneWidget);
+    expect(find.text('有新集时提醒'), findsOneWidget);
+    expect(find.text('仅收藏'), findsOneWidget);
+    expect(find.text('保存但不提醒'), findsOneWidget);
+    expect(find.text('保存这部内容'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('detail-follow-menu-favorite')));
+    await tester.pumpAndSettle();
+    var record = container.read(favoriteControllerProvider).requireValue.single;
+    expect(record.isFollowing, isFalse);
+    expect(
+      find.descendant(of: relationshipButton, matching: find.text('已收藏')),
+      findsOneWidget,
+    );
+
+    await tester.tap(relationshipButton);
+    await tester.pumpAndSettle();
+    expect(find.text('开启追更'), findsOneWidget);
+    expect(find.text('取消收藏'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('detail-follow-menu-follow')));
+    await tester.pumpAndSettle();
+    record = container.read(favoriteControllerProvider).requireValue.single;
+    expect(record.isFollowing, isTrue);
+    expect(
+      find.descendant(of: relationshipButton, matching: find.text('已追更')),
+      findsOneWidget,
+    );
+
+    await tester.tap(relationshipButton);
+    await tester.pumpAndSettle();
+    expect(find.text('取消追更'), findsOneWidget);
+    expect(find.text('停止新集提醒，保留收藏'), findsOneWidget);
+    expect(find.text('取消追更并移除'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('detail-follow-menu-stop')));
+    await tester.pumpAndSettle();
+    record = container.read(favoriteControllerProvider).requireValue.single;
+    expect(record.isFollowing, isFalse);
+    expect(record.isFavorite, isTrue);
+    expect(find.text('已取消追更，收藏仍保留'), findsOneWidget);
+  });
+
+  testWidgets('single-item content only offers favorite', (tester) async {
+    final container = _container(_FakeDetailRepository(activeEpisodes: 1));
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+    await tester.pump();
+    final relationshipButton = find.byKey(
+      const ValueKey('detail-relationship-button'),
+    );
+
+    expect(
+      find.descendant(of: relationshipButton, matching: find.text('收藏')),
+      findsOneWidget,
+    );
+    expect(find.text('追更'), findsNothing);
+    await tester.tap(relationshipButton);
+    await tester.pumpAndSettle();
+
+    final record = container
+        .read(favoriteControllerProvider)
+        .requireValue
+        .single;
+    expect(record.isFavorite, isTrue);
+    expect(record.isFollowing, isFalse);
+    expect(find.text('保存这部内容'), findsNothing);
+  });
+
   testWidgets('skip settings persist for the current video', (tester) async {
     final container = _container(_FakeDetailRepository());
     await container.read(vodSourceRegistryProvider.future);
@@ -313,18 +417,35 @@ void main() {
     await _pumpDetailPage(tester, container);
     await tester.pump();
     await tester.pump();
-    expect(find.text('跳过片头'), findsOneWidget);
-    expect(find.text('跳过片尾'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const ValueKey('skip-intro-90')));
-    await tester.tap(find.byKey(const ValueKey('skip-intro-90')));
-    await tester.pump();
-    await tester.pump();
-    expect(
-      tester
-          .widget<ChoiceChip>(find.byKey(const ValueKey('skip-intro-90')))
-          .selected,
-      isTrue,
+    expect(find.byKey(const ValueKey('skip-intro-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('skip-outro-button')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('skip-intro-button')));
+    await tester.tap(find.byKey(const ValueKey('skip-intro-button')));
+    await tester.pumpAndSettle();
+    final menuSurface = find.byKey(const ValueKey('app-anchored-menu-surface'));
+    final menuTitle = find.text('跳过片头');
+    final firstRadio = find.descendant(
+      of: find.byKey(const ValueKey('skip-intro-0')),
+      matching: find.byType(Radio<int>),
     );
+    expect(
+      tester.getSize(menuSurface).width,
+      math.min(
+        tester.getSize(find.byKey(const ValueKey('skip-intro-button'))).width,
+        280,
+      ),
+    );
+    expect(
+      tester.getTopLeft(menuTitle).dy - tester.getTopLeft(menuSurface).dy,
+      lessThanOrEqualTo(18),
+    );
+    expect(
+      tester.getTopLeft(firstRadio).dx,
+      closeTo(tester.getTopLeft(menuTitle).dx, 0.1),
+    );
+    await tester.tap(find.byKey(const ValueKey('skip-intro-90')));
+    await tester.pumpAndSettle();
+    expect(find.text('90秒'), findsOneWidget);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString(skipPolicyStoreKey), contains(_entryVideo.globalId));
     expect(prefs.getString(skipPolicyStoreKey), contains('"introSeconds":90'));
@@ -384,7 +505,7 @@ void main() {
     expect(find.text('暴风 正片'), findsOneWidget);
   });
 
-  testWidgets('download button label stays on one line on narrow screens', (
+  testWidgets('download action moves to app bar and sheet exposes management', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 640);
@@ -400,10 +521,83 @@ void main() {
     await _pumpDetailPage(tester, container);
     await tester.pump();
 
-    final label = tester.widget<Text>(find.text('下载'));
-    expect(label.maxLines, 1);
-    expect(label.softWrap, isFalse);
+    expect(find.byTooltip('下载'), findsOneWidget);
+    expect(find.byTooltip('下载管理'), findsNothing);
+    expect(find.text('下载'), findsNothing);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('detail-download-button')))
+          .width,
+      48,
+    );
+    expect(
+      tester
+          .getTopLeft(find.byKey(const ValueKey('detail-download-button')))
+          .dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('detail-poster'))).dy,
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('detail-download-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('下载管理'), findsOneWidget);
+    expect(find.text('确认下载（1 集）'), findsOneWidget);
+    final managementButton = find.byKey(
+      const ValueKey('download-management-button'),
+    );
+    final confirmButton = find.byKey(const ValueKey('confirm-download-button'));
+    expect(tester.getSize(managementButton).height, 48);
+    expect(tester.getSize(confirmButton).height, 48);
+    final managementIcon = find.descendant(
+      of: managementButton,
+      matching: find.byIcon(Icons.download_done_outlined),
+    );
+    expect(
+      IconTheme.of(tester.element(managementIcon)).color,
+      tester.element(managementButton).appColors.secondary,
+    );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('downloaded episode uses a rounded grey check and shows toast', (
+    tester,
+  ) async {
+    const task = DownloadTask(
+      taskId: 'existing',
+      sourceId: 'storm',
+      sourceVideoId: '1',
+      title: '测试剧集',
+      playbackLineIdentity: 'previous-line',
+      episodeIdentity: 'previous-identity',
+      episodeId: '1',
+      episodeName: '第1集',
+      status: DownloadTaskStatus.queued,
+    );
+    final container = _container(
+      _FakeDetailRepository(),
+      downloadTasks: const [task],
+    );
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('detail-download-button')));
+    await tester.pumpAndSettle();
+    final tile = find.byKey(const ValueKey('download-episode-0'));
+    final checkbox = tester.widget<Checkbox>(
+      find.descendant(of: tile, matching: find.byType(Checkbox)),
+    );
+    expect(checkbox.value, isTrue);
+    expect(checkbox.fillColor, isNotNull);
+    final shape = checkbox.shape! as RoundedRectangleBorder;
+    expect((shape.borderRadius as BorderRadius).topLeft.x, 6);
+    expect(find.text('确认下载（0 集）'), findsOneWidget);
+
+    await tester.tap(tile);
+    await tester.pump();
+    expect(find.text('已经添加到下载'), findsOneWidget);
   });
 
   testWidgets('error view can finish switching to a detected source', (

@@ -8,10 +8,12 @@ import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/features/search/search_launch_request.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
+import 'package:jive/data/library_repository.dart';
 import 'package:jive/data/theme_mode_preferences.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
+import 'package:jive/domain/library.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -242,6 +244,50 @@ void main() {
     await tester.pump();
     expect(find.text('完整简介'), findsOneWidget);
     expect(find.text('第2集'), findsOneWidget);
+  });
+
+  testWidgets('bottom navigation uses a dot for unread follow updates', (
+    tester,
+  ) async {
+    final now = DateTime.utc(2026, 9, 9);
+    final record = FavoriteRecord(
+      video: const Video(
+        id: '1',
+        title: '追更剧集',
+        sourceId: 'storm',
+        category: '连续剧',
+      ),
+      createdAt: now,
+      updatedAt: now,
+      isFollowing: true,
+      followedAt: now,
+      acknowledgedEpisodeCount: 1,
+      remoteEpisodeCount: 2,
+      latestEpisodeLabel: '第2集',
+      unreadAddedCount: 1,
+    );
+    SharedPreferences.setMockInitialValues({
+      LibraryRepository.libraryKey: jsonEncode([record.toJson()]),
+    });
+    final container = ProviderContainer(overrides: _testOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+    await container.read(favoriteControllerProvider.future);
+    await tester.pump();
+
+    final dot = find.byKey(const ValueKey('bottom-nav-update-dot'));
+    expect(dot, findsOneWidget);
+    expect(tester.getSize(dot), const Size.square(8));
+    expect(find.byKey(const ValueKey('video-card-badge')), findsOneWidget);
+    expect(find.text('新增1集'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('bottom-nav-item-我的')),
+        matching: find.text('1'),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('switching the global source rebuilds and reloads home', (

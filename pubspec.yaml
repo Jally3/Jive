@@ -37,11 +37,6 @@ dependencies:
   package_info_plus: ^9.0.1
   url_launcher: ^6.3.2
 
-# screen_brightness_ios 2.1.4+ uses Flutter 3.38 scene APIs
-# (registrar.addSceneDelegate) and fails to compile on Flutter 3.35.
-dependency_overrides:
-  screen_brightness_ios: 2.1.2
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -65,7 +60,6 @@ flutter:
   uses-material-design: true
 
   assets:
-    - config/vod_sources.json
     - assets/branding/splash_logo.png
     - assets/tmdb/v1/
 

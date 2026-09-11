@@ -26,10 +26,15 @@ doc/
 │   └── TV_ADAPTATION_PLAN.md                 # 最小 TV 适配需求方案（feature/tv-adaptation 分支）
 ├── splash/
 │   └── SPLASH_PLAN.md                        # 闪屏页开发技术书（Logo + Jive）
+<<<<<<< HEAD
 ├── tmdb/
 │   ├── TMDB_CURATED_FEEDS_REQUIREMENTS.md    # TMDB 自建榜单与当前 VOD 源精准匹配需求
 │   ├── TMDB_CURATED_STREAMING_GRID_DEVELOPMENT_PLAN.md # TMDB 榜单固定卡位、流式 VOD 匹配与来源切换开发计划
 │   └── TMDB_CATALOG_BACKEND_API_REQUIREMENTS.md # TMDB Catalog 后端需求与接口契约
+=======
+├── follow/
+│   └── FOLLOW_UPDATES_REQUIREMENTS.md         # 追更、内容更新提醒与相关交互需求
+>>>>>>> codex/jive-dev
 ├── vod-source/
 │   └── SYNCNEXT_SOURCE_INTEGRATION_PLAN.md   # Syncnext / AGE 接入方案
 └── archive/
@@ -60,9 +65,13 @@ doc/
 | [`cast/CAST_PLAN.md`](cast/CAST_PLAN.md) | 待启动 | 投屏功能方案：Cast/DLNA/AirPlay 路线对比与分期计划；待确认电视型号与广告过滤取舍后进入 P0 验证 |
 | [`tv/TV_ADAPTATION_PLAN.md`](tv/TV_ADAPTATION_PLAN.md) | 开发中 | 最小 TV 适配需求方案：FR-1~FR-4 已实现（`feature/tv-adaptation` 分支），待真机实测 |
 | [`splash/SPLASH_PLAN.md`](splash/SPLASH_PLAN.md) | 开发中 | 闪屏页：原生消白闪 + Flutter 展示 Logo 与「Jive」词标，源就绪后进首页 |
+<<<<<<< HEAD
 | [`tmdb/TMDB_CURATED_FEEDS_REQUIREMENTS.md`](tmdb/TMDB_CURATED_FEEDS_REQUIREMENTS.md) | 客户端核心已实现 | TMDB 最新/最热/高分榜单、单批请求预算与当前 VOD 源严格匹配；待配置定时发布环境及署名 |
 | [`tmdb/TMDB_CURATED_STREAMING_GRID_DEVELOPMENT_PLAN.md`](tmdb/TMDB_CURATED_STREAMING_GRID_DEVELOPMENT_PLAN.md) | 待实施 | Catalog 固定排名卡片、VOD 搜索流式更新、共享池命中、来源切换与默认 VOD 分类隔离方案 |
 | [`tmdb/TMDB_CATALOG_BACKEND_API_REQUIREMENTS.md`](tmdb/TMDB_CATALOG_BACKEND_API_REQUIREMENTS.md) | 待后端评审 | TMDB Catalog 服务范围、榜单口径、API 契约、缓存降级、海报、安全、部署和验收标准 |
+=======
+| [`follow/FOLLOW_UPDATES_REQUIREMENTS.md`](follow/FOLLOW_UPDATES_REQUIREMENTS.md) | 开发中 | 收藏兼容升级、追更状态、前台更新检查、提醒入口与相关交互优化 |
+>>>>>>> codex/jive-dev
 
 ## 归档（`archive/`，功能已实现，仅作历史记录与验收依据）
 

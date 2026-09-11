@@ -9,6 +9,7 @@ import '../shared/app_states.dart';
 import '../shared/app_update_dialog.dart';
 import '../shared/double_back_exit_scope.dart';
 import '../data/download/download_providers.dart';
+import '../data/library_repository.dart';
 import '../data/theme_mode_preferences.dart';
 import '../data/update/app_update_service.dart';
 import '../data/vod_source/vod_source_preferences.dart';
@@ -115,13 +116,15 @@ class _DownloadLifecycleState extends ConsumerState<_DownloadLifecycle>
     final manager = ref
         .read(downloadManagerProvider)
         .maybeWhen(data: (value) => value, orElse: () => null);
-    if (manager == null) return;
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      unawaited(manager.pauseForBackground());
+      if (manager != null) unawaited(manager.pauseForBackground());
     } else if (state == AppLifecycleState.resumed) {
-      unawaited(manager.resumeFromForeground());
+      if (manager != null) unawaited(manager.resumeFromForeground());
+      unawaited(
+        ref.read(favoriteControllerProvider.notifier).checkForUpdates(),
+      );
     }
   }
 
@@ -166,6 +169,9 @@ class _AppShellState extends ConsumerState<AppShell> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_checkForAppUpdate());
+      unawaited(
+        ref.read(favoriteControllerProvider.notifier).checkForUpdates(),
+      );
     });
   }
 
@@ -222,7 +228,10 @@ class _AppShellState extends ConsumerState<AppShell> {
         index: index,
         children: List.generate(
           3,
-          (value) => pages[value] ?? SizedBox.shrink(),
+          (value) => TickerMode(
+            enabled: index == value,
+            child: pages[value] ?? const SizedBox.shrink(),
+          ),
         ),
       ),
       bottomNavigationBar: SafeArea(
@@ -255,7 +264,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 }
 
-class _FloatingNavBar extends StatelessWidget {
+class _FloatingNavBar extends ConsumerWidget {
   const _FloatingNavBar({required this.index, required this.onSelect});
 
   final int index;
@@ -268,7 +277,7 @@ class _FloatingNavBar extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isTablet = MediaQuery.sizeOf(context).shortestSide >= 600;
     final height = isTablet ? 72.0 : 60.0;
     final radius = height / 2;
@@ -319,6 +328,9 @@ class _FloatingNavBar extends StatelessWidget {
                       label: _items[i].$3,
                       selected: index == i,
                       isTablet: isTablet,
+                      showUpdateDot:
+                          i == 2 &&
+                          ref.watch(unreadFollowUpdateCountProvider) > 0,
                       onTap: () => onSelect(i),
                     ),
                   ),
@@ -338,6 +350,7 @@ class _NavItem extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.isTablet,
+    required this.showUpdateDot,
     required this.onTap,
   });
 
@@ -346,6 +359,7 @@ class _NavItem extends StatelessWidget {
   final String label;
   final bool selected;
   final bool isTablet;
+  final bool showUpdateDot;
   final VoidCallback onTap;
 
   @override
@@ -354,43 +368,70 @@ class _NavItem extends StatelessWidget {
     final color = selected
         ? context.appColors.accentForeground
         : context.appColors.secondary;
-    return InkWell(
-      borderRadius: BorderRadius.circular(isTablet ? 30 : 32),
-      onTap: onTap,
-      child: AnimatedContainer(
-        key: ValueKey('bottom-nav-item-$label'),
-        duration: Duration(milliseconds: 180),
-        margin: isTablet
-            ? EdgeInsets.symmetric(horizontal: 8, vertical: 6)
-            : EdgeInsets.symmetric(horizontal: 5, vertical: 5),
-        decoration: BoxDecoration(
-          color: selected
-              ? context.appColors.accent.withValues(alpha: isDark ? 0.18 : 0.12)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(30),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              selected ? selectedIcon : icon,
-              color: color,
-              size: isTablet ? 26 : 24,
-            ),
-            SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: isTablet ? 13 : 12,
-                color: color,
-                fontWeight: selected
-                    ? FontWeight.w600
-                    : isTablet
-                    ? FontWeight.w500
-                    : FontWeight.w400,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: showUpdateDot ? '$label，有追更更新' : label,
+      excludeSemantics: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(isTablet ? 30 : 32),
+        onTap: onTap,
+        child: AnimatedContainer(
+          key: ValueKey('bottom-nav-item-$label'),
+          duration: Duration(milliseconds: 180),
+          margin: isTablet
+              ? EdgeInsets.symmetric(horizontal: 8, vertical: 6)
+              : EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+          decoration: BoxDecoration(
+            color: selected
+                ? context.appColors.accent.withValues(
+                    alpha: isDark ? 0.18 : 0.12,
+                  )
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(30),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    selected ? selectedIcon : icon,
+                    color: color,
+                    size: isTablet ? 26 : 24,
+                  ),
+                  if (showUpdateDot)
+                    Positioned(
+                      right: -5,
+                      top: -3,
+                      child: Container(
+                        key: const ValueKey('bottom-nav-update-dot'),
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Colors.redAccent,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
               ),
-            ),
-          ],
+              SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: isTablet ? 13 : 12,
+                  color: color,
+                  fontWeight: selected
+                      ? FontWeight.w600
+                      : isTablet
+                      ? FontWeight.w500
+                      : FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

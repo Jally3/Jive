@@ -13,6 +13,7 @@ class VideoGrid extends StatelessWidget {
     this.footer,
     this.headerSlivers = const [],
     this.physics,
+    this.overlayBuilder,
   });
   final List<Video> videos;
   final ValueChanged<Video> onTap;
@@ -22,6 +23,7 @@ class VideoGrid extends StatelessWidget {
   final Widget? footer;
   final List<Widget> headerSlivers;
   final ScrollPhysics? physics;
+  final VideoCardOverlay? Function(Video video)? overlayBuilder;
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
@@ -48,6 +50,7 @@ class VideoGrid extends StatelessWidget {
               (context, index) => VideoCard(
                 video: videos[index],
                 onTap: () => onTap(videos[index]),
+                overlay: overlayBuilder?.call(videos[index]),
               ),
               childCount: videos.length,
             ),

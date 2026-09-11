@@ -6,22 +6,35 @@ void main() {
     final update = AppUpdateInfo.tryParse({
       'latestVersionName': '1.0.14',
       'apkUrl': 'https://download.example.com/jive.apk',
+      'updatePromptEnabled': false,
       'releaseNotes': [' Fix playback ', '', 42, 'TV controls'],
     });
 
     expect(update, isNotNull);
     expect(update!.versionName, '1.0.14');
     expect(update.apkUrl.host, 'download.example.com');
+    expect(update.updatePromptEnabled, isFalse);
     expect(update.releaseNotes, ['Fix playback', 'TV controls']);
   });
 
-  test('accepts the legacy versionName key', () {
+  test('accepts the legacy versionName key and defaults prompt to enabled', () {
     final update = AppUpdateInfo.tryParse({
       'versionName': '1.0.15',
       'apkUrl': 'https://download.example.com/jive.apk',
     });
 
     expect(update?.versionName, '1.0.15');
+    expect(update?.updatePromptEnabled, isTrue);
+  });
+
+  test('defaults a non-boolean prompt flag to enabled', () {
+    final update = AppUpdateInfo.tryParse({
+      'latestVersionName': '1.0.15',
+      'apkUrl': 'https://download.example.com/jive.apk',
+      'updatePromptEnabled': 'false',
+    });
+
+    expect(update?.updatePromptEnabled, isTrue);
   });
 
   test('rejects invalid or insecure manifests', () {

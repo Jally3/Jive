@@ -10,6 +10,7 @@ import '../../data/content/cross_source_search_service.dart';
 import '../../data/content/my_channels_store.dart';
 import '../../data/catalog/tmdb_catalog_repository.dart';
 import '../../data/history_repository.dart';
+import '../../data/library_repository.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
 import '../../data/vod_source/vod_source_registry.dart';
@@ -21,6 +22,7 @@ import '../../domain/vod_source.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/source_selector.dart';
 import '../../shared/video_grid.dart';
+import '../../shared/video_card.dart';
 import '../detail/detail_page.dart';
 import '../search/search_launch_request.dart';
 import './category_channels_page.dart';
@@ -976,6 +978,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   Widget _body(VodSource source) {
     if (_selectedFeed != VideoFeed.updated) return _curatedBody(source);
+    final unreadUpdates = ref.watch(unreadFollowUpdatesByGlobalIdProvider);
     final c = controller;
     if (c == null) {
       return _stateScrollView(source, AppLoadingView());
@@ -1014,6 +1017,12 @@ class _HomePageState extends ConsumerState<HomePage> {
         child: VideoGrid(
           videos: c.items,
           onTap: _open,
+          overlayBuilder: (video) {
+            final added = unreadUpdates[video.globalId];
+            return added == null
+                ? null
+                : VideoCardOverlay(badgeLabel: '新增$added集');
+          },
           topPadding: 12,
           bottomPadding: 96,
           controller: _scrollController,
