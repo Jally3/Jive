@@ -26,6 +26,9 @@ migrate_working_dir/
 # VOD source config (local only, not tracked)
 /config/
 
+# Local TMDB credential (never commit)
+/.tmdb-token
+
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id

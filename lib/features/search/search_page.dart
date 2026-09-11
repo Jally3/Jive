@@ -12,6 +12,7 @@ import '../../domain/vod_source.dart';
 import '../../shared/video_grid.dart';
 import '../detail/detail_page.dart';
 import './multi_source_search_controller.dart';
+import './search_launch_request.dart';
 
 class SearchPage extends ConsumerStatefulWidget {
   /// 外部传入的焦点节点：搜索页在 IndexedStack 中预建但默认隐藏，
@@ -31,6 +32,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Timer? debounce;
   String? _globalSourceId;
   ProviderSubscription<AsyncValue<VodSource>>? _globalSourceSub;
+  ProviderSubscription<SearchLaunchRequest?>? _searchLaunchSub;
+  SearchLaunchRequest? _pendingLaunch;
+  int _lastHandledLaunchId = 0;
+  bool _reviewCurrentSource = false;
 
   @override
   void initState() {
@@ -45,11 +50,22 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       if (source == null) return;
       _onGlobalSourceChanged(source);
     });
+    _searchLaunchSub = ref.listenManual(searchLaunchRequestProvider, (
+      _,
+      request,
+    ) {
+      if (request == null || request.id <= _lastHandledLaunchId) return;
+      _pendingLaunch = request;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _applyPendingLaunch();
+      });
+    });
   }
 
   @override
   void dispose() {
     _globalSourceSub?.close();
+    _searchLaunchSub?.close();
     debounce?.cancel();
     input.dispose();
     controller?.dispose();
@@ -87,7 +103,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   void _onInputChanged(String value) {
-    setState(() {});
+    setState(() => _reviewCurrentSource = false);
     debounce?.cancel();
     if (value.trim().isEmpty) {
       controller?.clear();
@@ -99,6 +115,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   void _submit(String value) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return;
+    if (_reviewCurrentSource) setState(() => _reviewCurrentSource = false);
     unawaited(ref.read(searchHistoryProvider.notifier).add(trimmed));
     controller?.search(trimmed, immediate: true);
   }
@@ -116,12 +133,34 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   void _applyHistoryKeyword(String keyword) {
+    _reviewCurrentSource = false;
     input
       ..text = keyword
       ..selection = TextSelection.collapsed(offset: keyword.length);
     unawaited(ref.read(searchHistoryProvider.notifier).add(keyword));
     controller?.search(keyword, immediate: true);
     setState(() {});
+  }
+
+  void _applyPendingLaunch() {
+    final request = _pendingLaunch;
+    if (request == null || request.id <= _lastHandledLaunchId) return;
+    _ensureController();
+    final current = controller;
+    if (current == null) return;
+    _pendingLaunch = null;
+    _lastHandledLaunchId = request.id;
+    input
+      ..text = request.keyword
+      ..selection = TextSelection.collapsed(offset: request.keyword.length);
+    final review = request.mode == SearchLaunchMode.reviewCurrentSource;
+    setState(() => _reviewCurrentSource = review);
+    unawaited(ref.read(searchHistoryProvider.notifier).add(request.keyword));
+    current.searchFromSource(
+      request.keyword,
+      sourceId: request.sourceId,
+      includeBackups: !review,
+    );
   }
 
   void _open(Video video) {
@@ -148,6 +187,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           _globalSourceId ??= source.id;
           _ensureController();
           if (controller == null) return AppLoadingView();
+          if (_pendingLaunch != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _applyPendingLaunch();
+            });
+          }
           return _buildContent();
         },
       ),
@@ -182,6 +226,17 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ),
         SizedBox(height: 8),
         if (controller!.state.keyword.isNotEmpty) _sourceLabelBar(),
+        if (_reviewCurrentSource)
+          Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              '当前仅展示所选来源的原始标题搜索结果，可手动切换或查找更多来源。',
+              style: TextStyle(
+                color: context.appColors.secondary,
+                fontSize: 12,
+              ),
+            ),
+          ),
         SizedBox(height: 4),
         Expanded(child: _body()),
       ],
@@ -218,7 +273,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           name: registry.findById(id)?.name ?? id,
           state: state.sources[id],
           isActive: false,
-          onTap: () => controller!.switchSource(id),
+          onTap: () {
+            setState(() => _reviewCurrentSource = false);
+            controller!.switchSource(id);
+          },
         ),
       );
     }
@@ -294,10 +352,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             activeSourceId: state.activeSourceId,
             onSourceTap: (sourceId) {
               Navigator.pop(context);
+              setState(() => _reviewCurrentSource = false);
               current.switchSource(sourceId);
             },
             onSearchAll: () {
               Navigator.pop(context);
+              setState(() => _reviewCurrentSource = false);
               _confirmSearchAll(current, allSearchable.length);
             },
           );

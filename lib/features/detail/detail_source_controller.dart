@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
+import '../../data/content/cross_source_search_service.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_registry.dart';
 import '../../domain/video.dart';
+import '../../domain/video_search_target.dart';
 import '../../domain/vod_source.dart';
 
 enum DetailSourceStatus {
@@ -71,14 +73,14 @@ class DetailSourceController extends ChangeNotifier {
   List<DetailSourceState> get sourceStates => List.unmodifiable(_sourceStates);
   String get activeSourceId => activeVideo.sourceId;
 
+  CrossSourceSearchService get _crossSourceSearch =>
+      CrossSourceSearchService(repository: repository, registry: registry);
+
   VodSource? _lookupSource(String id) => registry.findById(id);
 
   List<VodSource> get _backupCandidates {
     final activeId = activeVideo.sourceId;
-    return registry.searchableSources
-        .where((s) => s.id != activeId)
-        .take(3)
-        .toList();
+    return _crossSourceSearch.candidateSources(excludedSourceId: activeId);
   }
 
   DetailSourceState? stateFor(String sourceId) {
@@ -110,18 +112,19 @@ class DetailSourceController extends ChangeNotifier {
           (s) => s.copyWith(status: DetailSourceStatus.detecting),
         );
         try {
-          final page = await repository
-              .fetchPage(candidate, keyword: activeVideo.title)
-              .timeout(const Duration(seconds: 8));
+          final result = await _crossSourceSearch.searchSource(
+            candidate,
+            VideoSearchTarget.fromVideo(activeVideo),
+          );
           if (!_isCurrent(generation)) return;
-          final matched = _matchCandidates(page.items);
           _updateState(
             candidate.id,
             (s) => s.copyWith(
-              status: matched.isEmpty
-                  ? DetailSourceStatus.noResult
-                  : DetailSourceStatus.hasResource,
-              candidates: matched,
+              status: _detailStatus(result.status),
+              candidates: result.candidate == null
+                  ? const []
+                  : [result.candidate!],
+              error: result.error,
             ),
           );
         } catch (e) {
@@ -139,71 +142,6 @@ class DetailSourceController extends ChangeNotifier {
 
     await Future.wait([runOne(), if (pending.length > 1) runOne()]);
   }
-
-  List<Video> _matchCandidates(List<Video> results) {
-    final title = _normalize(activeVideo.title);
-    if (title.isEmpty) return results.take(3).toList();
-    final matches = results
-        .where(
-          (v) =>
-              _normalize(v.title).contains(title) ||
-              title.contains(_normalize(v.title)),
-        )
-        .toList();
-    matches.sort((a, b) => _matchScore(b).compareTo(_matchScore(a)));
-    return matches.take(5).toList();
-  }
-
-  int _matchScore(Video candidate) {
-    var score = 0;
-    final currentTitle = _normalize(activeVideo.title);
-    final candidateTitle = _normalize(candidate.title);
-    if (candidateTitle == currentTitle) score += 100;
-    if (candidate.year.isNotEmpty &&
-        activeVideo.year.isNotEmpty &&
-        candidate.year == activeVideo.year) {
-      score += 30;
-    }
-    score += _peopleScore(candidate.actors, activeVideo.actors, 20);
-    score += _peopleScore(candidate.director, activeVideo.director, 15);
-    if (candidate.area.isNotEmpty &&
-        activeVideo.area.isNotEmpty &&
-        candidate.area == activeVideo.area) {
-      score += 15;
-    }
-    if (candidate.category.isNotEmpty &&
-        activeVideo.category.isNotEmpty &&
-        candidate.category == activeVideo.category) {
-      score += 10;
-    }
-    final currentCount = activeVideo.episodes.length;
-    final candidateCount = candidate.episodes.length;
-    if (currentCount > 0 && candidateCount > 0) {
-      final max = currentCount > candidateCount ? currentCount : candidateCount;
-      final diff = (currentCount - candidateCount).abs();
-      if (diff == 0) {
-        score += 10;
-      } else if (diff * 2 > max) {
-        score -= 30;
-      }
-    }
-    return score;
-  }
-
-  int _peopleScore(String candidateValue, String currentValue, int score) {
-    if (candidateValue.isEmpty || currentValue.isEmpty) return 0;
-    final current = _splitPeople(currentValue);
-    if (current.isEmpty) return 0;
-    return _splitPeople(candidateValue).any(current.contains) ? score : 0;
-  }
-
-  Set<String> _splitPeople(String value) => value
-      .split(RegExp(r'[,，、/;；\s]+'))
-      .where((token) => token.isNotEmpty)
-      .toSet();
-
-  String _normalize(String s) =>
-      s.replaceAll(RegExp(r'[\s\-_:：]+'), '').toLowerCase();
 
   Future<void> loadCandidateDetail(String sourceId, Video candidate) async {
     if (switching || _disposed) return;
@@ -261,18 +199,17 @@ class DetailSourceController extends ChangeNotifier {
       (s) => s.copyWith(status: DetailSourceStatus.detecting),
     );
     try {
-      final page = await repository
-          .fetchPage(source, keyword: activeVideo.title)
-          .timeout(const Duration(seconds: 8));
+      final result = await _crossSourceSearch.searchSource(
+        source,
+        VideoSearchTarget.fromVideo(activeVideo),
+      );
       if (!_isCurrent(generation)) return;
-      final matched = _matchCandidates(page.items);
       _updateState(
         source.id,
         (s) => s.copyWith(
-          status: matched.isEmpty
-              ? DetailSourceStatus.noResult
-              : DetailSourceStatus.hasResource,
-          candidates: matched,
+          status: _detailStatus(result.status),
+          candidates: result.candidate == null ? const [] : [result.candidate!],
+          error: result.error,
         ),
       );
     } catch (e) {
@@ -284,6 +221,14 @@ class DetailSourceController extends ChangeNotifier {
       );
     }
   }
+
+  DetailSourceStatus _detailStatus(CrossSourceSearchStatus status) =>
+      switch (status) {
+        CrossSourceSearchStatus.matched => DetailSourceStatus.hasResource,
+        CrossSourceSearchStatus.notFound ||
+        CrossSourceSearchStatus.ambiguous => DetailSourceStatus.noResult,
+        CrossSourceSearchStatus.requestFailed => DetailSourceStatus.failed,
+      };
 
   /// 新一轮操作会使旧的检测失效（generation 已变），把还停留在
   /// “检测中”的来源复位为“未检测”，避免界面上永久转圈。

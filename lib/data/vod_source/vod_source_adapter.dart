@@ -20,6 +20,18 @@ abstract interface class VodSourceAdapter {
   Future<Video> resolvePlayback(VodSource source, VideoRef ref);
 }
 
+/// Optional capability for aborting an in-flight list/search request without
+/// closing the adapter's shared HTTP client.
+abstract interface class CancellableVodSourceAdapter {
+  Future<VideoPage> fetchPageCancellable(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+    required Future<void> abortTrigger,
+  });
+}
+
 /// Optional source capability for server-side ordered content feeds.
 ///
 /// Adapters that do not implement this interface remain compatible and are

@@ -1,11 +1,12 @@
 # Jive
 
-Flutter Android/iOS 视频点播 MVP。无需后端：列表、搜索和详情直连需求文档中的 VOD API；首页始终保留一个 Flutter 官方演示视频，确保核心播放链路可以独立验收。
+Flutter Android/iOS 视频点播 MVP。列表、搜索和详情直连配置的 VOD API，策展榜单读取 Jive Catalog 后端；首页始终保留一个 Flutter 官方演示视频，确保核心播放链路可以独立验收。
 
 ## 已实现
 
 - 夜幕影院深色主题、首页双列视频卡片和底部四栏导航
 - 首页分类入口、下拉刷新和去重分页加载
+- **TMDB 策展榜单**：首页“默认 / 最新 / 最热 / 高分”；“默认”使用当前 VOD 源排序，其余榜单在当前源严格匹配后展示，未命中自动补位
 - VOD 分类、搜索、详情与 `vod_play_url` 剧集解析
 - 搜索防抖和旧请求隔离，统一加载、空数据、错误及重试状态
 - 详情页简介、状态、更新时间、剧集选择和播放前地址刷新
@@ -28,6 +29,22 @@ flutter run
 ```
 
 Android 调试包输出：`build/app/outputs/flutter-apk/app-debug.apk`。
+
+### 生成 TMDB 在线榜单
+
+App 不直连 TMDB，也不包含 TMDB Token。定时任务使用本地生成器产出 `manifest.json` 和三份 Feed JSON：
+
+```bash
+dart run tool/generate_tmdb_catalog.dart \
+  --output assets/tmdb/v1 \
+  --pages 10 \
+  --proxy http://127.0.0.1:1087
+```
+
+本地测试可把 TMDB Read Access Token 单独写入项目根目录 `.tmdb-token`（已被 `.gitignore` 排除）；定时任务则使用 `TMDB_READ_ACCESS_TOKEN` 环境变量。
+不需要代理时可省略 `--proxy`，也可使用 `HTTPS_PROXY` 环境变量。
+
+正式版直接请求 `https://hey-rickytse.com/api/tmdb/v1/catalog?feed=...`，按 Feed 保存响应、ETag 与最近验证时间；首次安装或远端不可用时回退 `assets/tmdb/v1/` 中的打包快照。客户端不包含 TMDB Token，Token 只能放在后端 Secret 中。
 
 ## VOD 源配置
 

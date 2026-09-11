@@ -150,13 +150,15 @@ void main() {
     expect(find.text('正常影片0'), findsOneWidget);
   });
 
-  testWidgets('source with only update support hides the feed row', (
+  testWidgets('source without search still shows the product feed row', (
     tester,
   ) async {
     await pumpHome(tester);
 
-    expect(find.widgetWithText(ChoiceChip, '更新'), findsNothing);
-    expect(find.widgetWithText(ChoiceChip, '热门'), findsNothing);
+    expect(find.widgetWithText(ChoiceChip, '默认'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '最新'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '最热'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '高分'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, '全部'), findsOneWidget);
   });
 

@@ -214,7 +214,11 @@ class MultiSourceSearchController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void search(String keyword, {bool immediate = false}) {
+  void search(
+    String keyword, {
+    bool immediate = false,
+    bool includeBackups = true,
+  }) {
     _debounce?.cancel();
     _backupDelay?.cancel();
     final trimmed = keyword.trim();
@@ -223,15 +227,28 @@ class MultiSourceSearchController extends ChangeNotifier {
       return;
     }
     if (immediate) {
-      _doSearch(trimmed);
+      _doSearch(trimmed, includeBackups: includeBackups);
       return;
     }
     _debounce = Timer(const Duration(milliseconds: 600), () {
-      _doSearch(trimmed);
+      _doSearch(trimmed, includeBackups: includeBackups);
     });
   }
 
-  Future<void> _doSearch(String keyword) async {
+  void searchFromSource(
+    String keyword, {
+    required String sourceId,
+    bool includeBackups = true,
+  }) {
+    final effectiveSourceId =
+        _searchableSources.any((source) => source.id == sourceId)
+        ? sourceId
+        : globalSource.id;
+    _state = SearchSessionState(activeSourceId: effectiveSourceId);
+    search(keyword, immediate: true, includeBackups: includeBackups);
+  }
+
+  Future<void> _doSearch(String keyword, {required bool includeBackups}) async {
     _searchGeneration++;
     final gen = _searchGeneration;
     final activeId = _state.activeSourceId;
@@ -244,7 +261,7 @@ class MultiSourceSearchController extends ChangeNotifier {
     notifyListeners();
 
     _searchActiveSource(keyword, gen);
-    if (keyword.length >= 2) {
+    if (includeBackups && keyword.length >= 2) {
       _scheduleBackupSearch(keyword, gen);
     }
   }

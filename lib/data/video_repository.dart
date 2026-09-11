@@ -38,6 +38,16 @@ abstract interface class VideoRepository {
   Future<Video> resolvePlayback(VodSource source, VideoRef ref);
 }
 
+abstract interface class CancellableVideoRepository {
+  Future<VideoPage> fetchPageCancellable(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+    required Future<void> abortTrigger,
+  });
+}
+
 abstract interface class VideoFeedRepository {
   Set<VideoFeed> supportedFeeds(VodSource source);
 
@@ -79,7 +89,11 @@ extension VideoRepositoryFeeds on VideoRepository {
   }
 }
 
-class VideoRepositoryImpl implements VideoRepository, VideoFeedRepository {
+class VideoRepositoryImpl
+    implements
+        VideoRepository,
+        VideoFeedRepository,
+        CancellableVideoRepository {
   VideoRepositoryImpl({
     VodSourceAdapter? Function(VodSource source)? adapterResolver,
     this.contentFilterEnabled = true,
@@ -120,6 +134,36 @@ class VideoRepositoryImpl implements VideoRepository, VideoFeedRepository {
     final result = await _adapterFor(
       source,
     ).fetchPage(source, page: page, categoryId: categoryId, keyword: keyword);
+    return _filterPage(result);
+  }
+
+  @override
+  Future<VideoPage> fetchPageCancellable(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+    required Future<void> abortTrigger,
+  }) async {
+    final adapter = _adapterFor(source);
+    final result = adapter is CancellableVodSourceAdapter
+        ? await (adapter as CancellableVodSourceAdapter).fetchPageCancellable(
+            source,
+            page: page,
+            categoryId: categoryId,
+            keyword: keyword,
+            abortTrigger: abortTrigger,
+          )
+        : await adapter.fetchPage(
+            source,
+            page: page,
+            categoryId: categoryId,
+            keyword: keyword,
+          );
+    return _filterPage(result);
+  }
+
+  VideoPage _filterPage(VideoPage result) {
     if (!contentFilterEnabled) return result;
     final items = result.items
         .where((item) => !isBlockedVideo(item))

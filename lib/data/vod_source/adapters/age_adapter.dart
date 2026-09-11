@@ -6,7 +6,11 @@ import '../../../domain/vod_source.dart';
 import '../../video_repository.dart';
 import '../vod_source_adapter.dart';
 
-class AgeAdapter implements VodSourceAdapter, VideoFeedSourceAdapter {
+class AgeAdapter
+    implements
+        VodSourceAdapter,
+        VideoFeedSourceAdapter,
+        CancellableVodSourceAdapter {
   AgeAdapter(this.client);
   final http.Client client;
 
@@ -65,6 +69,32 @@ class AgeAdapter implements VodSourceAdapter, VideoFeedSourceAdapter {
   }
 
   @override
+  Future<VideoPage> fetchPageCancellable(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+    required Future<void> abortTrigger,
+  }) {
+    final trimmed = keyword?.trim() ?? '';
+    if (trimmed.isNotEmpty) {
+      return _fetchSearch(
+        source,
+        page: page,
+        keyword: trimmed,
+        abortTrigger: abortTrigger,
+      );
+    }
+    return _fetchCatalog(
+      source,
+      feed: VideoFeed.updated,
+      page: page,
+      categoryId: categoryId,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  @override
   Set<VideoFeed> supportedFeeds(VodSource source) => const {
     VideoFeed.updated,
     VideoFeed.popular,
@@ -109,6 +139,7 @@ class AgeAdapter implements VodSourceAdapter, VideoFeedSourceAdapter {
     required VideoFeed feed,
     required int page,
     int? categoryId,
+    Future<void>? abortTrigger,
   }) async {
     final query = <String, String>{
       'genre': 'all',
@@ -131,7 +162,7 @@ class AgeAdapter implements VodSourceAdapter, VideoFeedSourceAdapter {
       case 4:
         query['genre'] = 'WEB';
     }
-    final json = await _getJson(source, '/v2/catalog', query);
+    final json = await _getJson(source, '/v2/catalog', query, abortTrigger);
     final videos = _asList(json['videos']);
     final total = _int(json['total']);
     final pageCount = total > 0
@@ -159,11 +190,12 @@ class AgeAdapter implements VodSourceAdapter, VideoFeedSourceAdapter {
     VodSource source, {
     required int page,
     required String keyword,
+    Future<void>? abortTrigger,
   }) async {
     final json = await _getJson(source, '/v2/search', {
       'page': '$page',
       'query': keyword,
-    });
+    }, abortTrigger);
     final data = json['data'] is Map<String, dynamic>
         ? json['data'] as Map<String, dynamic>
         : json;
@@ -366,6 +398,7 @@ class AgeAdapter implements VodSourceAdapter, VideoFeedSourceAdapter {
     VodSource source,
     String path, [
     Map<String, String>? query,
+    Future<void>? abortTrigger,
   ]) async {
     try {
       final uri = Uri(
@@ -375,9 +408,13 @@ class AgeAdapter implements VodSourceAdapter, VideoFeedSourceAdapter {
         path: path,
         queryParameters: query,
       );
-      final response = await client
-          .get(uri)
-          .timeout(const Duration(seconds: 12));
+      final response = abortTrigger == null
+          ? await client.get(uri).timeout(const Duration(seconds: 12))
+          : await http.Response.fromStream(
+              await client.send(
+                http.AbortableRequest('GET', uri, abortTrigger: abortTrigger),
+              ),
+            ).timeout(const Duration(seconds: 12));
       if (response.statusCode != 200) {
         throw VideoDataException('服务器响应异常（${response.statusCode}）');
       }

@@ -431,6 +431,7 @@ void main() {
         semanticsNode.getSemanticsData().hasAction(SemanticsAction.longPress),
         isTrue,
       );
+      // ignore: deprecated_member_use
       tester.binding.pipelineOwner.semanticsOwner!.performAction(
         semanticsNode.id,
         SemanticsAction.longPress,

@@ -14,6 +14,23 @@ VodSource _src(String id, String name) => VodSource(
 );
 
 void main() {
+  test('review mode searches only the requested current source', () async {
+    final repository = _RecordingRepository();
+    final controller = MultiSourceSearchController(
+      repository: repository,
+      globalSource: _src('s1', '源1'),
+      allSources: [_src('s1', '源1'), _src('s2', '源2'), _src('s3', '源3')],
+    );
+    addTearDown(controller.dispose);
+
+    controller.searchFromSource('花儿与少年', sourceId: 's2', includeBackups: false);
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+
+    expect(controller.state.activeSourceId, 's2');
+    expect(controller.state.keyword, '花儿与少年');
+    expect(repository.queriedSources, ['s2']);
+  });
+
   test(
     '1+3: searches active source and probes at most three backups',
     () async {

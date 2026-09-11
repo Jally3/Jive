@@ -6,7 +6,7 @@ import '../../../domain/vod_source.dart';
 import '../../video_repository.dart';
 import '../vod_source_adapter.dart';
 
-class OlevodAdapter implements VodSourceAdapter {
+class OlevodAdapter implements VodSourceAdapter, CancellableVodSourceAdapter {
   OlevodAdapter(this.client, {this.now});
 
   final http.Client client;
@@ -50,6 +50,31 @@ class OlevodAdapter implements VodSourceAdapter {
   }
 
   @override
+  Future<VideoPage> fetchPageCancellable(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+    required Future<void> abortTrigger,
+  }) {
+    final trimmed = keyword?.trim() ?? '';
+    if (trimmed.isNotEmpty) {
+      return _search(
+        source,
+        page: page,
+        keyword: trimmed,
+        abortTrigger: abortTrigger,
+      );
+    }
+    return _catalog(
+      source,
+      page: page,
+      categoryId: categoryId,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  @override
   Future<Video> fetchDetail(VodSource source, VideoRef ref) =>
       _detail(source, ref);
 
@@ -61,11 +86,13 @@ class OlevodAdapter implements VodSourceAdapter {
     VodSource source, {
     required int page,
     int? categoryId,
+    Future<void>? abortTrigger,
   }) async {
     final spec = _catalogSpec(categoryId);
     final json = await _getJson(
       source,
       spec.path.replaceAll('{page}', '$page'),
+      abortTrigger: abortTrigger,
     );
     final list = _asList(_dataMap(json)['list']);
     final items = <Video>[];
@@ -90,6 +117,7 @@ class OlevodAdapter implements VodSourceAdapter {
     VodSource source, {
     required int page,
     required String keyword,
+    Future<void>? abortTrigger,
   }) async {
     if (page > 1) {
       return const VideoPage(items: [], page: 2, pageCount: 1);
@@ -97,6 +125,7 @@ class OlevodAdapter implements VodSourceAdapter {
     final json = await _getJson(
       source,
       '/v1/pub/index/search/$keyword/vod/0/1/4',
+      abortTrigger: abortTrigger,
     );
     final groups = _asList(_dataMap(json)['data']);
     final items = <Video>[];
@@ -237,7 +266,11 @@ class OlevodAdapter implements VodSourceAdapter {
     }
   }
 
-  Future<Map<String, dynamic>> _getJson(VodSource source, String path) async {
+  Future<Map<String, dynamic>> _getJson(
+    VodSource source,
+    String path, {
+    Future<void>? abortTrigger,
+  }) async {
     try {
       final uri = Uri(
         scheme: source.baseUri.scheme,
@@ -246,15 +279,20 @@ class OlevodAdapter implements VodSourceAdapter {
         path: path,
         queryParameters: {'_vv': olevodVvToken(now: now?.call())},
       );
-      final response = await client
-          .get(
-            uri,
-            headers: {
-              'User-Agent': playerUserAgent,
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 15));
+      final headers = {
+        'User-Agent': playerUserAgent,
+        'Accept': 'application/json',
+      };
+      final response = abortTrigger == null
+          ? await client
+                .get(uri, headers: headers)
+                .timeout(const Duration(seconds: 15))
+          : await http.Response.fromStream(
+              await client.send(
+                http.AbortableRequest('GET', uri, abortTrigger: abortTrigger)
+                  ..headers.addAll(headers),
+              ),
+            ).timeout(const Duration(seconds: 15));
       if (response.statusCode == 401 || response.statusCode == 403) {
         throw const VideoDataException('该来源需要海外 IP，或签名校验失败');
       }

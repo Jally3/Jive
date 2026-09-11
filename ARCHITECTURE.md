@@ -38,6 +38,20 @@ HomePage / SearchPage / DetailPage
 VideoRepository.fetchPage(source, ...) / fetchDetail(source, ref) ...
 ```
 
+TMDB 策展榜单与 VOD 播放身份分离：
+
+```text
+后端定时刷新 → TMDB API → Catalog 快照
+                              ↓
+HomePage → TmdbCatalogRepository（ETag + 本地快照）→ CuratedFeedController
+                                                     ↓
+                     VideoRepository.fetchPage(当前源, 标题)
+                                                     ↓
+                       VideoMatcher 严格匹配 → VideoRef 播放身份
+```
+
+TMDB 只提供排序、标题、海报和评分；客户端只显示当前 VOD 源中有可信匹配的条目，详情与播放仍走原有 VOD 链路。
+
 基本原则：
 
 - 页面不直接调用 HTTP 或本地存储。
@@ -276,7 +290,7 @@ watchHistoryControllerProvider
 
 - `selectedVodSourceProvider`：全局浏览源，持久化到 SharedPreferences，决定首页、分类和新搜索会话。
 - 搜索页：`MultiSourceSearchController` 维护 `SearchSessionState`（keyword + activeSourceId + 每源状态 + generation）。默认 1 个当前源 + 最多 3 个备用源自动探测；每个来源独立保存分页、加载、错误和总数；点击备用来源只切换当前搜索页来源，不修改全局源；相同"关键词+来源+页码"缓存约 7 分钟。
-- 详情页：`DetailSourceController` 维护 `activeVideo`、各源检测状态和 switching 标志。正常打开只请求当前源；用户点击"检测其他来源"才并发探测最多 3 个备用源；跨源候选确认后原子切换，失败回滚保留旧详情。
+- 跨源：`CrossSourceSearchService` 接收不依赖 `VideoRef` 的 `VideoSearchTarget`，为首页策展未匹配卡片与详情页提供共享的最多 3 源检索、`VideoMatcher` 严格匹配和播放解析。`DetailSourceController` 维护 `activeVideo`、各源检测状态和 switching 标志；跨源候选确认后原子切换，失败回滚保留旧详情。
 
 ## 6. 数据层设计
 

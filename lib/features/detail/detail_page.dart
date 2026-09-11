@@ -550,6 +550,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
             fontWeight: FontWeight.w700,
           ),
         ),
+        centerTitle: true,
         actions: [
           IconButton(
             tooltip: '下载管理',

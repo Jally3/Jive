@@ -16,6 +16,8 @@ doc/
 │   └── APK_UPDATE_REMINDER_REQUIREMENTS.md   # Android APK 新版本弹窗与外部下载需求
 ├── design/
 │   └── DESIGN_SYSTEM.md                      # 夜幕影院设计规范
+├── follow/
+│   └── FOLLOW_UPDATES_REQUIREMENTS.md        # 追更、更新检查与提醒需求
 ├── backend/
 │   └── BACKEND_TECHNICAL_REQUIREMENTS.md     # V1.1 后端技术需求
 ├── cast/
@@ -24,6 +26,10 @@ doc/
 │   └── TV_ADAPTATION_PLAN.md                 # 最小 TV 适配需求方案（feature/tv-adaptation 分支）
 ├── splash/
 │   └── SPLASH_PLAN.md                        # 闪屏页开发技术书（Logo + Jive）
+├── tmdb/
+│   ├── TMDB_CURATED_FEEDS_REQUIREMENTS.md    # TMDB 自建榜单与当前 VOD 源精准匹配需求
+│   ├── TMDB_CURATED_STREAMING_GRID_DEVELOPMENT_PLAN.md # TMDB 榜单固定卡位、流式 VOD 匹配与来源切换开发计划
+│   └── TMDB_CATALOG_BACKEND_API_REQUIREMENTS.md # TMDB Catalog 后端需求与接口契约
 ├── vod-source/
 │   └── SYNCNEXT_SOURCE_INTEGRATION_PLAN.md   # Syncnext / AGE 接入方案
 └── archive/
@@ -48,11 +54,15 @@ doc/
 | [`hot-update/HOT_UPDATE_TECHNICAL_RESEARCH.md`](hot-update/HOT_UPDATE_TECHNICAL_RESEARCH.md) | 待决策 | 生产 OTA 能力边界、Shorebird 方案、商店合规、远程 JS 加固与分阶段实施路线 |
 | [`hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md`](hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md) | 核心流程已实现 | Android 新版本后台检查、弹窗提示和外部浏览器打开 APK 下载链接；待部署清单并真机验收 |
 | [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) | 持续生效 | 「夜幕影院」深色主题设计规范（颜色/字号/组件 Token），UI 改动须遵守 |
+| [`follow/FOLLOW_UPDATES_REQUIREMENTS.md`](follow/FOLLOW_UPDATES_REQUIREMENTS.md) | 待实施 | 收藏与追更关系、详情页动态按钮、前台更新检查、红点提醒和卡片更新状态 |
 | [`backend/BACKEND_TECHNICAL_REQUIREMENTS.md`](backend/BACKEND_TECHNICAL_REQUIREMENTS.md) | 进行中 | V1.2 后端：VOD 源目录、远程配置，以及可选的邮箱密码注册/登录 |
 | [`vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md`](vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md) | 第二期进行中 | 接入 SyncnextPlugin 源；AGE Dart Adapter + 通用 JS 插件运行时 |
 | [`cast/CAST_PLAN.md`](cast/CAST_PLAN.md) | 待启动 | 投屏功能方案：Cast/DLNA/AirPlay 路线对比与分期计划；待确认电视型号与广告过滤取舍后进入 P0 验证 |
 | [`tv/TV_ADAPTATION_PLAN.md`](tv/TV_ADAPTATION_PLAN.md) | 开发中 | 最小 TV 适配需求方案：FR-1~FR-4 已实现（`feature/tv-adaptation` 分支），待真机实测 |
 | [`splash/SPLASH_PLAN.md`](splash/SPLASH_PLAN.md) | 开发中 | 闪屏页：原生消白闪 + Flutter 展示 Logo 与「Jive」词标，源就绪后进首页 |
+| [`tmdb/TMDB_CURATED_FEEDS_REQUIREMENTS.md`](tmdb/TMDB_CURATED_FEEDS_REQUIREMENTS.md) | 客户端核心已实现 | TMDB 最新/最热/高分榜单、单批请求预算与当前 VOD 源严格匹配；待配置定时发布环境及署名 |
+| [`tmdb/TMDB_CURATED_STREAMING_GRID_DEVELOPMENT_PLAN.md`](tmdb/TMDB_CURATED_STREAMING_GRID_DEVELOPMENT_PLAN.md) | 待实施 | Catalog 固定排名卡片、VOD 搜索流式更新、共享池命中、来源切换与默认 VOD 分类隔离方案 |
+| [`tmdb/TMDB_CATALOG_BACKEND_API_REQUIREMENTS.md`](tmdb/TMDB_CATALOG_BACKEND_API_REQUIREMENTS.md) | 待后端评审 | TMDB Catalog 服务范围、榜单口径、API 契约、缓存降级、海报、安全、部署和验收标准 |
 
 ## 归档（`archive/`，功能已实现，仅作历史记录与验收依据）
 

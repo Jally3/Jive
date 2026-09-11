@@ -24,7 +24,7 @@ lib/shared/
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
 ├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
 ├── skip_settings.dart                 # 跳过片头/片尾芯片选择：详情页与非全屏播放器底部共用
-├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、观看进度条、TV 焦点描边
+├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、TMDB 排名/评分徽标、观看进度条、TV 焦点描边
 └── video_grid.dart                    # 自适应视频网格 VideoGrid：两列/四列 sliver 布局、动态卡片比例
 ```
 
@@ -36,7 +36,9 @@ lib/shared/
 lib/domain/
 ├── app_update_info.dart               # APK 版本清单模型：容错解析版本、HTTPS 下载地址和更新说明
 ├── video.dart                         # 核心模型：Video / VideoRef / Episode / PlaybackLine / VideoCategory / VideoPage
-├── video_feed.dart                    # 首页内容维度：更新 / 热门 / 新片 / 高分
+├── video_feed.dart                    # 首页内容维度：默认 / 最新 / 最热 / 高分
+├── tmdb_catalog.dart                  # TMDB Catalog 模型：条目、媒体类型、五种筛选范围与快照解析
+├── video_search_target.dart           # 跨源搜索目标：脱离 VideoRef 统一承载标题/别名/年份/媒体类型/季数
 ├── vod_source.dart                    # VOD 源模型 VodSource：JSON 解析、HTTPS 与启用状态校验
 ├── library.dart                       # 收藏记录 FavoriteRecord（含 JSON 反序列化容错）
 ├── watch_record.dart                  # 观看历史 WatchRecord：进度、完播标记、时间线/manifest 版本指纹
@@ -50,6 +52,8 @@ lib/domain/
 
 ```text
 lib/data/
+├── catalog/
+│   └── tmdb_catalog_repository.dart # Catalog API、ETag、请求合并、退避及持久化/打包快照降级
 ├── video_repository.dart              # 内容访问门面：按 adapterType 分发列表/详情/Feed，详情短缓存、敏感内容过滤
 ├── library_repository.dart            # 收藏持久化：SharedPreferences 存储，写操作串行队列防并发损坏
 ├── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取、单条删除、watchHistoryProvider
@@ -90,7 +94,9 @@ lib/data/content/
 ├── category_nav.dart                  # 首页两级分类树构建：featured 过滤、空分类裁剪、可查询叶子 id 计算
 ├── category_blocklist.dart            # 敏感分类关键词黑名单与命中判断（按分类名子串匹配）
 ├── my_channels_store.dart             # 首页「我的频道」（tab 行根分类集合与顺序）按源持久化存取
-└── content_filter_policy.dart         # 内容过滤总开关 contentFilterEnabledProvider：默认开启、选择持久化
+├── content_filter_policy.dart         # 内容过滤总开关 contentFilterEnabledProvider：默认开启、选择持久化
+├── video_matcher.dart                 # 统一严格匹配：标题/别名/年份/类型/季数评分与歧义拒绝
+└── cross_source_search_service.dart   # 首页与详情共用的跨源搜索、严格匹配与真实播放信息解析
 ```
 
 ## 播放链路（`lib/data/playback/`）
@@ -148,13 +154,19 @@ lib/features/
 ├── splash/
 │   └── splash_page.dart               # 冷启动品牌页：居中 Logo + 「Jive」词标、底部轻量加载；最短展示常量 splashMinHold
 ├── home/
-│   ├── home_page.dart                 # 首页：两级分类导航、视频网格、选源入口、返回顶部
+│   ├── home_page.dart                 # 首页：两级分类导航、默认/策展双网格、策展状态统计与跨源查找、选源入口、返回顶部
 │   ├── category_channels_page.dart    # 「全部频道」全屏页：我的频道自适应网格（手机 4 列、平板 5–8 列）、编辑模式增删与拖拽排序、全部分类分组
 │   ├── continue_watching_row.dart     # 首页续播条：只展示最近一条（剧集完播仍挂、电影过 2/3 不挂）；关闭或点其他影片后本进程隐藏
-│   └── paged_video_controller.dart    # 首页分页控制器：加载更多、错误态、首页结果 2 分钟快照缓存
+│   ├── paged_video_controller.dart    # 首页 VOD 源分页控制器：加载更多、错误态、首页结果 2 分钟快照缓存
+│   ├── curated_feed_controller.dart   # TMDB 策展 Feed：固定排名 Slot、逐项流式匹配、确定性去重、分页与可恢复会话
+│   ├── curated_vod_search_pool.dart   # Home 生命周期 VOD 查询池：同步 ready 读取、SingleFlight、来源隔离、TTL/LRU 与清理/取消
+│   ├── curated_video_grid.dart        # 策展专用自适应 Sliver 网格：保持 Catalog 卡位并承载页头、统计和显式加载操作
+│   ├── curated_video_card.dart        # 策展专用卡片：Catalog 海报/排名/评分即时展示及七种来源匹配状态
+│   └── curated_unavailable_section.dart # 策展未匹配折叠区兼容组件（当前首页已由固定卡位状态与底部统计取代）
 ├── search/
 │   ├── search_page.dart               # 搜索页：输入防抖、本地搜索历史、跟随全局切源、多源结果聚合展示
-│   └── multi_source_search_controller.dart  # 多源搜索控制器：并行探测各可搜索源、逐源分页与状态聚合
+│   ├── multi_source_search_controller.dart  # 多源搜索控制器：并行探测各可搜索源、逐源分页与状态聚合
+│   └── search_launch_request.dart      # 跨页面搜索导航请求：携带关键词、起始来源与当前源审阅模式
 ├── detail/
 │   ├── detail_page.dart               # 详情页 VideoDetailPage：详情加载、线路/选集分组、收藏、下载、切源与按影片跳过片头/片尾；平板加大封面、限制主按钮宽度、剧集等宽网格
 │   ├── detail_source_controller.dart  # 详情页跨源探测 DetailSourceController：备用源搜索匹配与状态机

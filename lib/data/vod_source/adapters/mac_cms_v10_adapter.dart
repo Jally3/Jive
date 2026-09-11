@@ -5,7 +5,8 @@ import '../../../domain/vod_source.dart';
 import '../../video_repository.dart';
 import '../vod_source_adapter.dart';
 
-class MacCmsV10Adapter implements VodSourceAdapter {
+class MacCmsV10Adapter
+    implements VodSourceAdapter, CancellableVodSourceAdapter {
   MacCmsV10Adapter(this.client);
   final http.Client client;
 
@@ -25,6 +26,23 @@ class MacCmsV10Adapter implements VodSourceAdapter {
       query['wd'] = keyword.trim();
     }
     final json = await _request(source, query);
+    return _pageFromJson(source, json);
+  }
+
+  @override
+  Future<VideoPage> fetchPageCancellable(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+    required Future<void> abortTrigger,
+  }) async {
+    final query = <String, String>{'ac': 'detail', 'pg': '$page'};
+    if (categoryId != null) query['t'] = '$categoryId';
+    if (keyword != null && keyword.trim().isNotEmpty) {
+      query['wd'] = keyword.trim();
+    }
+    final json = await _request(source, query, abortTrigger: abortTrigger);
     return _pageFromJson(source, json);
   }
 
@@ -86,13 +104,18 @@ class MacCmsV10Adapter implements VodSourceAdapter {
 
   Future<Map<String, dynamic>> _request(
     VodSource source,
-    Map<String, String> query,
-  ) async {
+    Map<String, String> query, {
+    Future<void>? abortTrigger,
+  }) async {
     try {
       final uri = source.baseUri.replace(queryParameters: query);
-      final response = await client
-          .get(uri)
-          .timeout(const Duration(seconds: 12));
+      final response = abortTrigger == null
+          ? await client.get(uri).timeout(const Duration(seconds: 12))
+          : await http.Response.fromStream(
+              await client.send(
+                http.AbortableRequest('GET', uri, abortTrigger: abortTrigger),
+              ),
+            ).timeout(const Duration(seconds: 12));
       if (response.statusCode != 200) {
         throw VideoDataException('服务器响应异常（${response.statusCode}）');
       }

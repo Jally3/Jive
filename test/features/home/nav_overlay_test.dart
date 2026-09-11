@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
+import 'package:jive/data/catalog/tmdb_catalog_repository.dart';
 import 'package:jive/data/video_repository.dart';
+import 'package:jive/data/vod_source/vod_source_preferences.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
+import 'package:jive/domain/tmdb_catalog.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/vod_source.dart';
@@ -17,6 +20,13 @@ final _testSource = VodSource(
   id: 'storm',
   name: '测试源',
   baseUri: Uri.parse('https://test.example.com/api.php/provide/vod'),
+  adapterType: 'mac_cms_v10',
+);
+
+final _secondTestSource = VodSource(
+  id: 'storm-2',
+  name: '测试源 2',
+  baseUri: Uri.parse('https://test-2.example.com/api.php/provide/vod'),
   adapterType: 'mac_cms_v10',
 );
 
@@ -74,6 +84,41 @@ class _EmptyRepository extends _FakeRepository {
   }) async => const VideoPage(items: [], page: 1, pageCount: 1);
 }
 
+class _FakeTmdbCatalogRepository implements TmdbCatalogRepository {
+  @override
+  Future<TmdbCatalogSnapshot> fetchFeed(
+    VideoFeed feed, {
+    bool forceRefresh = false,
+  }) async {
+    final items = {
+      for (var index = 0; index < 20; index++)
+        'tmdb:movie:$index': TmdbCatalogItem(
+          tmdbId: index + 1,
+          mediaType: TmdbMediaType.movie,
+          category: 'movie',
+          localizedTitle: '影片$index',
+          originalTitle: '影片$index',
+          rating: 8,
+        ),
+    };
+    return TmdbCatalogSnapshot(
+      feed: feed,
+      revision: 'test',
+      supportedScopes: const {
+        TmdbCatalogScope.all,
+        TmdbCatalogScope.movie,
+        TmdbCatalogScope.animation,
+      },
+      groups: {
+        TmdbCatalogScope.all: items.keys.toList(),
+        TmdbCatalogScope.movie: items.keys.toList(),
+        TmdbCatalogScope.animation: items.keys.toList(),
+      },
+      items: items,
+    );
+  }
+}
+
 class _ManyCategoryRepository extends _FakeRepository {
   @override
   Future<VideoPage> fetchPage(
@@ -119,6 +164,9 @@ Future<void> _pumpHome(
       videoRepositoryProvider.overrideWithValue(
         repository ?? _FakeRepository(),
       ),
+      tmdbCatalogRepositoryProvider.overrideWithValue(
+        _FakeTmdbCatalogRepository(),
+      ),
       vodSourceRegistryProvider.overrideWith(
         (ref) async => VodSourceRegistry([_testSource], {}),
       ),
@@ -138,6 +186,9 @@ Future<void> _pumpBareEmptyHome(WidgetTester tester) async {
   final container = ProviderContainer(
     overrides: [
       videoRepositoryProvider.overrideWithValue(_EmptyRepository()),
+      tmdbCatalogRepositoryProvider.overrideWithValue(
+        _FakeTmdbCatalogRepository(),
+      ),
       vodSourceRegistryProvider.overrideWith(
         (ref) async => VodSourceRegistry([_testSource], {}),
       ),
@@ -158,7 +209,7 @@ Future<void> _pumpBareEmptyHome(WidgetTester tester) async {
 ScrollableState _homeScrollState(WidgetTester tester) => tester
     .stateList<ScrollableState>(
       find.descendant(
-        of: find.byType(VideoGrid),
+        of: find.byType(HomePage),
         matching: find.byType(Scrollable),
       ),
     )
@@ -240,24 +291,79 @@ void main() {
     );
   });
 
-  testWidgets('home exposes update and popular feeds in a fixed row', (
+  testWidgets('home exposes all native and curated feeds in a fixed row', (
     tester,
   ) async {
     await _pumpHome(tester);
 
-    expect(find.widgetWithText(ChoiceChip, '更新'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '热门'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '新片'), findsNothing);
-    expect(find.widgetWithText(ChoiceChip, '高分'), findsNothing);
+    expect(find.widgetWithText(ChoiceChip, '默认'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '最新'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '最热'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '高分'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '热门'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '最热'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(
-      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '热门')).selected,
+      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '最热')).selected,
       isTrue,
     );
+  });
+
+  testWidgets('curated scope survives feed and VOD source switches', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [
+        videoRepositoryProvider.overrideWithValue(_FakeRepository()),
+        tmdbCatalogRepositoryProvider.overrideWithValue(
+          _FakeTmdbCatalogRepository(),
+        ),
+        vodSourceRegistryProvider.overrideWith(
+          (ref) async =>
+              VodSourceRegistry([_testSource, _secondTestSource], {}),
+        ),
+      ],
+    );
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: HomePage())),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    Future<void> selectChip(String label) async {
+      await tester.tap(find.widgetWithText(ChoiceChip, label));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    bool isSelected(String label) => tester
+        .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, label))
+        .selected;
+
+    await selectChip('最新');
+    await selectChip('动漫');
+    await selectChip('最热');
+    expect(isSelected('动漫'), isTrue);
+
+    await selectChip('默认');
+    await selectChip('高分');
+    expect(isSelected('动漫'), isTrue);
+
+    await container
+        .read(selectedVodSourceProvider.notifier)
+        .select(_secondTestSource);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(isSelected('高分'), isTrue);
+    expect(isSelected('动漫'), isTrue);
   });
 
   testWidgets('home category header stays aligned and pins with the grid', (
@@ -303,6 +409,37 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(_homeScrollState(tester).position.pixels, 0);
+  });
+
+  testWidgets('switching feeds restores their independent scroll positions', (
+    tester,
+  ) async {
+    await _pumpHome(tester);
+    var scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(900);
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '最新'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    scrollState = _homeScrollState(tester);
+    expect(scrollState.position.pixels, 0);
+    final latestOffset = scrollState.position.maxScrollExtent.clamp(0.0, 300.0);
+    scrollState.position.jumpTo(latestOffset);
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '默认'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(_homeScrollState(tester).position.pixels, closeTo(900, 0.01));
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '最新'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(
+      _homeScrollState(tester).position.pixels,
+      closeTo(latestOffset, 0.01),
+    );
   });
 
   testWidgets('home category header grows with accessibility text scaling', (

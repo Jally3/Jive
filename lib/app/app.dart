@@ -16,6 +16,7 @@ import '../data/vod_source/vod_source_registry.dart';
 import '../features/home/home_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/search/search_page.dart';
+import '../features/search/search_launch_request.dart';
 import '../features/splash/splash_page.dart';
 import 'theme.dart';
 
@@ -140,6 +141,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   var _updateCheckStarted = false;
   late final List<Widget?> pages;
   final _searchFocusNode = FocusNode();
+  ProviderSubscription<SearchLaunchRequest?>? _searchLaunchSubscription;
 
   @override
   void initState() {
@@ -149,6 +151,19 @@ class _AppShellState extends ConsumerState<AppShell> {
     // 预建搜索页：首次构建开销挪到启动阶段，避免首次切换 tab 时
     // 在同一帧内建整棵子树造成卡顿。
     pages[1] = SearchPage(focusNode: _searchFocusNode);
+    _searchLaunchSubscription = ref.listenManual(searchLaunchRequestProvider, (
+      _,
+      request,
+    ) {
+      if (request == null || !mounted) return;
+      setState(() {
+        index = 1;
+        pages[1] ??= _createPage(1);
+      });
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        if (mounted && index == 1) _searchFocusNode.requestFocus();
+      });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_checkForAppUpdate());
     });
@@ -170,6 +185,7 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   void dispose() {
+    _searchLaunchSubscription?.close();
     _searchFocusNode.dispose();
     super.dispose();
   }

@@ -24,6 +24,25 @@ Future<void> _pumpCard(WidgetTester tester, {VoidCallback? onTap}) async {
   );
 }
 
+Future<void> _pumpVideo(
+  WidgetTester tester,
+  Video video, {
+  VoidCallback? onTap,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: buildTheme(),
+      home: Scaffold(
+        body: SizedBox(
+          width: 200,
+          height: 320,
+          child: VideoCard(video: video, onTap: onTap ?? () {}),
+        ),
+      ),
+    ),
+  );
+}
+
 BoxDecoration? _cardForegroundDecoration(WidgetTester tester) {
   final container = tester.widget<Container>(
     find
@@ -34,6 +53,16 @@ BoxDecoration? _cardForegroundDecoration(WidgetTester tester) {
 }
 
 void main() {
+  testWidgets('shows TMDB rank and rating badges', (tester) async {
+    await _pumpVideo(
+      tester,
+      const Video(id: '1', title: '测试影片', rank: 3, rating: 8.26),
+    );
+
+    expect(find.text('#3'), findsOneWidget);
+    expect(find.text('8.3'), findsOneWidget);
+  });
+
   testWidgets('touch mode keeps the focus border hidden', (tester) async {
     await _pumpCard(tester);
     // 触摸点击不应留下焦点描边。

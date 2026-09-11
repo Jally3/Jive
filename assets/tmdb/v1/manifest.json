@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "language": "zh-CN",
+  "feeds": {
+    "latest": {
+      "revision": "20260907T174026Z",
+      "generatedAt": "2026-09-07T17:40:26.867550Z",
+      "expiresAt": "2026-09-07T23:40:26.867550Z",
+      "path": "latest.json"
+    },
+    "popular": {
+      "revision": "20260907T174026Z",
+      "generatedAt": "2026-09-07T17:40:26.867550Z",
+      "expiresAt": "2026-09-07T23:40:26.867550Z",
+      "path": "popular.json"
+    },
+    "top_rated": {
+      "revision": "20260907T174026Z",
+      "generatedAt": "2026-09-07T17:40:26.867550Z",
+      "expiresAt": "2026-09-08T17:40:26.867550Z",
+      "path": "top-rated.json"
+    }
+  }
+}

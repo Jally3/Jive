@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
 import 'package:jive/app/theme.dart';
 import 'package:jive/features/splash/splash_page.dart';
+import 'package:jive/features/search/search_launch_request.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/theme_mode_preferences.dart';
@@ -330,6 +331,31 @@ void main() {
     await tester.pump();
     expect(find.text('输入片名开始搜索'), findsOneWidget);
     expect(find.byTooltip('清空'), findsNothing);
+  });
+
+  testWidgets('review request opens Search with keyword and current source', (
+    tester,
+  ) async {
+    final container = ProviderContainer(overrides: _testOverrides);
+    await container.read(vodSourceRegistryProvider.future);
+    addTearDown(container.dispose);
+    await _pumpReadyApp(tester, container);
+
+    container
+        .read(searchLaunchRequestProvider.notifier)
+        .launch(
+          keyword: '待确认综艺',
+          sourceId: _altSource.id,
+          mode: SearchLaunchMode.reviewCurrentSource,
+        );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '待确认综艺');
+    expect(find.textContaining('备用源'), findsWidgets);
+    expect(find.textContaining('当前仅展示所选来源'), findsOneWidget);
+    expect(find.text('备用源影片'), findsOneWidget);
   });
 
   testWidgets('search shows the no-result state', (tester) async {

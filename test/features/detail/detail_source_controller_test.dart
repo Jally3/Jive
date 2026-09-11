@@ -230,43 +230,43 @@ void main() {
     expect(controller.activeVideo.sourceId, 's2');
   });
 
-  test(
-    'match scoring prefers candidates sharing actors and director',
-    () async {
-      final controller = DetailSourceController(
-        repository: _MetadataSearchRepository(),
-        registry: registry,
-        initialVideo: const Video(
-          id: '1',
-          title: '测试影片',
-          sourceId: 's1',
-          year: '2020',
-          actors: '张三,王五',
-          director: '李四',
-        ),
-      );
-      await controller.detectOtherSources();
-      final candidates = controller.stateFor('s2')!.candidates;
-      expect(candidates, hasLength(2));
-      expect(candidates.first.id, 'meta');
-    },
-  );
-
-  test('a large episode count difference lowers the match score', () async {
-    final episodes36 = List.generate(
-      36,
-      (i) => Episode(id: '${i + 1}', name: '第${i + 1}集', url: 'https://a/$i'),
-    );
+  test('strict matching returns only the best unambiguous candidate', () async {
     final controller = DetailSourceController(
-      repository: _EpisodeCountSearchRepository(),
+      repository: _MetadataSearchRepository(),
       registry: registry,
-      initialVideo: _video('s1', '1', '连续剧', episodes: episodes36),
+      initialVideo: const Video(
+        id: '1',
+        title: '测试影片',
+        sourceId: 's1',
+        year: '2020',
+        actors: '张三,王五',
+        director: '李四',
+      ),
     );
     await controller.detectOtherSources();
     final candidates = controller.stateFor('s2')!.candidates;
-    expect(candidates, hasLength(2));
-    expect(candidates.first.id, 'same');
+    expect(candidates, hasLength(1));
+    expect(candidates.first.id, 'meta');
   });
+
+  test(
+    'equally scored different candidates are treated as ambiguous',
+    () async {
+      final episodes36 = List.generate(
+        36,
+        (i) => Episode(id: '${i + 1}', name: '第${i + 1}集', url: 'https://a/$i'),
+      );
+      final controller = DetailSourceController(
+        repository: _EpisodeCountSearchRepository(),
+        registry: registry,
+        initialVideo: _video('s1', '1', '连续剧', episodes: episodes36),
+      );
+      await controller.detectOtherSources();
+      final state = controller.stateFor('s2')!;
+      expect(state.status, DetailSourceStatus.noResult);
+      expect(state.candidates, isEmpty);
+    },
+  );
 }
 
 class _DetailRepository implements VideoRepository {
@@ -277,7 +277,7 @@ class _DetailRepository implements VideoRepository {
     int? categoryId,
     String? keyword,
   }) async => VideoPage(
-    items: [_video(source.id, '1', '$keyword ${source.name}版')],
+    items: [_video(source.id, '1', keyword!)],
     page: 1,
     pageCount: 1,
   );
@@ -321,7 +321,7 @@ class _RecordingDetailRepository implements VideoRepository {
       return const VideoPage(items: [], page: 1, pageCount: 1);
     }
     return VideoPage(
-      items: [_video(source.id, '1', '$keyword ${source.name}版')],
+      items: [_video(source.id, '1', keyword!)],
       page: 1,
       pageCount: 1,
     );
@@ -349,7 +349,7 @@ class _FailingDetailRepository implements VideoRepository {
     int? categoryId,
     String? keyword,
   }) async => VideoPage(
-    items: [_video(source.id, '1', '$keyword ${source.name}版')],
+    items: [_video(source.id, '1', keyword!)],
     page: 1,
     pageCount: 1,
   );
@@ -378,7 +378,7 @@ class _UnplayableDetailRepository implements VideoRepository {
     int? categoryId,
     String? keyword,
   }) async => VideoPage(
-    items: [_video(source.id, '1', '$keyword ${source.name}版')],
+    items: [_video(source.id, '1', keyword!)],
     page: 1,
     pageCount: 1,
   );
@@ -412,11 +412,7 @@ class _BlockingSearchRepository implements VideoRepository {
       _s2Calls++;
       if (_s2Calls == 1) return firstCall.future;
       return Future.value(
-        VideoPage(
-          items: [_video('s2', '2', '测试影片 源2版')],
-          page: 1,
-          pageCount: 1,
-        ),
+        VideoPage(items: [_video('s2', '2', keyword!)], page: 1, pageCount: 1),
       );
     }
     return Future.value(const VideoPage(items: [], page: 1, pageCount: 1));

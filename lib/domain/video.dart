@@ -78,6 +78,7 @@ class Video {
     this.sourceId = defaultSourceId,
     String? sourceVideoId,
     this.posterUrl = '',
+    this.backupPosterUrl = '',
     this.typeId = 0,
     this.category = '',
     this.remarks = '',
@@ -87,6 +88,8 @@ class Video {
     this.area = '',
     this.actors = '',
     this.director = '',
+    this.rating,
+    this.rank,
     this.episodes = const [],
     this.playbackLines = const [],
   }) : sourceVideoId = sourceVideoId ?? id;
@@ -98,6 +101,7 @@ class Video {
   final String sourceId;
   final String sourceVideoId;
   final String posterUrl;
+  final String backupPosterUrl;
   final int typeId;
   final String category;
   final String remarks;
@@ -107,6 +111,8 @@ class Video {
   final String area;
   final String actors;
   final String director;
+  final double? rating;
+  final int? rank;
   final List<Episode> episodes;
   final List<PlaybackLine> playbackLines;
 
@@ -118,6 +124,7 @@ class Video {
   Video copyWith({
     String? title,
     String? posterUrl,
+    String? backupPosterUrl,
     String? description,
     String? updatedAt,
     List<Episode>? episodes,
@@ -128,12 +135,15 @@ class Video {
     String? director,
     String? remarks,
     String? category,
+    double? rating,
+    int? rank,
   }) => Video(
     id: id,
     title: title ?? this.title,
     sourceId: sourceId,
     sourceVideoId: sourceVideoId,
     posterUrl: posterUrl ?? this.posterUrl,
+    backupPosterUrl: backupPosterUrl ?? this.backupPosterUrl,
     typeId: typeId,
     category: category ?? this.category,
     remarks: remarks ?? this.remarks,
@@ -143,6 +153,8 @@ class Video {
     area: area ?? this.area,
     actors: actors ?? this.actors,
     director: director ?? this.director,
+    rating: rating ?? this.rating,
+    rank: rank ?? this.rank,
     episodes: episodes ?? this.episodes,
     playbackLines: playbackLines ?? this.playbackLines,
   );
@@ -153,6 +165,7 @@ class Video {
     'sourceId': sourceId,
     'sourceVideoId': sourceVideoId,
     'posterUrl': posterUrl,
+    if (backupPosterUrl.isNotEmpty) 'backupPosterUrl': backupPosterUrl,
     'typeId': typeId,
     'category': category,
     'remarks': remarks,
@@ -162,6 +175,8 @@ class Video {
     'area': area,
     'actors': actors,
     'director': director,
+    if (rating != null) 'rating': rating,
+    if (rank != null) 'rank': rank,
   };
 
   factory Video.fromJson(Map<String, dynamic> json) {
@@ -174,6 +189,7 @@ class Video {
       sourceId: rawSourceId.isEmpty ? defaultSourceId : rawSourceId,
       sourceVideoId: rawSourceVideoId.isEmpty ? id : rawSourceVideoId,
       posterUrl: '${json['posterUrl'] ?? ''}',
+      backupPosterUrl: '${json['backupPosterUrl'] ?? ''}',
       typeId: _asInt(json['typeId']),
       category: '${json['category'] ?? ''}',
       remarks: '${json['remarks'] ?? ''}',
@@ -183,6 +199,12 @@ class Video {
       area: '${json['area'] ?? ''}',
       actors: '${json['actors'] ?? ''}',
       director: '${json['director'] ?? ''}',
+      rating: json['rating'] is num
+          ? (json['rating'] as num).toDouble()
+          : double.tryParse('${json['rating']}'),
+      rank: json['rank'] is int
+          ? json['rank'] as int
+          : int.tryParse('${json['rank']}'),
     );
   }
 }

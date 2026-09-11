@@ -85,13 +85,8 @@ class _VideoCardState extends State<VideoCard> {
                     : CachedNetworkImage(
                         imageUrl: widget.video.posterUrl,
                         fit: BoxFit.cover,
-                        placeholder: (_, _) =>
-                            ColoredBox(color: context.appColors.surface),
-                        errorWidget: (_, _, _) => Icon(
-                          Icons.movie_outlined,
-                          size: 44,
-                          color: context.appColors.tertiary,
-                        ),
+                        placeholder: (_, _) => _posterPlaceholder(),
+                        errorWidget: (_, _, _) => _posterFallback(),
                       ),
               ),
               if (widget.progress != null && widget.progress! > 0)
@@ -102,6 +97,20 @@ class _VideoCardState extends State<VideoCard> {
                     minHeight: 3,
                     backgroundColor: context.appColors.divider,
                     color: context.appColors.accent,
+                  ),
+                ),
+              if (widget.video.rank != null && widget.video.rank! > 0)
+                Positioned(
+                  left: 8,
+                  top: 8,
+                  child: _PosterBadge(label: '#${widget.video.rank}'),
+                ),
+              if (widget.video.rating != null && widget.video.rating! > 0)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: _PosterBadge(
+                    label: widget.video.rating!.toStringAsFixed(1),
                   ),
                 ),
             ],
@@ -137,4 +146,46 @@ class _VideoCardState extends State<VideoCard> {
     widget.video.category,
     widget.video.remarks,
   ].where((e) => e.isNotEmpty).join(' · ');
+
+  Widget _posterPlaceholder() => ColoredBox(color: context.appColors.surface);
+
+  Widget _posterFallback() {
+    final backup = widget.video.backupPosterUrl;
+    if (backup.isEmpty || backup == widget.video.posterUrl) {
+      return _posterErrorIcon();
+    }
+    return CachedNetworkImage(
+      imageUrl: backup,
+      fit: BoxFit.cover,
+      placeholder: (_, _) => _posterPlaceholder(),
+      errorWidget: (_, _, _) => _posterErrorIcon(),
+    );
+  }
+
+  Widget _posterErrorIcon() =>
+      Icon(Icons.movie_outlined, size: 44, color: context.appColors.tertiary);
+}
+
+class _PosterBadge extends StatelessWidget {
+  const _PosterBadge({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.black.withValues(alpha: 0.72),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Padding(
+      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ),
+  );
 }

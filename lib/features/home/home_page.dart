@@ -6,20 +6,31 @@ import '../../app/theme.dart';
 import '../../shared/app_states.dart';
 import '../../data/content/category_nav.dart';
 import '../../data/content/content_filter_policy.dart';
+import '../../data/content/cross_source_search_service.dart';
 import '../../data/content/my_channels_store.dart';
+import '../../data/catalog/tmdb_catalog_repository.dart';
 import '../../data/history_repository.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
+import '../../data/vod_source/vod_source_registry.dart';
 import '../../domain/video.dart';
 import '../../domain/video_feed.dart';
+import '../../domain/video_search_target.dart';
+import '../../domain/tmdb_catalog.dart';
 import '../../domain/vod_source.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/source_selector.dart';
 import '../../shared/video_grid.dart';
 import '../detail/detail_page.dart';
+import '../search/search_launch_request.dart';
 import './category_channels_page.dart';
 import './continue_watching_row.dart';
+import './curated_feed_controller.dart';
+import './curated_video_grid.dart';
+import './curated_vod_search_pool.dart';
 import './paged_video_controller.dart';
+
+enum _UnavailableAction { reviewCurrentSource, searchBackups }
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -28,9 +39,17 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
-  static const _productEnabledFeeds = [VideoFeed.updated, VideoFeed.popular];
+  static const _productEnabledFeeds = [
+    VideoFeed.updated,
+    VideoFeed.newReleases,
+    VideoFeed.popular,
+    VideoFeed.topRated,
+  ];
 
   PagedVideoController? controller;
+  CuratedFeedController? curatedController;
+  VideoFeed _selectedFeed = VideoFeed.updated;
+  TmdbCatalogScope _catalogScope = TmdbCatalogScope.all;
 
   /// 顶级分类（tab 栏）与按父 id 分组的子分类（横滑栏）。
   /// MacCMS 的内容只挂在叶子分类上，所以两级导航：
@@ -41,6 +60,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   int? selectedCategoryId;
   final Map<int, int> _lastSelectedLeafByRoot = {};
   String? categoryError;
+  String? _activeSourceFingerprint;
   String? _activeSourceId;
 
   /// 「我的频道」：主 tab 行展示的根分类 id 及顺序，按源持久化；
@@ -48,21 +68,33 @@ class _HomePageState extends ConsumerState<HomePage> {
   List<int>? _myChannelIds;
 
   /// 网格滚动控制器与"返回顶部"悬浮按钮的可见性（滚动超过一屏左右时出现）。
-  /// 不保存 PageStorage offset，切换分类或来源后始终从新列表顶部开始。
+  /// Feed/榜单分类分别保留内存位置；切换 VOD 分类或来源时仍回到顶部。
   final _scrollController = ScrollController(keepScrollOffset: false);
   final _showBackToTop = ValueNotifier<bool>(false);
+  final Map<String, double> _feedScrollOffsets = {};
+  final Set<String> _crossSourceSearchingIds = {};
+  final CuratedVodSearchPool _curatedSearchPool = CuratedVodSearchPool();
 
   @override
   void dispose() {
     controller?.removeListener(_changed);
     controller?.dispose();
+    curatedController?.removeListener(_changed);
+    curatedController?.dispose();
+    _curatedSearchPool.close();
     _scrollController.dispose();
     _showBackToTop.dispose();
     super.dispose();
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {
+      final effectiveScope = curatedController?.scope;
+      if (effectiveScope != null && effectiveScope != _catalogScope) {
+        _catalogScope = effectiveScope;
+      }
+    });
   }
 
   void _resetScrollPosition() {
@@ -76,6 +108,33 @@ class _HomePageState extends ConsumerState<HomePage> {
     });
   }
 
+  String _feedScrollKey(VodSource source) => _selectedFeed == VideoFeed.updated
+      ? '${source.id}|${_selectedFeed.name}|${selectedCategoryId ?? ''}'
+      : '${source.id}|${_selectedFeed.name}|${_catalogScope.name}';
+
+  void _saveFeedScrollPosition(VodSource source) {
+    if (!_scrollController.hasClients) return;
+    _feedScrollOffsets[_feedScrollKey(source)] = _scrollController.offset;
+  }
+
+  void _restoreFeedScrollPositionAfterBuild(VodSource source) {
+    final expectedKey = _feedScrollKey(source);
+    final offset = _feedScrollOffsets[expectedKey] ?? 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          expectedKey != _feedScrollKey(source) ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      final restoredOffset = offset
+          .clamp(0.0, position.maxScrollExtent)
+          .toDouble();
+      _scrollController.jumpTo(restoredOffset);
+      _showBackToTop.value = restoredOffset > 600;
+    });
+  }
+
   void _scrollToTop() {
     if (!_scrollController.hasClients) return;
     _scrollController.animateTo(
@@ -86,12 +145,34 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _ensureController(VodSource source) {
-    if (controller != null && _activeSourceId == source.id) return;
+    final sourceFingerprint = curatedVodSourceFingerprint(source);
+    if (controller != null && _activeSourceFingerprint == sourceFingerprint) {
+      return;
+    }
+    if (_activeSourceId == source.id &&
+        _activeSourceFingerprint != null &&
+        _activeSourceFingerprint != sourceFingerprint) {
+      _curatedSearchPool.evictSource(_activeSourceFingerprint!);
+    }
     _resetScrollPositionAfterBuild();
+    _feedScrollOffsets.clear();
     controller?.removeListener(_changed);
     controller?.dispose();
+    curatedController?.removeListener(_changed);
+    curatedController?.dispose();
     controller = PagedVideoController(ref.read(videoRepositoryProvider), source)
       ..addListener(_changed);
+    curatedController = CuratedFeedController(
+      catalogRepository: ref.read(tmdbCatalogRepositoryProvider),
+      videoRepository: ref.read(videoRepositoryProvider),
+      source: source,
+      feed: _selectedFeed == VideoFeed.updated
+          ? VideoFeed.newReleases
+          : _selectedFeed,
+      scope: _catalogScope,
+      searchPool: _curatedSearchPool,
+    )..addListener(_changed);
+    _activeSourceFingerprint = sourceFingerprint;
     _activeSourceId = source.id;
     _roots = null;
     _children = {};
@@ -100,13 +181,18 @@ class _HomePageState extends ConsumerState<HomePage> {
     _lastSelectedLeafByRoot.clear();
     categoryError = null;
     _myChannelIds = null;
-    controller!.loadInitial();
+    if (_selectedFeed == VideoFeed.updated) {
+      controller!.loadInitial();
+    } else {
+      curatedController!.loadInitial();
+    }
     _loadCategories(source);
   }
 
   Future<void> _loadCategories(VodSource source) async {
     setState(() => categoryError = null);
-    bool isActive() => mounted && _activeSourceId == source.id;
+    final sourceFingerprint = curatedVodSourceFingerprint(source);
+    bool isActive() => mounted && _activeSourceFingerprint == sourceFingerprint;
     try {
       final all = await ref
           .read(videoRepositoryProvider)
@@ -193,27 +279,38 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Future<void> _selectFeed(VodSource source, VideoFeed feed) async {
-    final repository = ref.read(videoRepositoryProvider);
-    if (!repository.supportedFeeds(source).contains(feed)) {
-      showAppToast(context, '当前来源暂不支持${feed.label}排序');
+    if (_selectedFeed == feed) return;
+    if (feed != VideoFeed.updated && !source.search) {
+      showAppToast(context, '当前来源不支持榜单资源检索');
       return;
     }
-    _resetScrollPosition();
-    await controller?.selectFeed(feed);
+    _saveFeedScrollPosition(source);
+    setState(() => _selectedFeed = feed);
+    if (feed == VideoFeed.updated) {
+      await controller?.loadInitial(
+        category: selectedCategoryId,
+        selectedFeed: VideoFeed.updated,
+      );
+    } else {
+      await curatedController?.selectFeed(feed);
+    }
+    if (mounted && _selectedFeed == feed) {
+      _restoreFeedScrollPositionAfterBuild(source);
+    }
   }
 
-  List<VideoFeed> _visibleFeeds(VodSource source) {
-    try {
-      final supported = ref
-          .read(videoRepositoryProvider)
-          .supportedFeeds(source);
-      return [
-        VideoFeed.updated,
-        for (final feed in _productEnabledFeeds.skip(1))
-          if (supported.contains(feed)) feed,
-      ];
-    } catch (_) {
-      return const [VideoFeed.updated];
+  List<VideoFeed> _visibleFeeds(VodSource source) => _productEnabledFeeds;
+
+  Future<void> _selectCatalogScope(
+    VodSource source,
+    TmdbCatalogScope scope,
+  ) async {
+    if (_catalogScope == scope) return;
+    _saveFeedScrollPosition(source);
+    setState(() => _catalogScope = scope);
+    await curatedController?.selectScope(scope);
+    if (mounted && _catalogScope == scope) {
+      _restoreFeedScrollPositionAfterBuild(source);
     }
   }
 
@@ -283,6 +380,159 @@ class _HomePageState extends ConsumerState<HomePage> {
     ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
   }
 
+  Future<void> _findAcrossSources(
+    VodSource currentSource,
+    TmdbCatalogItem item,
+  ) async {
+    if (_crossSourceSearchingIds.contains(item.globalId)) return;
+    final registry = ref.read(vodSourceRegistryProvider).value;
+    if (registry == null) {
+      showAppToast(context, '来源列表尚未就绪');
+      return;
+    }
+    setState(() => _crossSourceSearchingIds.add(item.globalId));
+    final service = CrossSourceSearchService(
+      repository: ref.read(videoRepositoryProvider),
+      registry: registry,
+    );
+    final results = await service.search(
+      VideoSearchTarget.fromCatalog(item),
+      excludedSourceId: currentSource.id,
+      limit: 3,
+    );
+    Video? resolved;
+    for (final result in results.where(
+      (result) => result.status == CrossSourceSearchStatus.matched,
+    )) {
+      try {
+        resolved = await service.resolve(result);
+        break;
+      } catch (_) {
+        // 某一来源只有列表数据但无法解析播放时，继续尝试下一候选来源。
+      }
+    }
+    if (!mounted) return;
+    setState(() => _crossSourceSearchingIds.remove(item.globalId));
+    if (resolved != null) {
+      _open(resolved);
+      return;
+    }
+    final failed = results
+        .where(
+          (result) => result.status == CrossSourceSearchStatus.requestFailed,
+        )
+        .length;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('未找到可播放资源'),
+        content: Text(
+          failed == results.length && results.isNotEmpty
+              ? '备用来源本次均请求失败，请稍后重试。'
+              : '已检索 ${results.length} 个备用来源，暂未找到可解析播放的《${item.localizedTitle}》。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleUnavailableEntry(
+    VodSource currentSource,
+    CuratedFeedEntry entry,
+  ) async {
+    final item = entry.catalogItem;
+    final query = entry.query.trim().isEmpty
+        ? item.localizedTitle
+        : entry.query.trim();
+    final hasResults = entry.rawResultCount > 0;
+    final candidates = entry.candidateTitles.take(3).join('、');
+    final action = await showDialog<_UnavailableAction>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(hasResults ? '当前来源有结果但无法确认' : '当前来源无结果'),
+        content: Text(
+          hasResults
+              ? '使用“$query”在 ${currentSource.name} 搜索到 '
+                    '${entry.rawResultCount} 条结果，但自动匹配无法确认正确影片。'
+                    '${candidates.isEmpty ? '' : '\n候选：$candidates'}'
+              : '使用“$query”在 ${currentSource.name} 未搜索到结果。'
+                    '你可以进入搜索页调整关键词，或继续查找 3 个备用源。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, _UnavailableAction.searchBackups),
+            child: const Text('继续查找 3 个备用源'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              _UnavailableAction.reviewCurrentSource,
+            ),
+            child: Text(hasResults ? '查看搜索结果' : '前往搜索页'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _UnavailableAction.reviewCurrentSource:
+        ref
+            .read(searchLaunchRequestProvider.notifier)
+            .launch(
+              keyword: query,
+              sourceId: currentSource.id,
+              mode: SearchLaunchMode.reviewCurrentSource,
+            );
+        return;
+      case _UnavailableAction.searchBackups:
+        await _findAcrossSources(currentSource, item);
+        return;
+    }
+  }
+
+  void _handleCuratedSlot(VodSource source, CuratedSearchSlot slot) {
+    switch (slot.status) {
+      case CuratedSlotStatus.available:
+        final video = slot.matchedVideo;
+        if (video != null) _open(video);
+        return;
+      case CuratedSlotStatus.queued:
+        curatedController?.prioritizeSlot(slot.slotId);
+        return;
+      case CuratedSlotStatus.failed:
+        curatedController?.retrySlot(slot.slotId);
+        return;
+      case CuratedSlotStatus.searching:
+      case CuratedSlotStatus.unavailable:
+      case CuratedSlotStatus.ambiguous:
+      case CuratedSlotStatus.duplicate:
+        _handleUnavailableEntry(
+          source,
+          CuratedFeedEntry(
+            catalogItem: slot.catalogItem,
+            matchedVideo: slot.matchedVideo,
+            status: slot.status == CuratedSlotStatus.ambiguous
+                ? CuratedMatchStatus.ambiguous
+                : CuratedMatchStatus.notFound,
+            rawResultCount: slot.rawResultCount,
+            query: slot.query,
+            candidateTitles: slot.candidateTitles,
+          ),
+        );
+        return;
+    }
+  }
+
   /// 主 tab 行实际展示的根分类：按「我的频道」定制过滤并保持顺序；
   /// 未定制或定制全部失效时回退为全部根分类。
   List<VideoCategory>? get _visibleRoots {
@@ -310,7 +560,12 @@ class _HomePageState extends ConsumerState<HomePage> {
       _resetScrollPositionAfterBuild();
       controller?.removeListener(_changed);
       controller?.dispose();
+      curatedController?.removeListener(_changed);
+      curatedController?.dispose();
+      _curatedSearchPool.clearAll();
       controller = null;
+      curatedController = null;
+      _activeSourceFingerprint = null;
       _activeSourceId = null;
       setState(() {});
     });
@@ -393,6 +648,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final visibleFeeds = _visibleFeeds(source);
     final showFeedRow = visibleFeeds.length > 1;
     final showLeafRow =
+        _selectedFeed == VideoFeed.updated &&
         _selectedRootId != null &&
         (_children[_selectedRootId]?.isNotEmpty ?? false);
     final pinnedHeight =
@@ -489,8 +745,9 @@ class _HomePageState extends ConsumerState<HomePage> {
     required double leafRowHeight,
     required List<VideoFeed> visibleFeeds,
   }) {
-    final selectedChildren =
-        _children[_selectedRootId] ?? const <VideoCategory>[];
+    final selectedChildren = _selectedFeed == VideoFeed.updated
+        ? (_children[_selectedRootId] ?? const <VideoCategory>[])
+        : const <VideoCategory>[];
     return ClipRect(
       key: ValueKey('home-category-header'),
       child: BackdropFilter(
@@ -523,7 +780,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                             child: ChoiceChip(
                               key: ValueKey('home-feed-${feed.name}'),
                               label: Text(feed.label),
-                              selected: controller?.feed == feed,
+                              selected: _selectedFeed == feed,
                               showCheckmark: false,
                               onSelected: (_) => _selectFeed(source, feed),
                             ),
@@ -532,94 +789,128 @@ class _HomePageState extends ConsumerState<HomePage> {
                     ),
                   ),
                 ),
-              SizedBox(
-                height: subRowHeight,
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: ChipTheme(
-                        data: categoryChipTheme(context).copyWith(
-                          backgroundColor: context.appColors.elevated
-                              .withValues(alpha: 0.45),
-                          color: WidgetStateProperty.resolveWith((states) {
-                            if (states.contains(WidgetState.selected)) {
-                              return states.contains(WidgetState.focused)
-                                  ? context.appColors.accentPressed
-                                  : context.appColors.accent;
-                            }
-                            return context.appColors.elevated.withValues(
-                              alpha: 0.45,
-                            );
-                          }),
-                          labelStyle: TextStyle(
-                            color: context.appColors.secondary,
-                            fontSize: 13,
-                          ),
-                          secondaryLabelStyle: TextStyle(
-                            color: context.appColors.onAccent,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                        ),
-                        child: ListView(
-                          key: PageStorageKey<String>(
-                            'home-root-category-tabs-${source.id}',
-                          ),
-                          padding: EdgeInsets.fromLTRB(16, 2, 8, 2),
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            Padding(
-                              padding: EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text('全部'),
-                                selected: _selectedRootId == null,
-                                showCheckmark: false,
-                                onSelected: (_) => _selectRoot(source, null),
-                              ),
-                            ),
-                            ...?_visibleRoots?.map(
-                              (item) => Padding(
-                                padding: EdgeInsets.only(right: 8),
-                                child: ChoiceChip(
-                                  label: Text(item.name),
-                                  selected: _selectedRootId == item.id,
-                                  showCheckmark: false,
-                                  onSelected: (_) =>
-                                      _selectRoot(source, item.id),
-                                ),
-                              ),
-                            ),
-                            if (categoryError != null)
-                              ActionChip(
-                                label: Text('重试'),
-                                onPressed: () => _loadCategories(source),
-                              ),
-                          ],
-                        ),
+              if (_selectedFeed != VideoFeed.updated)
+                SizedBox(
+                  height: subRowHeight,
+                  child: ChipTheme(
+                    data: categoryChipTheme(context).copyWith(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
                       ),
                     ),
-                    if (_visibleRoots?.isNotEmpty ?? false)
-                      Padding(
-                        padding: EdgeInsets.only(right: 8),
-                        child: IconButton(
-                          key: ValueKey('home-category-expand-button'),
-                          tooltip: '全部频道',
-                          visualDensity: VisualDensity.compact,
-                          icon: Icon(
-                            Icons.grid_view_rounded,
-                            size: 20,
-                            color: context.appColors.secondary,
+                    child: ListView(
+                      key: PageStorageKey<String>(
+                        'home-tmdb-scope-tabs-${source.id}',
+                      ),
+                      padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        for (final scope in TmdbCatalogScope.values)
+                          Padding(
+                            padding: EdgeInsets.only(right: 8),
+                            child: ChoiceChip(
+                              key: ValueKey('home-tmdb-scope-${scope.name}'),
+                              label: Text(scope.label),
+                              selected: _catalogScope == scope,
+                              showCheckmark: false,
+                              onSelected: (_) =>
+                                  _selectCatalogScope(source, scope),
+                            ),
                           ),
-                          onPressed: () => _openChannelsPage(source),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                SizedBox(
+                  height: subRowHeight,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ChipTheme(
+                          data: categoryChipTheme(context).copyWith(
+                            backgroundColor: context.appColors.elevated
+                                .withValues(alpha: 0.45),
+                            color: WidgetStateProperty.resolveWith((states) {
+                              if (states.contains(WidgetState.selected)) {
+                                return states.contains(WidgetState.focused)
+                                    ? context.appColors.accentPressed
+                                    : context.appColors.accent;
+                              }
+                              return context.appColors.elevated.withValues(
+                                alpha: 0.45,
+                              );
+                            }),
+                            labelStyle: TextStyle(
+                              color: context.appColors.secondary,
+                              fontSize: 13,
+                            ),
+                            secondaryLabelStyle: TextStyle(
+                              color: context.appColors.onAccent,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                          ),
+                          child: ListView(
+                            key: PageStorageKey<String>(
+                              'home-root-category-tabs-${source.id}',
+                            ),
+                            padding: EdgeInsets.fromLTRB(16, 2, 8, 2),
+                            scrollDirection: Axis.horizontal,
+                            children: [
+                              Padding(
+                                padding: EdgeInsets.only(right: 8),
+                                child: ChoiceChip(
+                                  label: Text('全部'),
+                                  selected: _selectedRootId == null,
+                                  showCheckmark: false,
+                                  onSelected: (_) => _selectRoot(source, null),
+                                ),
+                              ),
+                              ...?_visibleRoots?.map(
+                                (item) => Padding(
+                                  padding: EdgeInsets.only(right: 8),
+                                  child: ChoiceChip(
+                                    label: Text(item.name),
+                                    selected: _selectedRootId == item.id,
+                                    showCheckmark: false,
+                                    onSelected: (_) =>
+                                        _selectRoot(source, item.id),
+                                  ),
+                                ),
+                              ),
+                              if (categoryError != null)
+                                ActionChip(
+                                  label: Text('重试'),
+                                  onPressed: () => _loadCategories(source),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
-                  ],
+                      if (_visibleRoots?.isNotEmpty ?? false)
+                        Padding(
+                          padding: EdgeInsets.only(right: 8),
+                          child: IconButton(
+                            key: ValueKey('home-category-expand-button'),
+                            tooltip: '全部频道',
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(
+                              Icons.grid_view_rounded,
+                              size: 20,
+                              color: context.appColors.secondary,
+                            ),
+                            onPressed: () => _openChannelsPage(source),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
               if (selectedChildren.isNotEmpty)
                 SizedBox(
                   height: leafRowHeight,
@@ -684,6 +975,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _body(VodSource source) {
+    if (_selectedFeed != VideoFeed.updated) return _curatedBody(source);
     final c = controller;
     if (c == null) {
       return _stateScrollView(source, AppLoadingView());
@@ -748,6 +1040,123 @@ class _HomePageState extends ConsumerState<HomePage> {
                         ),
                       )
                     : null),
+        ),
+      ),
+    );
+  }
+
+  Widget _curatedBody(VodSource source) {
+    final c = curatedController;
+    if (c == null || (c.slots.isEmpty && c.catalogLoading)) {
+      return _stateScrollView(source, AppLoadingView(label: '正在获取榜单…'));
+    }
+    if (c.slots.isEmpty && c.error != null) {
+      return _stateScrollView(
+        source,
+        AppErrorView(
+          message: c.error!,
+          onRetry: c.refresh,
+          secondaryLabel: '切换来源',
+          secondaryAction: () => SourceSelectorSheet.show(context),
+        ),
+      );
+    }
+    if (c.slots.isEmpty) {
+      return _stateScrollView(source, AppEmptyView(message: '当前榜单暂无影片'));
+    }
+    return NotificationListener<ScrollNotification>(
+      onNotification: (event) {
+        if (event.depth != 0 || event.metrics.axis != Axis.vertical) {
+          return false;
+        }
+        final showTop = event.metrics.pixels > 600;
+        if (showTop != _showBackToTop.value) _showBackToTop.value = showTop;
+        return false;
+      },
+      child: RefreshIndicator(
+        onRefresh: c.refresh,
+        child: CuratedVideoGrid(
+          slots: c.slots,
+          onTap: (slot) => _handleCuratedSlot(source, slot),
+          topPadding: 12,
+          bottomPadding: 96,
+          controller: _scrollController,
+          physics: AlwaysScrollableScrollPhysics(),
+          headerSlivers: _homeHeaderSlivers(source),
+          footer: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _curatedSummary(c),
+              if (c.hasMore || c.failedEntries.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                  child: Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      if (c.failedEntries.isNotEmpty)
+                        OutlinedButton.icon(
+                          onPressed: c.retryFailed,
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('重试失败项'),
+                        ),
+                      if (c.hasMore)
+                        FilledButton.tonalIcon(
+                          key: const ValueKey('curated-load-more'),
+                          onPressed: c.loadMore,
+                          icon: const Icon(Icons.expand_more_rounded, size: 18),
+                          label: const Text('继续加载榜单'),
+                        ),
+                    ],
+                  ),
+                )
+              else
+                Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text(
+                      '没有更多了',
+                      style: TextStyle(
+                        color: context.appColors.tertiary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _curatedSummary(CuratedFeedController controller) {
+    int count(CuratedSlotStatus status) =>
+        controller.slots.where((slot) => slot.status == status).length;
+    final pending =
+        count(CuratedSlotStatus.queued) + count(CuratedSlotStatus.searching);
+    final unavailable =
+        count(CuratedSlotStatus.unavailable) +
+        count(CuratedSlotStatus.duplicate);
+    final parts = <String>[
+      '当前 ${controller.slots.length} 部：可播放 ${count(CuratedSlotStatus.available)}',
+      '当前源暂无 $unavailable',
+      '多候选 ${count(CuratedSlotStatus.ambiguous)}',
+      '请求失败 ${count(CuratedSlotStatus.failed)}',
+      if (pending > 0) '搜索中 $pending',
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+      child: Text(
+        controller.sourceUnavailable
+            ? '${parts.join(' · ')}\n当前来源暂不可用，已暂停后续搜索'
+            : parts.join(' · '),
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: context.appColors.secondary,
+          fontSize: 12,
+          height: 1.5,
         ),
       ),
     );
