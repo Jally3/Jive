@@ -155,9 +155,9 @@ void main() {
   ) async {
     await pumpHome(tester);
 
-    expect(find.widgetWithText(ChoiceChip, '默认'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '最新'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '最热'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '综合'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '新片'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '热门'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, '高分'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, '全部'), findsOneWidget);
   });

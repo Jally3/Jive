@@ -769,25 +769,44 @@ class _HomePageState extends ConsumerState<HomePage> {
                         vertical: 7,
                       ),
                     ),
-                    child: ListView(
+                    child: Padding(
                       key: PageStorageKey<String>(
                         'home-feed-tabs-${source.id}',
                       ),
                       padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
-                      scrollDirection: Axis.horizontal,
-                      children: [
-                        for (final feed in visibleFeeds)
-                          Padding(
-                            padding: EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              key: ValueKey('home-feed-${feed.name}'),
-                              label: Text(feed.label),
-                              selected: _selectedFeed == feed,
-                              showCheckmark: false,
-                              onSelected: (_) => _selectFeed(source, feed),
+                      child: Row(
+                        children: [
+                          for (var index = 0; index < visibleFeeds.length; index++)
+                            Expanded(
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  right: index == visibleFeeds.length - 1
+                                      ? 0
+                                      : 8,
+                                ),
+                                child: ChoiceChip(
+                                  key: ValueKey(
+                                    'home-feed-${visibleFeeds[index].name}',
+                                  ),
+                                  label: SizedBox(
+                                    width: double.infinity,
+                                    child: Text(
+                                      visibleFeeds[index].label,
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                  selected:
+                                      _selectedFeed == visibleFeeds[index],
+                                  showCheckmark: false,
+                                  onSelected: (_) => _selectFeed(
+                                    source,
+                                    visibleFeeds[index],
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -795,12 +814,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                 SizedBox(
                   height: subRowHeight,
                   child: ChipTheme(
-                    data: categoryChipTheme(context).copyWith(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                    ),
+                    data: _secondaryCategoryChipTheme(context),
                     child: ListView(
                       key: PageStorageKey<String>(
                         'home-tmdb-scope-tabs-${source.id}',
@@ -831,33 +845,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                     children: [
                       Expanded(
                         child: ChipTheme(
-                          data: categoryChipTheme(context).copyWith(
-                            backgroundColor: context.appColors.elevated
-                                .withValues(alpha: 0.45),
-                            color: WidgetStateProperty.resolveWith((states) {
-                              if (states.contains(WidgetState.selected)) {
-                                return states.contains(WidgetState.focused)
-                                    ? context.appColors.accentPressed
-                                    : context.appColors.accent;
-                              }
-                              return context.appColors.elevated.withValues(
-                                alpha: 0.45,
-                              );
-                            }),
-                            labelStyle: TextStyle(
-                              color: context.appColors.secondary,
-                              fontSize: 13,
-                            ),
-                            secondaryLabelStyle: TextStyle(
-                              color: context.appColors.onAccent,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                          ),
+                          data: _secondaryCategoryChipTheme(context),
                           child: ListView(
                             key: PageStorageKey<String>(
                               'home-root-category-tabs-${source.id}',
@@ -975,6 +963,30 @@ class _HomePageState extends ConsumerState<HomePage> {
       ),
     );
   }
+
+  ChipThemeData _secondaryCategoryChipTheme(BuildContext context) =>
+      categoryChipTheme(context).copyWith(
+        backgroundColor: Colors.transparent,
+        side: BorderSide(
+          color: context.appColors.divider.withValues(alpha: 0.72),
+        ),
+        labelStyle: TextStyle(
+          color: context.appColors.secondary,
+          fontSize: 13,
+        ),
+        secondaryLabelStyle: TextStyle(
+          color: context.appColors.accentForeground,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        color: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return context.appColors.accent.withValues(alpha: 0.16);
+          }
+          return Colors.transparent;
+        }),
+      );
 
   Widget _body(VodSource source) {
     if (_selectedFeed != VideoFeed.updated) return _curatedBody(source);

@@ -296,17 +296,17 @@ void main() {
   ) async {
     await _pumpHome(tester);
 
-    expect(find.widgetWithText(ChoiceChip, '默认'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '最新'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '最热'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '综合'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '新片'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '热门'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, '高分'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '最热'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '热门'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(
-      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '最热')).selected,
+      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '热门')).selected,
       isTrue,
     );
   });
@@ -347,12 +347,12 @@ void main() {
         .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, label))
         .selected;
 
-    await selectChip('最新');
+    await selectChip('新片');
     await selectChip('动漫');
-    await selectChip('最热');
+    await selectChip('热门');
     expect(isSelected('动漫'), isTrue);
 
-    await selectChip('默认');
+    await selectChip('综合');
     await selectChip('高分');
     expect(isSelected('动漫'), isTrue);
 
@@ -419,7 +419,7 @@ void main() {
     scrollState.position.jumpTo(900);
     await tester.pump();
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '最新'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '新片'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     scrollState = _homeScrollState(tester);
@@ -428,12 +428,12 @@ void main() {
     scrollState.position.jumpTo(latestOffset);
     await tester.pump();
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '默认'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '综合'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(_homeScrollState(tester).position.pixels, closeTo(900, 0.01));
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '最新'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '新片'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(
