@@ -144,13 +144,14 @@ class _AppShellState extends ConsumerState<AppShell> {
   var _updateCheckStarted = false;
   late final List<Widget?> pages;
   final _searchFocusNode = FocusNode();
+  final _homeActive = ValueNotifier<bool>(true);
   ProviderSubscription<SearchLaunchRequest?>? _searchLaunchSubscription;
 
   @override
   void initState() {
     super.initState();
     pages = List<Widget?>.filled(3, null);
-    pages[0] = HomePage();
+    pages[0] = HomePage(active: _homeActive);
     // 预建搜索页：首次构建开销挪到启动阶段，避免首次切换 tab 时
     // 在同一帧内建整棵子树造成卡顿。
     pages[1] = SearchPage(focusNode: _searchFocusNode);
@@ -159,6 +160,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       request,
     ) {
       if (request == null || !mounted) return;
+      _homeActive.value = false;
       setState(() {
         index = 1;
         pages[1] ??= _createPage(1);
@@ -193,31 +195,35 @@ class _AppShellState extends ConsumerState<AppShell> {
   void dispose() {
     _searchLaunchSubscription?.close();
     _searchFocusNode.dispose();
+    _homeActive.dispose();
     super.dispose();
   }
 
   Widget _createPage(int value) => switch (value) {
-    0 => const HomePage(),
+    0 => HomePage(active: _homeActive),
     1 => SearchPage(focusNode: _searchFocusNode),
     2 => ProfilePage(key: ValueKey(profileRevision)),
     _ => SizedBox.shrink(),
   };
 
-  void _onSelect(int value) => setState(() {
-    index = value;
-    if (value == 2) {
-      profileRevision++;
-      pages[value] = ProfilePage(key: ValueKey(profileRevision));
-    } else {
-      pages[value] ??= _createPage(value);
-    }
-    if (value == 1) {
-      // 等 tab 切换动画结束再弹键盘，避免键盘动画与首帧绘制抢资源。
-      Future.delayed(Duration(milliseconds: 300), () {
-        if (mounted && index == 1) _searchFocusNode.requestFocus();
-      });
-    }
-  });
+  void _onSelect(int value) {
+    _homeActive.value = value == 0;
+    setState(() {
+      index = value;
+      if (value == 2) {
+        profileRevision++;
+        pages[value] = ProfilePage(key: ValueKey(profileRevision));
+      } else {
+        pages[value] ??= _createPage(value);
+      }
+      if (value == 1) {
+        // 等 tab 切换动画结束再弹键盘，避免键盘动画与首帧绘制抢资源。
+        Future.delayed(Duration(milliseconds: 300), () {
+          if (mounted && index == 1) _searchFocusNode.requestFocus();
+        });
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

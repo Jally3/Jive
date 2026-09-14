@@ -84,6 +84,26 @@ class _EmptyRepository extends _FakeRepository {
   }) async => const VideoPage(items: [], page: 1, pageCount: 1);
 }
 
+class _SlowCuratedSearchRepository extends _FakeRepository {
+  @override
+  Future<VideoPage> fetchPage(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+  }) async {
+    if (keyword != null) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    return super.fetchPage(
+      source,
+      page: page,
+      categoryId: categoryId,
+      keyword: keyword,
+    );
+  }
+}
+
 class _FakeTmdbCatalogRepository implements TmdbCatalogRepository {
   @override
   Future<TmdbCatalogSnapshot> fetchFeed(
@@ -311,6 +331,35 @@ void main() {
     );
   });
 
+  testWidgets(
+    'recommendation feed strip scrolls horizontally without truncating labels',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await _pumpHome(tester);
+
+      final tabs = find.byKey(
+        const PageStorageKey<String>('home-feed-tabs-storm'),
+      );
+      expect(tabs, findsOneWidget);
+      expect(tester.widget<ListView>(tabs).scrollDirection, Axis.horizontal);
+      expect(find.widgetWithText(ChoiceChip, '猜你喜欢'), findsOneWidget);
+
+      final scrollable = find.descendant(
+        of: tabs,
+        matching: find.byType(Scrollable),
+      );
+      final before = tester.state<ScrollableState>(scrollable).position.pixels;
+      await tester.drag(tabs, const Offset(-180, 0));
+      await tester.pumpAndSettle();
+      final after = tester.state<ScrollableState>(scrollable).position.pixels;
+
+      expect(after, greaterThan(before));
+    },
+  );
+
   testWidgets('curated scope survives feed and VOD source switches', (
     tester,
   ) async {
@@ -415,11 +464,14 @@ void main() {
     tester,
   ) async {
     await _pumpHome(tester);
+    void selectFeed(String label) => tester
+        .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, label))
+        .onSelected!(true);
     var scrollState = _homeScrollState(tester);
     scrollState.position.jumpTo(900);
     await tester.pump();
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '新片'));
+    selectFeed('新片');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     scrollState = _homeScrollState(tester);
@@ -428,18 +480,43 @@ void main() {
     scrollState.position.jumpTo(latestOffset);
     await tester.pump();
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '综合'));
+    selectFeed('综合');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(_homeScrollState(tester).position.pixels, closeTo(900, 0.01));
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '新片'));
+    selectFeed('新片');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(
       _homeScrollState(tester).position.pixels,
       closeTo(latestOffset, 0.01),
     );
+  });
+
+  testWidgets('user scroll during feed loading is not reset on completion', (
+    tester,
+  ) async {
+    await _pumpHome(tester, repository: _SlowCuratedSearchRepository());
+
+    tester
+        .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '新片'))
+        .onSelected!(true);
+    await tester.pump();
+    await tester.pump();
+    final loadingScroll = _homeScrollState(tester);
+    await tester.drag(
+      find.byWidget(loadingScroll.widget),
+      const Offset(0, -120),
+    );
+    await tester.pump();
+    final userOffset = loadingScroll.position.pixels;
+    expect(userOffset, greaterThan(0));
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+
+    expect(_homeScrollState(tester).position.pixels, closeTo(userOffset, 0.01));
   });
 
   testWidgets('home category header grows with accessibility text scaling', (

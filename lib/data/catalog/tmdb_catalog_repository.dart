@@ -348,6 +348,7 @@ class RemoteTmdbCatalogRepository
     VideoFeed.newReleases => 'latest',
     VideoFeed.popular => 'popular',
     VideoFeed.topRated => 'top_rated',
+    VideoFeed.recommended => throw const TmdbCatalogException('猜你喜欢不是 TMDB 榜单'),
     VideoFeed.updated => 'updated',
   };
 
