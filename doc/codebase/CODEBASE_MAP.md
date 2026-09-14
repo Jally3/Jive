@@ -41,8 +41,9 @@ lib/shared/
 ```text
 lib/domain/
 ├── app_update_info.dart               # APK 版本清单模型：容错解析版本、HTTPS 下载地址和更新说明
+├── recommendation.dart                # 后端推荐候选、模式、会话、分页、元数据与缓存模型
 ├── video.dart                         # 核心模型：Video / VideoRef / Episode / PlaybackLine / VideoCategory / VideoPage
-├── video_feed.dart                    # 首页内容维度：默认 / 最新 / 最热 / 高分
+├── video_feed.dart                    # 首页内容维度：默认 / 猜你喜欢 / 最新 / 最热 / 高分
 ├── tmdb_catalog.dart                  # TMDB Catalog 模型：条目、媒体类型、五种筛选范围与快照解析
 ├── video_search_target.dart           # 跨源搜索目标：脱离 VideoRef 统一承载标题/别名/年份/媒体类型/季数
 ├── vod_source.dart                    # VOD 源模型 VodSource：JSON 解析、HTTPS 与启用状态校验
@@ -60,6 +61,15 @@ lib/domain/
 lib/data/
 ├── catalog/
 │   └── tmdb_catalog_repository.dart # Catalog API、ETag、请求合并、退避及持久化/打包快照降级
+├── recommendation/
+│   ├── anonymous_subject_store.dart   # 后端签发匿名主体的本地持久化边界（待迁移安全存储）
+│   ├── backend_recommendation_config.dart # Jive Backend Base URL 与 28 秒超时配置
+│   ├── backend_recommendation_client.dart # 匿名主体、NDJSON 流式推荐/分页、事件、取消和结构化错误协议
+│   ├── recommendation_client.dart     # 推荐客户端、流事件、分页能力与最小事件模型接口
+│   ├── recommendation_request.dart    # 偏好裁剪、64 KiB 校验与 UUID 请求 ID
+│   ├── recommendation_repository.dart # 偏好指纹、done 后候选缓存、流式/JSON 兼容、可播结果缓存与分页/事件门面
+│   ├── ark_recommendation_config.dart # 仅保留的旧本地调试配置（非生产默认链路）
+│   └── ark_recommendation_client.dart # 仅保留的旧方舟直连调试客户端
 ├── video_repository.dart              # 内容访问门面：按 adapterType 分发列表/详情/Feed，详情短缓存、敏感内容过滤
 ├── library_repository.dart            # 内容库 v2 与旧收藏兼容迁移；追更控制器负责分源限流检查、失败隔离及已读状态
 ├── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取、单条删除、watchHistoryProvider
@@ -144,7 +154,8 @@ lib/data/cache/
 
 ```text
 lib/data/network/
-└── connectivity_provider.dart          # 共享网络状态：首次读取当前连接，持续发布 Wi-Fi/蜂窝/断网变化
+├── connectivity_provider.dart          # 共享网络状态：首次读取当前连接，持续发布 Wi-Fi/蜂窝/断网变化
+└── json_http_client.dart               # Jive 自有 API 传输：JSON 缓冲请求及可取消的原始流响应
 ```
 
 ## 下载（`lib/data/download/`）
@@ -169,11 +180,13 @@ lib/features/
 ├── splash/
 │   └── splash_page.dart               # 冷启动品牌页：居中 Logo + 「Jive」词标、底部轻量加载；最短展示常量 splashMinHold
 ├── home/
-│   ├── home_page.dart                 # 首页：两级分类导航、默认/策展双网格、策展状态统计与跨源查找、选源入口、返回顶部
+│   ├── home_page.dart                 # 首页：横滑 Feed、两级分类导航、流式猜你喜欢、Tab 可见性、跨源查找与选源入口
 │   ├── category_channels_page.dart    # 「全部频道」全屏页：我的频道自适应网格（手机 4 列、平板 5–8 列）、编辑模式增删与拖拽排序、全部分类分组
 │   ├── continue_watching_row.dart     # 首页续播条：只展示最近一条（剧集完播仍挂、电影过 2/3 不挂）；关闭或点其他影片后本进程隐藏
 │   ├── paged_video_controller.dart    # 首页 VOD 源分页控制器：加载更多、错误态、首页结果 2 分钟快照缓存
 │   ├── curated_feed_controller.dart   # TMDB 策展 Feed：固定排名 Slot、逐项流式匹配、确定性去重、分页与可恢复会话
+│   ├── recommended_feed_controller.dart # NDJSON 候选边收边匹配/临时展示，done 提交与失败回滚；Tab/切源保留 Session，按来源重建匹配
+│   ├── recommendation_unavailable_section.dart # 推荐未匹配/歧义折叠区：默认海报、状态摘要与手动确认入口
 │   ├── curated_vod_search_pool.dart   # Home 生命周期 VOD 查询池：同步 ready 读取、SingleFlight、来源隔离、TTL/LRU 与清理/取消
 │   ├── curated_video_grid.dart        # 策展专用自适应 Sliver 网格：保持 Catalog 卡位并承载页头、统计和显式加载操作
 │   ├── curated_video_card.dart        # 策展专用卡片：Catalog 海报/排名/评分即时展示及七种来源匹配状态
