@@ -23,19 +23,28 @@ Flutter Android/iOS 视频点播 MVP。列表、搜索和详情直连配置的 V
 
 ## 运行
 
+项目使用 FVM 锁定 Flutter 3.41.3。首次拉取或 `.fvmrc` 变更后先执行
+`fvm use`，后续统一通过 FVM 调用 Flutter，避免本机默认 SDK 污染生成配置。
+
 ```bash
-flutter pub get
-flutter run
+fvm use
+fvm flutter pub get
+./tool/check_flutter_sdk.sh
+fvm flutter run
 ```
 
 Android 调试包输出：`build/app/outputs/flutter-apk/app-debug.apk`。
+
+VS Code 已通过 `.vscode/settings.json` 指向 `.fvm/flutter_sdk`。Android Studio /
+IntelliJ 也应将 Flutter SDK 设为项目下的 `.fvm/flutter_sdk`，不要指向
+`~/fvm/default` 或具体的全局版本目录。
 
 ### 生成 TMDB 在线榜单
 
 App 不直连 TMDB，也不包含 TMDB Token。定时任务使用本地生成器产出 `manifest.json` 和三份 Feed JSON：
 
 ```bash
-dart run tool/generate_tmdb_catalog.dart \
+fvm dart run tool/generate_tmdb_catalog.dart \
   --output assets/tmdb/v1 \
   --pages 10 \
   --proxy http://127.0.0.1:1087

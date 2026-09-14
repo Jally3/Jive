@@ -19,22 +19,24 @@ For a per-file index of what each Dart file does, see `doc/codebase/CODEBASE_MAP
 Run these from the repository root:
 
 ```bash
-flutter pub get       # Install/resolve Dart and Flutter dependencies
-flutter analyze       # Run the configured static lints and analyzer
-flutter test          # Run all unit and widget tests
-flutter run           # Launch on a connected device or emulator
-flutter build apk     # Build the Android APK
+fvm use                         # Sync the local SDK link to .fvmrc
+fvm flutter pub get             # Install/resolve Dart and Flutter dependencies
+./tool/check_flutter_sdk.sh     # Verify generated configs use the same SDK
+fvm flutter analyze             # Run the configured static lints and analyzer
+fvm flutter test                # Run all unit and widget tests
+fvm flutter run                 # Launch on a connected device or emulator
+fvm flutter build apk           # Build the Android APK
 ```
 
-Use `flutter test test/video_repository_test.dart` to run one test file. Keep the Flutter SDK compatible with `pubspec.yaml`; the `screen_brightness_ios` override is intentional for Flutter 3.35 compatibility.
+Use `fvm flutter test test/video_repository_test.dart` to run one test file. `.fvmrc` is the single source of truth for the Flutter version; never mix bare `flutter` commands with `fvm flutter` in this repository.
 
 ## Coding Style & Naming Conventions
 
-Follow `flutter_lints` from `analysis_options.yaml`. Use two-space indentation, trailing commas for multiline Dart, `UpperCamelCase` types, `lowerCamelCase` members/variables, and `snake_case.dart` filenames (for example, `playback_scrubber.dart`). Keep UI pages in `features/`, domain models free of UI concerns, and repository/network or persistence logic in `data/`. Run `dart format lib test` before submitting.
+Follow `flutter_lints` from `analysis_options.yaml`. Use two-space indentation, trailing commas for multiline Dart, `UpperCamelCase` types, `lowerCamelCase` members/variables, and `snake_case.dart` filenames (for example, `playback_scrubber.dart`). Keep UI pages in `features/`, domain models free of UI concerns, and repository/network or persistence logic in `data/`. Run `fvm dart format lib test` before submitting.
 
 ## Testing Guidelines
 
-Tests use `flutter_test` and cover repositories, playback state, controllers, widgets, and UI components. Add focused tests alongside behavior changes, using `_test.dart` and descriptive test/group names. Run `flutter analyze` and `flutter test` before a PR. There is no numeric coverage threshold, but new data and playback logic should include regression coverage.
+Tests use `flutter_test` and cover repositories, playback state, controllers, widgets, and UI components. Add focused tests alongside behavior changes, using `_test.dart` and descriptive test/group names. Run `fvm flutter analyze` and `fvm flutter test` before a PR. There is no numeric coverage threshold, but new data and playback logic should include regression coverage.
 
 ## Commit & Pull Request Guidelines
 
