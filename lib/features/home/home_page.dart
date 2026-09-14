@@ -1394,7 +1394,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
       );
     }
-    if (c.items.isEmpty && c.unavailableSlots.isEmpty) {
+    if (c.items.isEmpty && c.unavailableSlots.isEmpty && !c.loading) {
       return _stateScrollView(
         source,
         AppEmptyView(message: '当前来源暂未找到可播放的推荐内容'),

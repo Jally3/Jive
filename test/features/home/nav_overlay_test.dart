@@ -1,15 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
 import 'package:jive/data/catalog/tmdb_catalog_repository.dart';
+import 'package:jive/data/recommendation/recommendation_client.dart';
+import 'package:jive/data/recommendation/recommendation_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_preferences.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
+import 'package:jive/domain/library.dart';
+import 'package:jive/domain/recommendation.dart';
 import 'package:jive/domain/tmdb_catalog.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/vod_source.dart';
+import 'package:jive/domain/watch_record.dart';
 import 'package:jive/features/home/home_page.dart';
 import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/shared/video_card.dart';
@@ -102,6 +109,72 @@ class _SlowCuratedSearchRepository extends _FakeRepository {
       keyword: keyword,
     );
   }
+}
+
+class _ControlledRecommendationSearchRepository extends _FakeRepository {
+  final _searchResult = Completer<VideoPage>();
+
+  @override
+  Future<VideoPage> fetchPage(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+  }) {
+    if (keyword != null) return _searchResult.future;
+    return super.fetchPage(
+      source,
+      page: page,
+      categoryId: categoryId,
+      keyword: keyword,
+    );
+  }
+
+  void completeSearch() {
+    _searchResult.complete(
+      const VideoPage(
+        items: [Video(id: '0', title: '影片0', typeId: 1, category: '电影片')],
+        page: 1,
+        pageCount: 1,
+      ),
+    );
+  }
+}
+
+class _StreamingRecommendationClient
+    implements RecommendationClient, StreamingRecommendationClient {
+  _StreamingRecommendationClient() {
+    _controller = StreamController<RecommendationStreamEvent>(
+      onListen: _listened.complete,
+    );
+  }
+
+  final _listened = Completer<void>();
+  late final StreamController<RecommendationStreamEvent> _controller;
+
+  Future<void> waitUntilListened() => _listened.future;
+  void add(RecommendationStreamEvent event) => _controller.add(event);
+  Future<void> close() =>
+      _controller.isClosed ? Future.value() : _controller.close();
+
+  @override
+  RecommendationStreamRequest recommendStream({
+    required List<WatchRecord> history,
+    required List<FavoriteRecord> library,
+  }) => RecommendationStreamRequest(
+    events: _controller.stream,
+    cancel: () async {},
+  );
+
+  @override
+  RecommendationStreamRequest nextPageStream(String cursor) =>
+      throw UnimplementedError();
+
+  @override
+  Future<RecommendationBatch> recommend({
+    required List<WatchRecord> history,
+    required List<FavoriteRecord> library,
+  }) => throw UnimplementedError();
 }
 
 class _FakeTmdbCatalogRepository implements TmdbCatalogRepository {
@@ -289,6 +362,92 @@ void main() {
     print('grid: $grid scaffold: $scaffold');
     expect(grid.bottom, scaffold.bottom);
   });
+
+  testWidgets(
+    'recommendation stream shows matching progress before the first VOD match',
+    (tester) async {
+      final streamClient = _StreamingRecommendationClient();
+      addTearDown(streamClient.close);
+      final videoRepository = _ControlledRecommendationSearchRepository();
+      final container = ProviderContainer(
+        overrides: [
+          videoRepositoryProvider.overrideWithValue(videoRepository),
+          tmdbCatalogRepositoryProvider.overrideWithValue(
+            _FakeTmdbCatalogRepository(),
+          ),
+          recommendationRepositoryProvider.overrideWithValue(
+            RecommendationRepository(
+              client: streamClient,
+              preferences: await SharedPreferences.getInstance(),
+            ),
+          ),
+          vodSourceRegistryProvider.overrideWith(
+            (ref) async => VodSourceRegistry([_testSource], {}),
+          ),
+        ],
+      );
+      await container.read(vodSourceRegistryProvider.future);
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: ThemeData(splashFactory: NoSplash.splashFactory),
+            home: const Scaffold(body: HomePage()),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.widgetWithText(ChoiceChip, '猜你喜欢'));
+      await tester.pump();
+      await streamClient.waitUntilListened();
+      streamClient.add(
+        const RecommendationStreamStart(
+          requestId: 'request',
+          clientRequestId: 'client-request',
+          mode: RecommendationMode.personalized,
+          source: RecommendationSource.llm,
+        ),
+      );
+      streamClient.add(
+        const RecommendationStreamItem(
+          index: 1,
+          item: RecommendationCandidate(
+            title: '影片0',
+            mediaType: TmdbMediaType.movie,
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+
+      expect(
+        find.byKey(const ValueKey('recommendation-matching-progress')),
+        findsOneWidget,
+      );
+      expect(find.text('当前来源暂未找到可播放的推荐内容'), findsNothing);
+
+      videoRepository.completeSearch();
+      streamClient.add(
+        RecommendationStreamDone(
+          RecommendationBatch(
+            requestId: 'request',
+            clientRequestId: 'client-request',
+            items: const [
+              RecommendationCandidate(
+                title: '影片0',
+                mediaType: TmdbMediaType.movie,
+              ),
+            ],
+            generatedAt: DateTime.now(),
+          ),
+        ),
+      );
+      await streamClient.close();
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('home uses a compact intro and an explicit channels icon', (
     tester,
