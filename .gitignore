@@ -29,6 +29,10 @@ migrate_working_dir/
 # Local TMDB credential (never commit)
 /.tmdb-token
 
+# Local AI credentials (never commit)
+/secrets/
+/.secrets/
+
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
