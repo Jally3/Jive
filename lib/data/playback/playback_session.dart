@@ -15,9 +15,12 @@ import './hls_parser.dart';
 import './local_proxy.dart';
 import '../cache/url_normalizer.dart';
 
+/// 播放会话从准备到释放的生命周期状态。
 enum PlaybackSessionStatus { preparing, ready, closing, closed, failed }
 
+/// 会话准备结果：可能成功得到代理会话，也可能携带直连回退状态。
 class PlaybackSessionPreparation {
+  /// [session] 为 null 表示应根据 [status] 走直连或显示失败原因。
   const PlaybackSessionPreparation({
     required this.session,
     required this.status,
@@ -27,7 +30,9 @@ class PlaybackSessionPreparation {
   final PlaybackStatus status;
 }
 
+/// 一次播放选择对应的本地代理、缓存引用、清单和时间轴生命周期。
 class PlaybackSession {
+  /// 私有构造器只接收已完成准备的资源；新会话统一通过 [prepare] 创建。
   PlaybackSession._({
     required this.selection,
     required this.sessionId,
@@ -64,6 +69,15 @@ class PlaybackSession {
 
   static final Random _random = Random.secure();
 
+  /// 为 [selection] 准备可播放会话。
+  ///
+  /// [proxy]/[parser]/[client] 分别负责本地服务、HLS 解析和远端请求；
+  /// [cacheManager] 与 [store] 必须同时提供才启用缓存；[offlineOnly] 为 true
+  /// 时只尝试完整离线缓存；[timeout] 限制清单解析耗时；[onCacheBypass]
+  /// 用于上报因缓存异常而改走网络的原因。
+  ///
+  /// 执行顺序为：完整离线缓存 -> 离线模式回退 -> 在线 HLS 解析 ->
+  /// 建立代理与可选缓存。任何未预期错误都安全回退直连。
   static Future<PlaybackSessionPreparation> prepare({
     required PlaybackSelection selection,
     required LocalProxyServer proxy,
@@ -263,6 +277,10 @@ class PlaybackSession {
     }
   }
 
+  /// 从已完成的缓存条目构建不访问媒体源站的代理会话。
+  ///
+  /// [entry] 提供 manifest revision 与过滤版本；若代理清单或资源目录缺失，
+  /// 返回 null，让调用方继续尝试在线播放。
   static Future<PlaybackSession?> _buildOfflineSession({
     required PlaybackSelection selection,
     required LocalProxyServer proxy,
@@ -340,6 +358,10 @@ class PlaybackSession {
 
   SegmentPrefetcher? get prefetcher => _prefetcher;
 
+  /// 延迟创建分片预取器并在会话内复用。
+  ///
+  /// [windowSize] 返回从当前播放点向前预取的目标时长，可随网络动态变化。
+  /// 无缓存 fetcher、无在线清单或无分片时返回 null。
   SegmentPrefetcher? buildPrefetcher({Duration Function()? windowSize}) {
     final existing = _prefetcher;
     if (existing != null) return existing;
@@ -355,6 +377,9 @@ class PlaybackSession {
     return created;
   }
 
+  /// 平稳关闭会话：停止预取、等待在途读取、注销路由并释放缓存引用。
+  ///
+  /// 最多等待在途请求 2 秒，重复关闭是幂等的。
   Future<void> close(LocalProxyServer proxy) async {
     if (status == PlaybackSessionStatus.closed ||
         status == PlaybackSessionStatus.closing) {
@@ -375,12 +400,14 @@ class PlaybackSession {
     status = PlaybackSessionStatus.closed;
   }
 
+  /// 用新会话 [newToken] 替换持久化代理清单中的旧 token。
   static String _replaceToken(String raw, String newToken) =>
       raw.replaceAllMapped(
         RegExp(r'/play/[^/]+/res/'),
         (_) => '/play/$newToken/res/',
       );
 
+  /// 从缓存目录加载被删除广告时间段；缺失、损坏或空数据均返回 null。
   static Future<TimelineMapping?> _loadTimelineMapping(
     CacheIndexStore store,
     String contentKeyHash,
@@ -408,6 +435,7 @@ class PlaybackSession {
     }
   }
 
+  /// 将 [mapping] 与清单指纹、规则版本一起保存，供离线会话恢复时间轴。
   static Future<void> _saveTimeline(
     CacheIndexStore store,
     String contentKeyHash,
@@ -434,6 +462,7 @@ class PlaybackSession {
     );
   }
 
+  /// 汇总结构化清单全部分片时长，返回毫秒。
   static int _totalDurationMs(HlsMediaPlaylist playlist) {
     var total = 0;
     for (final segment in playlist.segments) {
@@ -443,6 +472,7 @@ class PlaybackSession {
     return total;
   }
 
+  /// 直接从 manifest 文本汇总 EXTINF 时长，供离线清单使用。
   static int _extinfDurationMs(String raw) {
     var total = 0;
     for (final match in RegExp(r'#EXTINF:\s*([\d.]+)').allMatches(raw)) {
@@ -452,6 +482,7 @@ class PlaybackSession {
     return total;
   }
 
+  /// 将 HLS 解析器的文本原因映射为稳定的播放器回退枚举。
   static PlaybackFallbackReason _fallbackReasonForHls(String? reason) {
     final text = reason ?? '';
     if (text.contains('直播')) return PlaybackFallbackReason.liveStream;
@@ -468,6 +499,7 @@ class PlaybackSession {
     return PlaybackFallbackReason.unsupportedHls;
   }
 
+  /// 生成 128 位随机十六进制 token，用于隔离代理会话和 URL 路由。
   static String _token() {
     final buffer = StringBuffer();
     for (var i = 0; i < 16; i++) {

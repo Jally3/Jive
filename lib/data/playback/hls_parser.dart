@@ -4,9 +4,12 @@ import 'package:http/http.dart' as http;
 import '../../domain/playback_source.dart';
 import './ad_filter.dart';
 
+/// HLS 是否能进入本地代理/缓存链路；不支持时播放器应改用源地址直连。
 enum HlsCacheability { cacheable, directFallback }
 
+/// HLS 解析决策，封装可缓存清单或必须直连的原因。
 class HlsDecision {
+  /// 清单无需过滤且可以进入代理/缓存链路。
   const HlsDecision.cacheable(HlsMediaPlaylist playlist)
     : cacheability = HlsCacheability.cacheable,
       mediaPlaylist = playlist,
@@ -14,6 +17,8 @@ class HlsDecision {
       filterConfidence = null,
       reason = null;
 
+  /// 清单已过滤广告；[sourcePlaylist] 保留原始清单用于审计和缓存元数据。
+  /// [filterConfidence] 是所有命中过滤块中的最低置信度。
   const HlsDecision.filtered(
     HlsMediaPlaylist playlist, {
     required this.sourcePlaylist,
@@ -22,6 +27,7 @@ class HlsDecision {
        mediaPlaylist = playlist,
        reason = null;
 
+  /// 清单无法安全改写；[reason] 用于映射用户可见的回退原因。
   const HlsDecision.directFallback(String this.reason)
     : cacheability = HlsCacheability.directFallback,
       mediaPlaylist = null,
@@ -37,7 +43,10 @@ class HlsDecision {
   bool get isCacheable => cacheability == HlsCacheability.cacheable;
 }
 
+/// 一个 HLS 媒体分片及其与前一分片的边界信息。
 class HlsSegment {
+  /// [byteRange] 对应 EXT-X-BYTERANGE，[duration] 单位为秒。
+  /// [discontinuityBefore] 表示该分片前存在时间戳/编码连续性断点。
   const HlsSegment({
     required this.uri,
     this.byteRange,
@@ -51,7 +60,10 @@ class HlsSegment {
   final bool discontinuityBefore;
 }
 
+/// 解析后的 HLS 媒体清单，以及代理、缓存和时间轴所需元数据。
 class HlsMediaPlaylist {
+  /// [baseUri] 用来解析相对资源地址，[raw] 保留当前实际使用的清单文本。
+  /// [timelineMapping] 仅在删除分片后存在，用来换算原始/过滤后时间轴。
   const HlsMediaPlaylist({
     required this.baseUri,
     required this.segments,
@@ -82,6 +94,7 @@ class HlsMediaPlaylist {
   final TimelineMapping? timelineMapping;
   final AdFilterReport? adFilterReport;
 
+  /// 复制清单并替换过滤报告，其余解析结果保持不变。
   HlsMediaPlaylist copyWith({AdFilterReport? adFilterReport}) =>
       HlsMediaPlaylist(
         baseUri: baseUri,
@@ -100,7 +113,10 @@ class HlsMediaPlaylist {
       );
 }
 
+/// 将远端 HLS 清单改写成本地代理地址后的执行计划。
 class HlsProxyPlan {
+  /// [resources] 记录资源 ID 到源站 URI 的映射；[extByResourceId]
+  /// 为磁盘缓存提供文件扩展名；[expectedResourceCount] 用于判断缓存完整度。
   const HlsProxyPlan({
     required this.proxyManifest,
     required this.resources,
@@ -133,7 +149,10 @@ const Set<String> _allowedMediaTags = {
   'KEY',
 };
 
+/// 负责下载、解析、校验 HLS 清单，并生成本地代理清单。
 class HlsParser {
+  /// [maxHops] 限制 master playlist 嵌套深度，避免循环或异常清单。
+  /// [adFilter] 默认关闭；启用后只过滤规则可确认的分片块。
   HlsParser({
     required this.client,
     this.maxHops = 3,
@@ -144,6 +163,9 @@ class HlsParser {
   final int maxHops;
   final AdFilter adFilter;
 
+  /// 从 [source] 开始解析 master/media 清单，并跟随最多 [maxHops] 层变体。
+  ///
+  /// 网络错误、HTTP 错误或不支持的清单不会抛给播放器，而是返回直连决策。
   Future<HlsDecision> resolve(PlaybackSource source) async {
     var current = source;
     for (var hop = 0; hop < maxHops; hop++) {
@@ -175,6 +197,9 @@ class HlsParser {
     return const HlsDecision.directFallback('master 层级过深');
   }
 
+  /// 校验并解析媒体清单 [body]；[baseUri] 用于解析其中的相对 URL。
+  ///
+  /// 直播、不支持的标签/加密格式会回退直连；其余清单可选执行广告过滤。
   HlsDecision decideMedia(String body, Uri baseUri) {
     final unsupported = _unsupportedTag(body);
     if (unsupported != null) {
@@ -203,6 +228,7 @@ class HlsParser {
     return HlsDecision.cacheable(playlist);
   }
 
+  /// 根据 [outcome] 构建移除广告分片后的新清单和时间轴映射。
   HlsMediaPlaylist buildFilteredPlaylist(
     HlsMediaPlaylist original,
     AdFilterResult outcome,
@@ -225,6 +251,7 @@ class HlsParser {
     );
   }
 
+  /// 逐行删除被标记分片，并正确保留/补回 DISCONTINUITY 边界。
   String _buildFilteredRaw(HlsMediaPlaylist original, AdFilterResult outcome) {
     final buffer = StringBuffer();
     var sawMap = false;
@@ -278,6 +305,7 @@ class HlsParser {
     return buffer.toString();
   }
 
+  /// 把媒体清单文本解析成分片、初始化段、加密和直播状态等结构化信息。
   HlsMediaPlaylist _parseMedia(String body, Uri baseUri) {
     final segments = <HlsSegment>[];
     Uri? mapUri;
@@ -366,6 +394,9 @@ class HlsParser {
     );
   }
 
+  /// 把 [playlist] 中的远端资源 URL 改写为带 [sessionToken] 的本地路径。
+  ///
+  /// 分片、EXT-X-MAP 和 AES-128 密钥都会登记为可代理资源。
   HlsProxyPlan buildProxyPlan(HlsMediaPlaylist playlist, String sessionToken) {
     final resources = <String, Uri>{};
     final extByResourceId = <String, String>{};
@@ -434,8 +465,11 @@ class HlsParser {
     );
   }
 
+  /// 使用完整 URI 的 SHA-256 生成稳定且不泄露源站路径的资源 ID。
   static String resourceId(Uri uri) =>
       'sha256:${sha256.convert(utf8.encode(uri.toString())).toString()}';
+
+  /// 从 URI 路径提取安全扩展名，无法确认时使用 bin。
   static String extFor(Uri uri) {
     final path = uri.path.toLowerCase();
     final dot = path.lastIndexOf('.');
@@ -446,12 +480,14 @@ class HlsParser {
     return 'bin';
   }
 
+  /// 读取必须带双引号的 HLS 属性值。
   static String? _attr(String line, String key) {
     final pattern = RegExp('$key="([^"]*)"');
     final match = pattern.firstMatch(line);
     return match?.group(1);
   }
 
+  /// 读取可带引号或不带引号的 HLS 属性值。
   static String? _attrValue(String line, String key) {
     final quoted = RegExp('$key="([^"]*)"').firstMatch(line)?.group(1);
     if (quoted != null) return quoted;
@@ -461,6 +497,7 @@ class HlsParser {
   static bool _isMaster(String body) =>
       body.contains('#EXT-X-STREAM-INF:') || body.contains('#EXT-X-STREAM-INF');
 
+  /// 选取 master 清单中的第一个变体 URI。
   static Uri? _firstVariantUri(String body, Uri baseUri) {
     final lines = const LineSplitter().convert(body);
     for (var i = 0; i < lines.length; i++) {
@@ -476,6 +513,7 @@ class HlsParser {
     return null;
   }
 
+  /// 返回首个代理链路不支持的标签；返回 null 表示标签集合可安全改写。
   static String? _unsupportedTag(String body) {
     final seen = <String>{};
     for (final match in RegExp(r'#EXT-X-[A-Z0-9-]+').allMatches(body)) {
@@ -496,5 +534,7 @@ class HlsParser {
 /// 指纹基于实际使用的（可能已过滤广告的）清单——清单内容本身已蕴含
 /// 过滤规则版本的影响，因此无需额外的过滤版本后缀。两条路径必须使用
 /// 同一个函数，否则同一剧集会在磁盘上裂成两份。
+///
+/// [baseUri] 区分源清单地址，[manifestFingerprint] 区分清单内容版本。
 String hlsRevisionKeyHash(Uri baseUri, String manifestFingerprint) =>
     'sha256:${sha256.convert(utf8.encode('$baseUri|$manifestFingerprint'))}';

@@ -20,7 +20,9 @@ final prefetchModeProvider =
       PrefetchModeNotifier.new,
     );
 
+/// 读取、更新并持久化用户选择的预加载模式。
 class PrefetchModeNotifier extends AsyncNotifier<PrefetchMode> {
+  /// 从本地偏好恢复模式；未保存时默认使用 [PrefetchMode.auto]。
   @override
   Future<PrefetchMode> build() async {
     final prefs = await SharedPreferences.getInstance();
@@ -28,6 +30,7 @@ class PrefetchModeNotifier extends AsyncNotifier<PrefetchMode> {
     return raw == PrefetchMode.off.name ? PrefetchMode.off : PrefetchMode.auto;
   }
 
+  /// 立即更新界面状态，并将新的 [mode] 写入本地偏好。
   Future<void> setMode(PrefetchMode mode) async {
     state = AsyncData(mode);
     final prefs = await SharedPreferences.getInstance();
@@ -36,6 +39,8 @@ class PrefetchModeNotifier extends AsyncNotifier<PrefetchMode> {
 }
 
 /// 计算当前预取目标时长：模式关闭或网络类型未知时返回 0（不预取）。
+///
+/// [mode] 是用户设置，[results] 是设备当前可能同时存在的网络连接类型。
 Duration prefetchAheadFor(
   PrefetchMode mode,
   List<ConnectivityResult>? results,

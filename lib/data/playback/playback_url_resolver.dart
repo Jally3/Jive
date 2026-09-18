@@ -4,6 +4,7 @@ import '../../domain/playback_selection.dart';
 import '../../domain/playback_source.dart';
 import '../../domain/video.dart';
 
+/// 播放页解析失败时抛出的面向用户异常，避免泄露底层网络异常细节。
 class PlaybackUrlResolutionException implements Exception {
   const PlaybackUrlResolutionException(this.message);
 
@@ -13,19 +14,25 @@ class PlaybackUrlResolutionException implements Exception {
   String toString() => message;
 }
 
+/// 将格式未知的播放页 URL 解析成可直接播放的 HTTPS 媒体 URL。
 class PlaybackUrlResolver {
+  /// [client] 由上层注入，便于复用会话 Header 和编写网络测试。
+  /// [maxHtmlBytes] 限制解析页大小，避免把大型二进制误当 HTML 处理。
   PlaybackUrlResolver({required this.client, this.maxHtmlBytes = 128 * 1024});
 
   final http.Client client;
   final int maxHtmlBytes;
   final Map<String, ({PlaybackSource source, DateTime at})> _cache = {};
 
-  /// Removes the cached resolution for one original playback URL.
+  /// 清除一个原始播放 URL 的解析缓存。
   void clearCacheFor(Uri url) => _cache.remove(url.toString());
 
-  /// Removes every cached playback URL resolution held by this resolver.
+  /// 清除当前解析器持有的全部 URL 解析缓存。
   void clearCache() => _cache.clear();
 
+  /// 解析 [selection] 中的播放源，并在 URL 变化时同步重建 Episode。
+  ///
+  /// 选择对象里的来源、线路和剧集身份保持不变，仅替换可播放地址与格式。
   Future<PlaybackSelection> resolveSelection(
     PlaybackSelection selection,
   ) async {
@@ -48,6 +55,7 @@ class PlaybackUrlResolver {
     );
   }
 
+  /// 解析一个播放源；已知格式直接返回，未知格式使用 10 分钟内存缓存。
   Future<PlaybackSource> resolve(PlaybackSource source) async {
     if (source.format != PlaybackFormat.unknown) return source;
     final cached = _cache[source.url.toString()];
@@ -69,6 +77,7 @@ class PlaybackUrlResolver {
     }
   }
 
+  /// 请求未知地址：若响应本身不是媒体，则把它作为 HTML 解析页提取候选 URL。
   Future<PlaybackSource> _resolveUnknown(PlaybackSource source) async {
     final initial = source.url;
     if (!_isAllowed(initial)) {
@@ -123,6 +132,7 @@ class PlaybackUrlResolver {
     return _rangeGetMedia(source, candidate, hintedFormat);
   }
 
+  /// 对已有扩展名提示的 [candidate] 先发 HEAD，失败后再用 Range GET 探测。
   Future<PlaybackSource> _probeHintedMedia(
     PlaybackSource source,
     Uri candidate,
@@ -145,6 +155,7 @@ class PlaybackUrlResolver {
     return _rangeGetMedia(source, candidate, hintedFormat);
   }
 
+  /// 下载 [candidate] 的前 512 字节，结合最终重定向 URL 和响应头确认格式。
   Future<PlaybackSource> _rangeGetMedia(
     PlaybackSource source,
     Uri candidate,
@@ -177,6 +188,7 @@ class PlaybackUrlResolver {
     return _finalSource(source, mediaUri, resolvedFormat);
   }
 
+  /// 保留原播放源的 Header，仅替换最终 [url] 和已确认的 [format]。
   PlaybackSource _finalSource(
     PlaybackSource source,
     Uri url,
@@ -187,6 +199,9 @@ class PlaybackUrlResolver {
     headers: Map<String, String>.from(source.headers),
   );
 
+  /// 从 HTML 中收集常见脚本变量、url/src 字段和 video/source 标签地址。
+  ///
+  /// 仅保留 HTTPS 候选，并优先选择 HLS，其次 MP4、DASH。
   Uri? _bestMediaCandidate(String html, Uri baseUri) {
     final decoded = html.replaceAll('&amp;', '&');
     final patterns = <RegExp>[
@@ -213,6 +228,7 @@ class PlaybackUrlResolver {
     return candidates.firstOrNull;
   }
 
+  /// 按应用偏好的媒体格式给候选地址评分。
   static int _score(Uri uri) {
     final lower = uri.toString().toLowerCase();
     if (lower.contains('.m3u8')) return 30;
@@ -224,6 +240,7 @@ class PlaybackUrlResolver {
   static bool _isAllowed(Uri uri) =>
       uri.scheme == 'https' && uri.host.isNotEmpty;
 
+  /// 综合 URL 后缀、Content-Type 与文件头魔数识别播放格式。
   static PlaybackFormat _formatFrom(
     Uri uri,
     String contentType,

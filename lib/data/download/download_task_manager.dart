@@ -41,6 +41,14 @@ enum DownloadFailureReason {
   cacheWriteFailed,
   filterFailed,
   cancelled,
+  sourceAccessDenied,
+  sourceMissing,
+  resourceInvalid,
+  resourceTruncated,
+  invalidEncryptionKey,
+  localWriteFailed,
+  offlineFilesIncomplete,
+  unexpected,
 }
 
 enum DownloadPauseReason { user, network, lifecycle }
@@ -784,7 +792,11 @@ class DownloadTaskManager {
             );
             if (result.statusCode >= 400) {
               await result.body.drain<void>();
-              throw const _DownloadException(DownloadFailureReason.network);
+              throw _DownloadException(switch (result.statusCode) {
+                401 || 403 => DownloadFailureReason.sourceAccessDenied,
+                404 || 410 => DownloadFailureReason.sourceMissing,
+                _ => DownloadFailureReason.network,
+              });
             }
             await result.body.drain<void>();
           } finally {
@@ -810,11 +822,15 @@ class DownloadTaskManager {
       // 过滤已在解析阶段完成，分片集合与在线播放一致，无需后置过滤步骤。
       final finalized = await cacheManager.finalizeEntry(entry.key);
       if (!finalized) {
-        throw const _DownloadException(DownloadFailureReason.cacheWriteFailed);
+        throw const _DownloadException(
+          DownloadFailureReason.offlineFilesIncomplete,
+        );
       }
       final current = await cacheManager.getEntry(entry.key);
       if (current == null || !current.offlinePlayable) {
-        throw const _DownloadException(DownloadFailureReason.cacheWriteFailed);
+        throw const _DownloadException(
+          DownloadFailureReason.offlineFilesIncomplete,
+        );
       }
       await _set(
         _tasks[taskId]!.copyWith(
@@ -845,10 +861,28 @@ class DownloadTaskManager {
         await _set(
           current.copyWith(
             status: DownloadTaskStatus.failed,
-            error: DownloadFailureReason.encryptedStream,
+            error: DownloadFailureReason.invalidEncryptionKey,
           ),
         );
       }
+    } on CacheResourceIntegrityException catch (error) {
+      await _fail(
+        taskId,
+        error.kind == CacheResourceIntegrityKind.truncated
+            ? DownloadFailureReason.resourceTruncated
+            : DownloadFailureReason.resourceInvalid,
+      );
+    } on CacheEntryNotWritableException {
+      await _fail(taskId, DownloadFailureReason.cacheWriteFailed);
+    } on CacheUpstreamStreamException {
+      await _fail(taskId, DownloadFailureReason.network);
+    } on FileSystemException catch (error) {
+      await _fail(
+        taskId,
+        error.osError?.errorCode == 28
+            ? DownloadFailureReason.quotaExceeded
+            : DownloadFailureReason.localWriteFailed,
+      );
     } on _DownloadException catch (error) {
       if (_pauseRequested.contains(taskId)) {
         await _set(_tasks[taskId]!.copyWith(status: DownloadTaskStatus.paused));
@@ -863,23 +897,31 @@ class DownloadTaskManager {
           );
         }
       }
+    } on SocketException {
+      await _fail(taskId, DownloadFailureReason.network);
+    } on http.ClientException {
+      await _fail(taskId, DownloadFailureReason.network);
+    } on HttpException {
+      await _fail(taskId, DownloadFailureReason.network);
+    } on TimeoutException {
+      await _fail(taskId, DownloadFailureReason.network);
     } catch (_) {
-      final current = _tasks[taskId];
-      // 与 _DownloadException 分支一致：暂停请求优先于失败落账，
-      // 避免暂停瞬间的在途分片报错把任务卡在 downloading。
-      if (current != null && _pauseRequested.contains(taskId)) {
-        await _set(current.copyWith(status: DownloadTaskStatus.paused));
-      } else if (current != null && !_cancelRequested.contains(taskId)) {
-        await _set(
-          current.copyWith(
-            status: DownloadTaskStatus.failed,
-            error: DownloadFailureReason.network,
-          ),
-        );
-      }
+      await _fail(taskId, DownloadFailureReason.unexpected);
     } finally {
       _stopSpeedTimer(taskId);
       await ref?.dispose();
+    }
+  }
+
+  Future<void> _fail(String taskId, DownloadFailureReason reason) async {
+    final current = _tasks[taskId];
+    if (current == null) return;
+    if (_pauseRequested.contains(taskId)) {
+      await _set(current.copyWith(status: DownloadTaskStatus.paused));
+    } else if (!_cancelRequested.contains(taskId)) {
+      await _set(
+        current.copyWith(status: DownloadTaskStatus.failed, error: reason),
+      );
     }
   }
 
@@ -1135,8 +1177,16 @@ String downloadFailureText(DownloadFailureReason? reason) => switch (reason) {
   DownloadFailureReason.encryptedStream => '加密视频暂不支持下载',
   DownloadFailureReason.quotaExceeded => '存储空间不足',
   DownloadFailureReason.network => '网络请求失败，请重试',
-  DownloadFailureReason.cacheWriteFailed => '缓存写入失败，请检查存储空间',
+  DownloadFailureReason.cacheWriteFailed => '缓存文件未能保存，请重试',
   DownloadFailureReason.filterFailed => '视频处理失败，请重试',
   DownloadFailureReason.cancelled => '任务已取消',
+  DownloadFailureReason.sourceAccessDenied => '片源拒绝访问，请切换线路',
+  DownloadFailureReason.sourceMissing => '视频分片已失效，请切换线路',
+  DownloadFailureReason.resourceInvalid => '视频分片内容异常，请切换线路重试',
+  DownloadFailureReason.resourceTruncated => '视频分片下载不完整，请重试',
+  DownloadFailureReason.invalidEncryptionKey => '视频密钥内容异常，请切换线路',
+  DownloadFailureReason.localWriteFailed => '本地文件写入失败，请检查设备存储',
+  DownloadFailureReason.offlineFilesIncomplete => '离线文件不完整，请重试下载',
+  DownloadFailureReason.unexpected => '下载处理失败，请重试',
   null => '下载失败，请重试',
 };

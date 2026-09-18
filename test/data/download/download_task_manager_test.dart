@@ -95,6 +95,118 @@ PlaybackSelection _selectionFor(int index) {
 }
 
 void main() {
+  test(
+    'download reports the source response and invalid segment precisely',
+    () async {
+      for (final scenario
+          in <
+            ({
+              int status,
+              String body,
+              Map<String, String> headers,
+              DownloadFailureReason reason,
+            })
+          >[
+            (
+              status: 403,
+              body: 'forbidden',
+              headers: const {},
+              reason: DownloadFailureReason.sourceAccessDenied,
+            ),
+            (
+              status: 404,
+              body: 'missing',
+              headers: const {},
+              reason: DownloadFailureReason.sourceMissing,
+            ),
+            (
+              status: 503,
+              body: 'unavailable',
+              headers: const {},
+              reason: DownloadFailureReason.network,
+            ),
+            (
+              status: 200,
+              body: '<html>expired</html>',
+              headers: const {},
+              reason: DownloadFailureReason.resourceInvalid,
+            ),
+            (
+              status: 200,
+              body: 'Gsegment',
+              headers: const {'content-length': '100'},
+              reason: DownloadFailureReason.resourceTruncated,
+            ),
+          ]) {
+        final directory = Directory.systemTemp.createTempSync(
+          'jive_download_failure_test',
+        );
+        final store = CacheIndexStore(directory);
+        final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+        await cache.initialize();
+        final client = MockClient((request) async {
+          if (request.url.path.endsWith('.m3u8')) {
+            return http.Response(
+              '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+              200,
+            );
+          }
+          return http.Response(
+            scenario.body,
+            scenario.status,
+            headers: scenario.headers,
+          );
+        });
+        final manager = DownloadTaskManager(
+          store: store,
+          cacheManager: cache,
+          client: client,
+          resolveSelection: (_) async => _selection(),
+        );
+        await manager.initialize();
+        final task = await manager.enqueue(_selection());
+        DownloadTask current = task;
+        for (var i = 0; i < 100; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          current = manager.tasks.firstWhere(
+            (item) => item.taskId == task.taskId,
+          );
+          if (current.status == DownloadTaskStatus.failed) break;
+        }
+        expect(current.status, DownloadTaskStatus.failed);
+        expect(current.error, scenario.reason);
+        expect(downloadFailureText(current.error), isNotEmpty);
+        await manager.dispose();
+        await cache.flush();
+        directory.deleteSync(recursive: true);
+      }
+    },
+  );
+
+  test('failure messages distinguish storage, source, and offline files', () {
+    expect(downloadFailureText(DownloadFailureReason.quotaExceeded), '存储空间不足');
+    expect(
+      downloadFailureText(DownloadFailureReason.localWriteFailed),
+      '本地文件写入失败，请检查设备存储',
+    );
+    expect(
+      downloadFailureText(DownloadFailureReason.resourceInvalid),
+      '视频分片内容异常，请切换线路重试',
+    );
+    expect(
+      downloadFailureText(DownloadFailureReason.resourceTruncated),
+      '视频分片下载不完整，请重试',
+    );
+    expect(
+      downloadFailureText(DownloadFailureReason.invalidEncryptionKey),
+      '视频密钥内容异常，请切换线路',
+    );
+    expect(
+      downloadFailureText(DownloadFailureReason.offlineFilesIncomplete),
+      '离线文件不完整，请重试下载',
+    );
+  });
+
   test('cellular gate waits and supports a one-time task override', () async {
     final directory = Directory.systemTemp.createTempSync(
       'jive_download_cellular_test',

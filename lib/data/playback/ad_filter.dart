@@ -1,10 +1,13 @@
 import 'dart:math';
 import './hls_parser.dart';
 
+/// 广告识别规则版本。修改规则阈值或含义时应递增，便于诊断缓存差异。
 const String adFilterVersion = 'adfilter-v3';
 
+/// 原始时间轴与过滤后时间轴的映射格式版本。
 const int adTimelineVersion = 1;
 
+/// 广告规则的稳定标识，用于调试报告而非面向用户展示。
 abstract final class AdFilterRule {
   static const explicit = 'explicit';
   static const shortCluster = 'shortCluster';
@@ -15,6 +18,7 @@ abstract final class AdFilterRule {
   static const cadenceDwarf = 'cadenceDwarf';
 }
 
+/// 一次规则命中记录；start/end 均为原始清单中的闭区间分片下标。
 class AdRuleHit {
   const AdRuleHit({
     required this.rule,
@@ -29,7 +33,9 @@ class AdRuleHit {
   final int totalMs;
 }
 
+/// 一次清单过滤的汇总报告，供界面提示和问题诊断使用。
 class AdFilterReport {
+  /// [originalCount]/[removedCount] 是分片数量，[removedMs] 是移除总时长。
   const AdFilterReport({
     required this.version,
     required this.originalCount,
@@ -46,6 +52,7 @@ class AdFilterReport {
 
   bool get removedAny => removedCount > 0;
 
+  /// 生成人类可读的过滤结果说明。
   String get statusText {
     if (!removedAny) {
       return '广告过滤：未识别到可跳过分片。硬编进正片、且清单无断点的广告无法去除。';
@@ -59,6 +66,7 @@ class AdFilterReport {
   ];
 }
 
+/// 原始播放时间轴上被删除的一段半开区间 `[startMs, endMs)`。
 class RemovedRange {
   const RemovedRange(this.startMs, this.endMs);
 
@@ -68,7 +76,9 @@ class RemovedRange {
   int get lengthMs => endMs - startMs;
 }
 
+/// 在原始清单时间轴与过滤后播放时间轴之间双向换算。
 class TimelineMapping {
+  /// [ranges] 可以无序传入，构造时会按起点排序。
   TimelineMapping(List<RemovedRange> ranges)
     : _ranges = [...ranges]..sort((a, b) => a.startMs.compareTo(b.startMs));
 
@@ -76,6 +86,7 @@ class TimelineMapping {
 
   List<RemovedRange> get ranges => List.unmodifiable(_ranges);
 
+  /// 把原始源位置 [position] 映射为删除广告后的播放器位置。
   Duration sourceToFiltered(Duration position) {
     final ms = position.inMilliseconds;
     var removed = 0;
@@ -88,6 +99,7 @@ class TimelineMapping {
     return Duration(milliseconds: max(0, ms - removed));
   }
 
+  /// 把过滤后播放器位置 [position] 还原到原始源时间轴。
   Duration filteredToSource(Duration position) {
     final ms = position.inMilliseconds;
     var removed = 0;
@@ -102,7 +114,9 @@ class TimelineMapping {
   int get removedMs => _ranges.fold(0, (sum, r) => sum + r.lengthMs);
 }
 
+/// 一个待删除的连续广告分片块，start/end 是闭区间下标。
 class AdBlock {
+  /// [confidence] 取值 0～1，越大表示规则判断越确定。
   AdBlock(this.start, this.end, this.totalMs, this.confidence);
 
   final int start;
@@ -113,6 +127,7 @@ class AdBlock {
   int get count => end - start + 1;
 }
 
+/// 广告过滤结果，包含新分片列表、删除块、时间映射和诊断报告。
 class AdFilterResult {
   AdFilterResult({
     required this.original,
@@ -130,6 +145,7 @@ class AdFilterResult {
 
   bool get removedAny => blocks.isNotEmpty;
 
+  /// 返回所有广告块中的最低置信度，表示整次过滤的保守可信程度。
   double? get confidence {
     if (blocks.isEmpty) return null;
     return blocks
@@ -137,11 +153,14 @@ class AdFilterResult {
         .reduce((low, value) => low < value ? low : value);
   }
 
+  /// 判断原清单中的 [index] 是否落在任一删除块内。
   bool isRemoved(int index) =>
       blocks.any((block) => index >= block.start && index <= block.end);
 }
 
+/// 基于 HLS 分片结构、时长、域名和显式标记的启发式广告过滤器。
 class AdFilter {
+  /// [enabled] 默认为 false，避免未经用户/产品开启就改变播放内容。
   const AdFilter({this.enabled = false});
 
   final bool enabled;
@@ -155,6 +174,9 @@ class AdFilter {
     '/zj/',
   };
 
+  /// 对 [playlist] 运行全部规则，合并重叠候选并生成时间轴映射。
+  ///
+  /// 过滤器关闭或没有命中时仍返回完整报告，方便上层统一展示。
   AdFilterResult filter(HlsMediaPlaylist playlist) {
     if (!enabled) {
       return _emptyResult(playlist.segments);
@@ -229,6 +251,7 @@ class AdFilter {
     );
   }
 
+  /// 构造“未删除任何分片”的标准结果。
   AdFilterResult _emptyResult(List<HlsSegment> segments) {
     return AdFilterResult(
       original: segments,
@@ -244,6 +267,7 @@ class AdFilter {
     );
   }
 
+  /// 识别连续短分片簇；[baseline] 是整份清单分片时长的中位数。
   List<AdBlock> _shortClusterBlocks(
     HlsMediaPlaylist playlist,
     double baseline,
@@ -272,6 +296,7 @@ class AdFilter {
     return blocks;
   }
 
+  /// 识别由 DISCONTINUITY 划分、且明显短于基准时长的分组。
   List<AdBlock> _discontinuityDurationBlocks(
     HlsMediaPlaylist playlist,
     double baseline,
@@ -293,6 +318,7 @@ class AdFilter {
     return blocks;
   }
 
+  /// 当多数分片来自同一域名时，将短小的异域名连续段视为候选广告。
   List<AdBlock> _hostClusterBlocks(HlsMediaPlaylist playlist) {
     final segments = playlist.segments;
     if (segments.isEmpty) return const [];
@@ -335,6 +361,7 @@ class AdFilter {
     return blocks;
   }
 
+  /// 识别 URL 路径或查询参数中包含明确广告标记的连续分片。
   List<AdBlock> _explicitMarkerBlocks(HlsMediaPlaylist playlist) {
     final segments = playlist.segments;
     final blocks = <AdBlock>[];
@@ -356,6 +383,7 @@ class AdFilter {
     return blocks;
   }
 
+  /// 识别夹在两个大型内容组之间的短小 DISCONTINUITY 分组。
   List<AdBlock> _structuralDwarfBlocks(HlsMediaPlaylist playlist) {
     final segments = playlist.segments;
     final groups = _discontinuityGroups(segments);
@@ -377,8 +405,8 @@ class AdFilter {
     return blocks;
   }
 
-  /// Mid-roll SSAI: a 12–90s discontinuity group sandwiched between two
-  /// long content groups. Does not touch the first or last group.
+  /// 识别 SSAI 中插广告：12～90 秒且夹在两个至少 120 秒内容组之间。
+  /// 首组和末组不会被此规则删除，避免误伤片头片尾内容。
   List<AdBlock> _midRollSandwichBlocks(HlsMediaPlaylist playlist) {
     final segments = playlist.segments;
     final groups = _discontinuityGroups(segments);
@@ -396,10 +424,10 @@ class AdFilter {
     return blocks;
   }
 
-  /// Dense-discontinuity packagers (电影天堂 etc.) stamp DISCONTINUITY on
-  /// every ~5 content segments. Ads show up as runs of groups smaller than
-  /// that cadence, typically 6–20s. Only fires when one group size owns
-  /// ≥70% of groups, so mixed playlists are left alone.
+  /// 识别高密度断点清单中的“小节奏组”广告。
+  ///
+  /// 只有某一正常组大小占比达到 70% 才启用；比该节奏更短、总长 6～45 秒的
+  /// 连续组会成为候选，混合结构清单保持不动以降低误删风险。
   List<AdBlock> _cadenceDwarfBlocks(HlsMediaPlaylist playlist) {
     final segments = playlist.segments;
     final groups = _discontinuityGroups(segments);
@@ -454,6 +482,7 @@ class AdFilter {
     return blocks;
   }
 
+  /// 合并重叠或相邻的候选块，并按真实分片时长重新计算总时长。
   List<AdBlock> _mergeBlocks(
     Set<AdBlock> candidates,
     List<HlsSegment> segments,
@@ -486,6 +515,7 @@ class AdFilter {
     return merged;
   }
 
+  /// 根据每个分片前的 discontinuity 标记，将清单拆成连续分组。
   static List<List<int>> _discontinuityGroups(List<HlsSegment> segments) {
     if (segments.isEmpty) return const [];
     final groups = <List<int>>[];
@@ -502,6 +532,7 @@ class AdFilter {
     return groups;
   }
 
+  /// 汇总指定 [indices] 分片的毫秒时长。
   static int _groupDurationMs(List<HlsSegment> segments, List<int> indices) {
     var sum = 0.0;
     for (final idx in indices) {
@@ -510,12 +541,14 @@ class AdFilter {
     return (sum * 1000).round();
   }
 
+  /// 判断单个分片是否显著短于 [baseline]。
   static bool _isShort(HlsSegment segment, double baseline) {
     final duration = segment.duration;
     if (duration == null || baseline <= 0) return false;
     return duration < baseline * 0.7;
   }
 
+  /// 以分片时长中位数作为正常内容基准，降低极端值干扰。
   static double _baselineDuration(List<HlsSegment> segments) {
     final durations = segments
         .map((s) => s.duration)
@@ -527,6 +560,7 @@ class AdFilter {
     return durations[durations.length ~/ 2];
   }
 
+  /// 检查分片 URL 是否带有已知广告路径或查询标记。
   static bool _hasExplicitMarker(HlsSegment segment) {
     final path = segment.uri.path.toLowerCase();
     final query = segment.uri.query.toLowerCase();
@@ -536,6 +570,7 @@ class AdFilter {
     return false;
   }
 
+  /// 将分片秒数安全转换为毫秒；未知时长按 0 处理。
   static int _durationMs(HlsSegment segment) {
     final duration = segment.duration;
     return duration == null ? 0 : (duration * 1000).round();

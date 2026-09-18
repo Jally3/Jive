@@ -54,14 +54,22 @@ class CacheResourceValidationException implements Exception {
 
 /// 分片内容完整性校验失败（字节数与声明不符，或格式魔数不匹配）。
 /// 与密钥格式问题区分开：下载任务应将其视为可重试的网络类失败。
+enum CacheResourceIntegrityKind { truncated, invalidContent }
+
 class CacheResourceIntegrityException implements Exception {
-  const CacheResourceIntegrityException();
+  const CacheResourceIntegrityException(this.kind);
+
+  final CacheResourceIntegrityKind kind;
 }
 
 /// 落盘前条目已不可写（已被删除或正在删除）：放弃本次缓存写入，
 /// 按旁路语义处理，不影响回源播放。
 class CacheEntryNotWritableException implements Exception {
   const CacheEntryNotWritableException();
+}
+
+class CacheUpstreamStreamException implements Exception {
+  const CacheUpstreamStreamException();
 }
 
 class ResourceFetcher {
@@ -322,6 +330,10 @@ class ResourceFetcher {
     if (!await manager!.isWritable(entryKey!)) {
       await lease.cancel();
       _reportCacheBypass(PlaybackFallbackReason.cacheWriteFailed);
+      if (failOnCacheUnavailable) {
+        await upstream.stream.listen((_) {}).cancel();
+        throw const CacheEntryNotWritableException();
+      }
       return CacheFetchResult(
         statusCode: upstream.statusCode,
         headers: _upstreamHeaders(upstream),
@@ -349,12 +361,16 @@ class ResourceFetcher {
           if (!hasContentEncoding &&
               declaredLength > 0 &&
               written != declaredLength) {
-            throw const CacheResourceIntegrityException();
+            throw const CacheResourceIntegrityException(
+              CacheResourceIntegrityKind.truncated,
+            );
           }
           // 完整性校验第 2 层：未加密分片做格式魔数检查，挡住
           // "200 但内容是 HTML 错误页"这类张冠李戴的响应。
           if (!encryptedSegments && !(await _passesMagicCheck(part, ext))) {
-            throw const CacheResourceIntegrityException();
+            throw const CacheResourceIntegrityException(
+              CacheResourceIntegrityKind.invalidContent,
+            );
           }
           if (!await lease.ensureCapacity(written)) {
             throw const CacheQuotaException();
@@ -400,14 +416,26 @@ class ResourceFetcher {
           await controller.close();
         }
       },
-      onError: (Object _) async {
+      onError: (Object _, StackTrace stackTrace) async {
         _reportCacheBypass(PlaybackFallbackReason.cacheWriteFailed);
-        await sink.close();
-        await lease.cancel();
+        Object? closeError;
         try {
-          if (await part.exists()) await part.delete();
-        } catch (_) {}
-        await controller.close();
+          await sink.close();
+        } catch (error) {
+          closeError = error;
+        } finally {
+          await lease.cancel();
+          try {
+            if (await part.exists()) await part.delete();
+          } catch (_) {}
+          if (failOnCacheUnavailable) {
+            controller.addError(
+              closeError ?? const CacheUpstreamStreamException(),
+              stackTrace,
+            );
+          }
+          await controller.close();
+        }
       },
     );
     return CacheFetchResult(
