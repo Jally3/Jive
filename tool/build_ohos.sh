@@ -12,6 +12,9 @@ Set DEVECO_ROOT if DevEco Studio is outside /Applications/DevEco-Studio.app/Cont
 The CPF OpenHarmony Flutter SDK is resolved from $OHOS_FLUTTER_ROOT, then
 ~/.ohos-flutter/flutter_flutter, then the legacy .ohos-sdk/ checkout.
 Run ./tool/setup_ohos_sdk.sh once to install it (see doc/ohos/SDK_SETUP.md).
+
+The official FVM SDK state is restored automatically after the build
+(set JIVE_SKIP_FVM_RESTORE=1 to skip; see tool/restore_fvm.sh).
 EOF
 }
 
@@ -141,11 +144,29 @@ if [ "$signed" -eq 1 ]; then
   # Signing material stays out of the repository: splice it in from a
   # gitignored local file for the build, then always restore the clean profile.
   python3 "$project_root/tool/ohos_signing.py" inject
-  restore_signing() {
-    python3 "$project_root/tool/ohos_signing.py" restore
-  }
-  trap restore_signing EXIT INT TERM
 fi
+
+# The CPF toolchain rewrites fvm-managed generated configs (package_config.json,
+# macos/Flutter/ephemeral, ...) as a side effect of its pub get/build, which
+# would break the next iOS/Android/macOS build in tool/check_flutter_sdk.sh.
+# Always put the official SDK state back afterwards.
+restore_fvm() {
+  if [ "${JIVE_SKIP_FVM_RESTORE:-0}" = "1" ]; then
+    echo "Skipping FVM state restore (JIVE_SKIP_FVM_RESTORE=1)."
+    return 0
+  fi
+  "$project_root/tool/restore_fvm.sh"
+}
+
+cleanup() {
+  rc=$?
+  if [ "$signed" -eq 1 ]; then
+    python3 "$project_root/tool/ohos_signing.py" restore || true
+  fi
+  restore_fvm || echo "WARNING: FVM state restore failed; run ./tool/restore_fvm.sh before the next iOS/Android build." >&2
+  exit "$rc"
+}
+trap cleanup EXIT INT TERM
 
 first_patch_rc=0
 apply_patch || first_patch_rc=$?

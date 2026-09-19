@@ -22,6 +22,7 @@ Run these from the repository root:
 fvm use                         # Sync the local SDK link to .fvmrc
 fvm flutter pub get             # Install/resolve Dart and Flutter dependencies
 ./tool/check_flutter_sdk.sh     # Verify generated configs use the same SDK
+./tool/restore_fvm.sh           # Restore FVM-managed generated configs after any ohos-flutter command
 fvm flutter analyze             # Run the configured static lints and analyzer
 fvm flutter test                # Run all unit and widget tests
 fvm flutter run                 # Launch on a connected device or emulator
