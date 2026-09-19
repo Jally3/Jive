@@ -219,4 +219,58 @@ void main() {
       expect(response.body, 'segment-bytes-123');
     },
   );
+
+  test(
+    'legacy passthrough forwards session auth headers and downstream range',
+    () async {
+      final client = MockClient((request) async {
+        expect(request.headers['authorization'], 'Bearer token-789');
+        expect(request.headers['x-auth-token'], 'custom-token');
+        expect(request.headers['referer'], 'https://app.example.com');
+        expect(request.headers['range'], 'bytes=10-19');
+        return http.Response('0123456789abcdef', 200);
+      });
+      proxy.register(
+        ProxySessionRoute(
+          token: _token,
+          proxyManifest: '',
+          resources: {_segmentId: Uri.parse('https://origin.example.com/a.ts')},
+          extByResourceId: const {},
+          sessionHeaders: const {
+            'Authorization': 'Bearer token-789',
+            'X-Auth-Token': 'custom-token',
+            'Referer': 'https://app.example.com',
+          },
+          client: client,
+        ),
+      );
+      final response = await http.Client().get(
+        Uri.parse(
+          'http://127.0.0.1:${proxy.port}/play/$_token/res/$_segmentId',
+        ),
+        headers: {'range': 'bytes=10-19'},
+      );
+      expect(response.statusCode, 200);
+    },
+  );
+
+  test(
+    'legacy passthrough drops player-injected non-conditional headers',
+    () async {
+      final client = MockClient((request) async {
+        expect(request.headers.containsKey('x-junk'), isFalse);
+        expect(request.headers.containsKey('authorization'), isFalse);
+        expect(request.headers.containsKey('cookie'), isFalse);
+        return http.Response('segment-bytes', 200);
+      });
+      proxy.register(_route(client));
+      final response = await http.Client().get(
+        Uri.parse(
+          'http://127.0.0.1:${proxy.port}/play/$_token/res/$_segmentId',
+        ),
+        headers: {'x-junk': '1', 'authorization': 'leaked', 'cookie': 'leaked'},
+      );
+      expect(response.statusCode, 200);
+    },
+  );
 }

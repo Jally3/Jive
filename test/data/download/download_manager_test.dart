@@ -364,4 +364,100 @@ void main() {
       unorderedEquals(['/m/seg0.ts', '/m/seg1.ts', '/m/seg2.ts']),
     );
   });
+
+  test(
+    'downloaded window replays offline through a fresh playback fetcher',
+    () async {
+      // 预取窗口（模拟下载管理器完成的写缓存）。
+      final downloadClient = MockClient(
+        (request) async =>
+            http.Response('Gpayload-${request.url.pathSegments.last}', 200),
+      );
+      final created = await manager.upsertEntry(
+        CacheEntry(
+          contentKeyVersion: 1,
+          contentKeyHash: 'ck1',
+          revisionKeyHash: 'rk1',
+          manifestFingerprint: 'fp',
+          sourceId: 's',
+          sourceVideoId: 'v',
+          title: '影片',
+          playbackLineIdentity: 'line',
+          playbackLineName: '',
+          episodeIdentity: 'ep',
+          episodeId: '1',
+          episodeName: '第1集',
+          expectedResourceCount: 3,
+        ),
+      );
+      final segments = <HlsSegment>[
+        for (var i = 0; i < 5; i++)
+          HlsSegment(
+            uri: Uri.parse('https://cdn.example.com/m/seg$i.ts'),
+            duration: 4,
+          ),
+      ];
+      final prefetcher = SegmentPrefetcher(
+        fetcher: ResourceFetcher(
+          client: downloadClient,
+          sessionHeaders: const {},
+          manager: manager,
+          store: manager.store,
+          entryKey: created.key,
+          contentKeyHash: 'ck1',
+          revisionKeyHash: 'rk1',
+        ),
+        segments: segments,
+        concurrency: 3,
+      );
+      await prefetcher.prefetch(
+        fromPosition: Duration.zero,
+        lookahead: const Duration(seconds: 12),
+      );
+
+      // 断网环境：全新播放侧 fetcher 共享同一缓存，网络层一律失败。
+      var networkTouched = false;
+      final offlineFetcher = ResourceFetcher(
+        client: MockClient((request) async {
+          networkTouched = true;
+          throw const HttpException('network down');
+        }),
+        sessionHeaders: const {'Authorization': 'Bearer token-offline'},
+        manager: manager,
+        store: manager.store,
+        entryKey: created.key,
+        contentKeyHash: 'ck1',
+        revisionKeyHash: 'rk1',
+      );
+      final downloadedIds = [
+        for (var i = 0; i < 3; i++) HlsParser.resourceId(segments[i].uri),
+      ];
+      for (final id in downloadedIds) {
+        final result = await offlineFetcher.fetch(
+          origin: Uri.parse('https://cdn.example.com/m/replay.ts'),
+          resourceId: id,
+          ext: 'ts',
+        );
+        expect(result.fromCache, isTrue, reason: '$id 应命中已下载缓存');
+        expect(result.statusCode, 200);
+        final body = await result.body.fold<List<int>>(
+          <int>[],
+          (all, chunk) => all..addAll(chunk),
+        );
+        expect(body, isNotEmpty);
+      }
+      expect(networkTouched, isFalse);
+
+      // 未下载的分片在断网下无法回源：请求必须失败而不是静默返回空内容。
+      final missingId = HlsParser.resourceId(segments[4].uri);
+      await expectLater(
+        offlineFetcher.fetch(
+          origin: Uri.parse('https://cdn.example.com/m/seg4.ts'),
+          resourceId: missingId,
+          ext: 'ts',
+        ),
+        throwsA(isA<HttpException>()),
+      );
+    },
+  );
 }

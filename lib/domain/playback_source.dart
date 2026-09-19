@@ -41,12 +41,24 @@ class PlaybackSource {
   int get hashCode => Object.hash(url, format);
 }
 
-const Set<String> sessionHeaderWhitelist = {
-  'accept',
-  'accept-language',
-  'origin',
-  'referer',
-  'user-agent',
+/// 会话头黑名单：只剔除破坏代理请求框架或由 HTTP 客户端自动管理的头。
+/// 源站/插件声明的鉴权头（Authorization、Cookie、自定义令牌）必须原样
+/// 到达媒体上游，因此不能按白名单过滤。
+const Set<String> sessionHeaderDenylist = {
+  // 请求框架与逐跳头：代理按目标地址重建请求，这些头必须重新生成。
+  'host',
+  'content-length',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'upgrade',
+  'te',
+  'trailer',
+  'proxy-connection',
+  // 由 http 客户端自动管理：显式声明会关闭透明解压并污染缓存完整性校验。
+  'accept-encoding',
+  // Range 语义由本地代理/缓存层自己处理，源站声明的 Range 会破坏整片缓存。
+  'range',
 };
 
 const Set<String> downstreamHeaderWhitelist = {
@@ -57,7 +69,7 @@ const Set<String> downstreamHeaderWhitelist = {
 };
 
 Map<String, String> filterSessionHeaders(Map<String, String> headers) =>
-    _filter(headers, sessionHeaderWhitelist);
+    _filterDenied(headers, sessionHeaderDenylist);
 
 Map<String, String> filterDownstreamHeaders(Map<String, String> headers) =>
     _filter(headers, downstreamHeaderWhitelist);
@@ -69,6 +81,19 @@ Map<String, String> _filter(
   final filtered = <String, String>{};
   for (final entry in headers.entries) {
     if (whitelist.contains(entry.key.toLowerCase())) {
+      filtered[entry.key] = entry.value;
+    }
+  }
+  return filtered;
+}
+
+Map<String, String> _filterDenied(
+  Map<String, String> headers,
+  Set<String> denylist,
+) {
+  final filtered = <String, String>{};
+  for (final entry in headers.entries) {
+    if (!denylist.contains(entry.key.toLowerCase())) {
       filtered[entry.key] = entry.value;
     }
   }

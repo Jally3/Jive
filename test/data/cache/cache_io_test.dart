@@ -562,6 +562,114 @@ void main() {
     expect(cached.fromCache, isTrue);
     expect(originHits, 2);
   });
+
+  test(
+    'session headers declared by the source reach the upstream request',
+    () async {
+      final captured = <String, String>{};
+      final client = MockClient((request) async {
+        captured.addAll(request.headers);
+        return http.Response('Gsegment-data', 200);
+      });
+      final created = await manager.upsertEntry(entry('h1'));
+      final fetcher = ResourceFetcher(
+        client: client,
+        sessionHeaders: const {
+          'Referer': 'https://origin.example.com/watch',
+          'Authorization': 'Bearer token-123',
+          'X-Auth-Token': 'custom-token',
+          'Cookie': 'session=abc',
+        },
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: 'ckh1',
+        revisionKeyHash: 'rkh1',
+      );
+      final result = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/a.ts'),
+        resourceId: 'sha256:${'a' * 64}',
+        ext: 'ts',
+      );
+      expect(result.statusCode, 200);
+      expect(await _collect(result.body), 'Gsegment-data');
+      expect(captured['Authorization'], 'Bearer token-123');
+      expect(captured['X-Auth-Token'], 'custom-token');
+      expect(captured['Cookie'], 'session=abc');
+      expect(captured['Referer'], 'https://origin.example.com/watch');
+    },
+  );
+
+  test(
+    'downstream range is served from cache and not forwarded upstream',
+    () async {
+      final captured = <http.Request>[];
+      final client = MockClient((request) async {
+        captured.add(request);
+        return http.Response('Gsegment-0123456789', 200);
+      });
+      final created = await manager.upsertEntry(entry('h2'));
+      final fetcher = ResourceFetcher(
+        client: client,
+        sessionHeaders: const {},
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: 'ckh2',
+        revisionKeyHash: 'rkh2',
+      );
+      final ranged = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/a.ts'),
+        resourceId: 'sha256:${'a' * 64}',
+        ext: 'ts',
+        downstreamHeaders: const {'range': 'bytes=2-5'},
+      );
+      expect(ranged.statusCode, 206);
+      expect(ranged.headers['content-range'], 'bytes 2-5/19');
+      expect(captured.single.headers.containsKey('range'), isFalse);
+    },
+  );
+
+  test('session headers reach the upstream when cache is disabled', () async {
+    final captured = <String, String>{};
+    final client = MockClient((request) async {
+      captured.addAll(request.headers);
+      return http.Response('passthrough', 200);
+    });
+    // 不配置 manager/store：走透传路径。
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {'Authorization': 'Bearer token-456'},
+    );
+    final result = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/a.ts'),
+      resourceId: 'sha256:${'a' * 64}',
+      ext: 'ts',
+    );
+    expect(result.statusCode, 200);
+    expect(captured['Authorization'], 'Bearer token-456');
+  });
+
+  test('session headers reach the upstream on HEAD requests', () async {
+    final captured = <http.Request>[];
+    final client = MockClient((request) async {
+      captured.add(request);
+      return http.Response('', 200);
+    });
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {'Authorization': 'Bearer head-token'},
+    );
+    final result = await fetcher.fetch(
+      method: 'HEAD',
+      origin: Uri.parse('https://cdn.example.com/a.ts'),
+      resourceId: 'sha256:${'a' * 64}',
+      ext: 'ts',
+    );
+    expect(result.statusCode, 200);
+    expect(captured.single.method, 'HEAD');
+    expect(captured.single.headers['Authorization'], 'Bearer head-token');
+  });
 }
 
 Future<void> _until(bool Function() condition) async {
