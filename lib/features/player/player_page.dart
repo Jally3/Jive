@@ -112,6 +112,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   Duration _observedDuration = Duration.zero;
   final ValueNotifier<bool> screenSeeking = ValueNotifier(false);
   final ValueNotifier<bool> speedBoosting = ValueNotifier(false);
+  final ValueNotifier<bool> speedBoostFallback = ValueNotifier(false);
+  Timer? _speedBoostRetryTimer;
+  bool _speedBoostRetried = false;
+  bool? _lastBuffering;
   Duration positionBeforeSeek = Duration.zero;
   Duration screenSeekStartPosition = Duration.zero;
   double screenSeekStartX = 0;
@@ -521,6 +525,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     }
     _activeSession = session;
     controller = next;
+    _lastBuffering = next.value.isBuffering;
     _notePlaybackDuration(next.value.duration);
     _completionHandled = false;
     next.addListener(_handlePlayerValueChanged);
@@ -612,6 +617,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     wakelockTimer = null;
     final current = controller;
     final session = _activeSession;
+    _stopSpeedBoost(current);
+    _lastBuffering = null;
     controller = null;
     _activeSession = null;
     current?.removeListener(_handlePlayerValueChanged);
@@ -806,6 +813,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final current = controller;
     if (current == null || !mounted) return;
     final value = current.value;
+    if (kDebugMode && _lastBuffering != value.isBuffering) {
+      debugPrint(
+        'Player buffering=${value.isBuffering} playing=${value.isPlaying} '
+        'desired=$_playbackDesired speed=${value.playbackSpeed} '
+        'position=${value.position} buffered=${value.buffered} '
+        'boosting=${speedBoosting.value} seeking=$isSeeking',
+      );
+    }
+    _lastBuffering = value.isBuffering;
+    _handleSpeedBoostBuffering(current);
     if (value.isInitialized) _notePlaybackDuration(value.duration);
     if (value.hasError && !failed) {
       saveTimer?.cancel();
@@ -1670,6 +1687,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     WidgetsBinding.instance.removeObserver(this);
     saveTimer?.cancel();
     controlsTimer?.cancel();
+    _speedBoostRetryTimer?.cancel();
     _lockButtonTimer?.cancel();
     wakelockTimer?.cancel();
     final save = _save();
@@ -1697,6 +1715,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     seekCommitting.dispose();
     screenSeeking.dispose();
     speedBoosting.dispose();
+    speedBoostFallback.dispose();
     verticalDrag.dispose();
     _remoteKeyFocusNode.dispose();
     unawaited(() async {
@@ -1981,6 +2000,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           seekCommitting: seekCommitting,
           screenSeeking: screenSeeking,
           speedBoosting: speedBoosting,
+          speedBoostFallback: speedBoostFallback,
           verticalDrag: verticalDrag,
           positionBeforeSeek: positionBeforeSeek,
         ),
@@ -2012,6 +2032,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           isPortraitVideo: _isPortraitVideo,
           playbackStatus: playbackStatus,
           playbackSpeed: playbackSpeed,
+          playbackDesired: _playbackDesired,
           downloadStatus: currentDownload?.status,
           episodes: _lineEpisodes,
           isCurrentEpisode: (item) => _isSameEpisode(item, episode),
@@ -2089,6 +2110,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             controller: current,
             screenSeeking: screenSeeking,
             controlsVisible: controlsVisible,
+            playbackDesired: _playbackDesired,
             onResume: _resumePlayback,
           ),
         if (!lockActive &&
@@ -2155,7 +2177,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     if (screenLongPressOnRight && current.value.isPlaying) {
       unawaited(HapticFeedback.lightImpact());
       speedBoosting.value = true;
-      longPressSpeedChange = current.setPlaybackSpeed(2).catchError((_) {});
+      speedBoostFallback.value = current.value.isBuffering;
+      _speedBoostRetried = false;
+      if (!speedBoostFallback.value) _queueSpeedBoostChange(current, 2);
     }
   }
 
@@ -2335,18 +2359,68 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   void _stopSpeedBoost(VideoPlayerController? current) {
     if (!speedBoosting.value) return;
+    _speedBoostRetryTimer?.cancel();
+    _speedBoostRetryTimer = null;
     speedBoosting.value = false;
+    speedBoostFallback.value = false;
+    _speedBoostRetried = false;
     if (current != null) {
-      longPressSpeedChange = longPressSpeedChange.catchError((_) {}).then((
-        _,
-      ) async {
-        if (identical(controller, current)) {
-          try {
-            await current.setPlaybackSpeed(playbackSpeed);
-          } catch (_) {}
-        }
-      });
+      _queueSpeedBoostChange(current, playbackSpeed);
     }
+  }
+
+  void _queueSpeedBoostChange(VideoPlayerController current, double speed) {
+    longPressSpeedChange = longPressSpeedChange.catchError((_) {}).then((
+      _,
+    ) async {
+      if (!mounted || !identical(controller, current)) return;
+      try {
+        await current.setPlaybackSpeed(speed);
+      } catch (_) {}
+    });
+  }
+
+  void _handleSpeedBoostBuffering(VideoPlayerController current) {
+    if (!speedBoosting.value || !identical(controller, current)) return;
+    if (current.value.isBuffering) {
+      _speedBoostRetryTimer?.cancel();
+      _speedBoostRetryTimer = null;
+      if (!speedBoostFallback.value) {
+        speedBoostFallback.value = true;
+        _queueSpeedBoostChange(current, playbackSpeed);
+      }
+      return;
+    }
+    if (!speedBoostFallback.value ||
+        _speedBoostRetried ||
+        _speedBoostRetryTimer != null) {
+      return;
+    }
+    _speedBoostRetryTimer = Timer(const Duration(seconds: 2), () {
+      _speedBoostRetryTimer = null;
+      if (!mounted ||
+          !identical(controller, current) ||
+          !speedBoosting.value ||
+          !_isAppForeground ||
+          !_playbackDesired ||
+          !current.value.isPlaying ||
+          current.value.isBuffering) {
+        return;
+      }
+      final position = current.value.position;
+      final ranges = current.value.buffered;
+      final ahead = ranges
+          .where((range) => range.start <= position && range.end > position)
+          .map((range) => range.end - position)
+          .fold<Duration>(
+            Duration.zero,
+            (best, value) => value > best ? value : best,
+          );
+      if (ranges.isNotEmpty && ahead < const Duration(seconds: 8)) return;
+      _speedBoostRetried = true;
+      speedBoostFallback.value = false;
+      _queueSpeedBoostChange(current, 2);
+    });
   }
 
   void _seekUpdate(Duration target) {
