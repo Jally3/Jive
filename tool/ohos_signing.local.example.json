@@ -1,0 +1,17 @@
+{
+  "signingConfigs": [
+    {
+      "name": "default",
+      "type": "HarmonyOS",
+      "material": {
+        "certpath": "/absolute/path/to/default_ohos_xxx.cer",
+        "keyAlias": "debug",
+        "keyPassword": "devEco-generated-or-your-own-password",
+        "profile": "/absolute/path/to/default_ohos_xxx.p7b",
+        "signAlg": "SHA256withECDSA",
+        "storeFile": "/absolute/path/to/default_ohos_xxx.p12",
+        "storePassword": "devEco-generated-or-your-own-password"
+      }
+    }
+  ]
+}

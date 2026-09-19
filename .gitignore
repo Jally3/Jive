@@ -57,8 +57,15 @@ app.*.map.json
 # FVM local SDK cache
 .fvm/
 
-# Local OpenHarmony SDK checkout used for the isolated playback probe
+# Local OpenHarmony SDK checkout used by tool/build_ohos.sh
 .ohos-sdk/
 
 # Local intermediate used while preparing the HarmonyOS application icon
 tool/app_icon_ohos_rounded.png
+
+# HarmonyOS local signing material (never commit)
+/tool/ohos_signing.local.json
+ohos/build-profile.json5.pre-signing
+
+# ZCode session state
+/.zcode/
