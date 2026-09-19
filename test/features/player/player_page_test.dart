@@ -21,6 +21,7 @@ import 'package:jive/app/theme.dart';
 import 'package:jive/features/player/player_page.dart';
 import 'package:jive/features/player/widgets/player_controls_bar.dart';
 import 'package:jive/features/player/widgets/player_indicators.dart';
+import 'package:jive/features/player/widgets/player_gesture_layer.dart';
 import 'package:jive/shared/is_tv.dart';
 import 'package:jive/shared/playback_scrubber.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -91,6 +92,22 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
 
   void emitCompleted(int playerId) {
     _streams[playerId]!.add(VideoEvent(eventType: VideoEventType.completed));
+  }
+
+  void emitBuffering(int playerId, {required bool buffering}) {
+    _streams[playerId]!.add(
+      VideoEvent(
+        eventType: buffering
+            ? VideoEventType.bufferingStart
+            : VideoEventType.bufferingEnd,
+      ),
+    );
+    _streams[playerId]!.add(
+      VideoEvent(
+        eventType: VideoEventType.isPlayingStateUpdate,
+        isPlaying: !buffering,
+      ),
+    );
   }
 
   @override
@@ -795,6 +812,7 @@ void main() {
     final seekCommitting = ValueNotifier(false);
     final screenSeeking = ValueNotifier(false);
     final speedBoosting = ValueNotifier(true);
+    final speedBoostFallback = ValueNotifier(false);
     final verticalDrag = ValueNotifier<({bool isVolume, double value})?>(null);
     addTearDown(() async {
       previewPosition.dispose();
@@ -802,6 +820,7 @@ void main() {
       seekCommitting.dispose();
       screenSeeking.dispose();
       speedBoosting.dispose();
+      speedBoostFallback.dispose();
       verticalDrag.dispose();
       await controller.dispose();
     });
@@ -820,6 +839,7 @@ void main() {
                 seekCommitting: seekCommitting,
                 screenSeeking: screenSeeking,
                 speedBoosting: speedBoosting,
+                speedBoostFallback: speedBoostFallback,
                 verticalDrag: verticalDrag,
                 positionBeforeSeek: Duration.zero,
               ),
@@ -843,6 +863,22 @@ void main() {
     expect(tester.widget<Icon>(find.byIcon(Icons.fast_forward)).size, 16);
     expect(tester.widget<Text>(find.text('2×')).style?.fontSize, 13);
 
+    speedBoostFallback.value = true;
+    await tester.pump();
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: indicator,
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity,
+      0,
+    );
+    speedBoostFallback.value = false;
+    await tester.pump();
+
     speedBoosting.value = false;
     await tester.pump();
 
@@ -857,6 +893,64 @@ void main() {
           .opacity,
       0,
     );
+  });
+
+  testWidgets('2× hold falls back during buffering and retries only once', (
+    tester,
+  ) async {
+    final video = _playableVideo('https://example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+    final pauseCallsBefore = videoPlatform.calls
+        .where((call) => call == 'pause:0')
+        .length;
+    final bounds = tester.getRect(find.byType(PlayerGestureLayer));
+    final finger = await tester.startGesture(
+      Offset(bounds.right - 60, bounds.center.dy),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(videoPlatform.calls, contains('setPlaybackSpeed:0:2.0'));
+
+    videoPlatform.emitBuffering(0, buffering: true);
+    await tester.pump();
+    await tester.pump();
+    expect(videoPlatform.calls.last, 'setPlaybackSpeed:0:1.0');
+    expect(find.byTooltip('缓冲中'), findsOneWidget);
+    expect(find.byTooltip('播放'), findsNothing);
+    expect(
+      videoPlatform.calls.where((call) => call == 'pause:0').length,
+      pauseCallsBefore,
+    );
+
+    videoPlatform.emitBuffering(0, buffering: false);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(
+      videoPlatform.calls
+          .where((call) => call == 'setPlaybackSpeed:0:2.0')
+          .length,
+      2,
+    );
+
+    videoPlatform.emitBuffering(0, buffering: true);
+    await tester.pump();
+    await tester.pump();
+    videoPlatform.emitBuffering(0, buffering: false);
+    await tester.pump(const Duration(seconds: 3));
+    expect(
+      videoPlatform.calls
+          .where((call) => call == 'setPlaybackSpeed:0:2.0')
+          .length,
+      2,
+    );
+    await finger.up();
+    await tester.pump();
+    await _unmountPlayerPage(tester);
   });
 
   testWidgets(

@@ -28,6 +28,7 @@ class PlayerControlsBar extends StatelessWidget {
     required this.isPortraitVideo,
     required this.playbackStatus,
     required this.playbackSpeed,
+    required this.playbackDesired,
     required this.downloadStatus,
     required this.episodes,
     required this.isCurrentEpisode,
@@ -71,6 +72,7 @@ class PlayerControlsBar extends StatelessWidget {
   final bool isPortraitVideo;
   final PlaybackStatus playbackStatus;
   final double playbackSpeed;
+  final bool playbackDesired;
 
   /// 当前剧集的下载状态；为 null 表示未下载。
   final DownloadTaskStatus? downloadStatus;
@@ -155,6 +157,10 @@ class PlayerControlsBar extends StatelessWidget {
                         seekCommitting,
                       ]),
                       builder: (_, _) {
+                        final buffering =
+                            playbackDesired &&
+                            controller.value.isBuffering &&
+                            !controller.value.isCompleted;
                         final clock =
                             seekClock.value ?? controller.value.duration;
                         final isPhone =
@@ -229,14 +235,18 @@ class PlayerControlsBar extends StatelessWidget {
                                     ),
                                   IconButton(
                                     onPressed: onTogglePlayback,
-                                    tooltip: controller.value.isPlaying
+                                    tooltip: buffering
+                                        ? '缓冲中'
+                                        : controller.value.isPlaying
                                         ? '暂停'
                                         : controller.value.isCompleted
                                         ? '重新播放'
                                         : '播放',
                                     iconSize: 30,
                                     icon: Icon(
-                                      controller.value.isPlaying
+                                      buffering
+                                          ? Icons.hourglass_top
+                                          : controller.value.isPlaying
                                           ? Icons.pause
                                           : Icons.play_arrow,
                                     ),

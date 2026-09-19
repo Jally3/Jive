@@ -61,6 +61,7 @@ class PlayerGestureIndicator extends StatelessWidget {
     required this.seekCommitting,
     required this.screenSeeking,
     required this.speedBoosting,
+    required this.speedBoostFallback,
     required this.verticalDrag,
     required this.positionBeforeSeek,
   });
@@ -71,6 +72,7 @@ class PlayerGestureIndicator extends StatelessWidget {
   final ValueNotifier<bool> seekCommitting;
   final ValueNotifier<bool> screenSeeking;
   final ValueNotifier<bool> speedBoosting;
+  final ValueNotifier<bool> speedBoostFallback;
   final ValueNotifier<({bool isVolume, double value})?> verticalDrag;
   final Duration positionBeforeSeek;
 
@@ -83,12 +85,16 @@ class PlayerGestureIndicator extends StatelessWidget {
         seekCommitting,
         screenSeeking,
         speedBoosting,
+        speedBoostFallback,
         verticalDrag,
       ]),
       builder: (_, _) {
         final drag = verticalDrag.value;
         final speedVisible =
-            drag == null && speedBoosting.value && !screenSeeking.value;
+            drag == null &&
+            speedBoosting.value &&
+            !speedBoostFallback.value &&
+            !screenSeeking.value;
         Widget centerIndicator = const SizedBox.shrink();
 
         if (drag != null) {

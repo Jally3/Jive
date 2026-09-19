@@ -60,12 +60,14 @@ class PlayerCenterPlayButton extends StatelessWidget {
     required this.controller,
     required this.screenSeeking,
     required this.controlsVisible,
+    required this.playbackDesired,
     required this.onResume,
   });
 
   final VideoPlayerController controller;
   final ValueNotifier<bool> screenSeeking;
   final bool controlsVisible;
+  final bool playbackDesired;
   final VoidCallback onResume;
 
   @override
@@ -73,7 +75,10 @@ class PlayerCenterPlayButton extends StatelessWidget {
     return AnimatedBuilder(
       animation: Listenable.merge([controller, screenSeeking]),
       builder: (_, _) {
-        final paused = !controller.value.isPlaying && !screenSeeking.value;
+        final paused =
+            !controller.value.isPlaying &&
+            !(playbackDesired && controller.value.isBuffering) &&
+            !screenSeeking.value;
         return AnimatedOpacity(
           opacity: controlsVisible || paused ? 1 : 0,
           duration: const Duration(milliseconds: 200),
