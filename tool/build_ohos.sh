@@ -8,7 +8,10 @@ Usage: ./tool/build_ohos.sh [--debug|--profile|--release] [--signed] [--target F
 
 Build Jive's HarmonyOS HAP. Defaults to a debug, unsigned build of lib/main.dart.
 Set DEVECO_ROOT if DevEco Studio is outside /Applications/DevEco-Studio.app/Contents.
-The OpenHarmony Flutter SDK must be installed at .ohos-sdk/.
+
+The CPF OpenHarmony Flutter SDK is resolved from $OHOS_FLUTTER_ROOT, then
+~/.ohos-flutter/flutter_flutter, then the legacy .ohos-sdk/ checkout.
+Run ./tool/setup_ohos_sdk.sh once to install it (see doc/ohos/SDK_SETUP.md).
 EOF
 }
 
@@ -45,12 +48,51 @@ done
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_root"
+ohos_sdk_version=$(tr -d ' \n' < "$project_root/tool/ohos_sdk_version")
 
-flutter_bin="$project_root/.ohos-sdk/bin/flutter"
-if [ ! -x "$flutter_bin" ]; then
-  echo "ERROR: OpenHarmony Flutter SDK is missing: $flutter_bin" >&2
+# Resolve the shared CPF SDK: explicit env override, then the machine-level
+# install, then the legacy in-repo checkout. Same order as patch_ohos_system_ui.py.
+if [ -n "${OHOS_FLUTTER_ROOT:-}" ]; then
+  ohos_sdk=$OHOS_FLUTTER_ROOT
+  if [ ! -x "$ohos_sdk/bin/flutter" ]; then
+    echo "ERROR: OHOS_FLUTTER_ROOT is set to $ohos_sdk but bin/flutter is missing" >&2
+    exit 1
+  fi
+elif [ -x "$HOME/.ohos-flutter/flutter_flutter/bin/flutter" ]; then
+  ohos_sdk=$HOME/.ohos-flutter/flutter_flutter
+elif [ -x "$project_root/.ohos-sdk/bin/flutter" ]; then
+  ohos_sdk=$project_root/.ohos-sdk
+else
+  echo "ERROR: OpenHarmony Flutter SDK not found. Run ./tool/setup_ohos_sdk.sh first." >&2
   exit 1
 fi
+flutter_bin="$ohos_sdk/bin/flutter"
+
+# Bootstrap a fresh clone on demand, then pin the checkout to the exact CPF
+# release this repository is validated against (tool/ohos_sdk_version).
+if [ ! -f "$ohos_sdk/bin/cache/flutter.version.json" ]; then
+  echo "Bootstrapping the CPF Flutter toolchain at $ohos_sdk ..."
+  "$flutter_bin" --version
+fi
+ohos_sdk_actual=$(python3 -c "import json; print(json.load(open('$ohos_sdk/bin/cache/flutter.version.json'))['frameworkVersion'])")
+if [ "$ohos_sdk_actual" != "$ohos_sdk_version" ]; then
+  echo "ERROR: CPF Flutter at $ohos_sdk reports $ohos_sdk_actual, but this repository pins $ohos_sdk_version." >&2
+  echo "Run ./tool/setup_ohos_sdk.sh <tag> for upgrade instructions." >&2
+  exit 1
+fi
+
+# Keep the OHOS runner pointed at the resolved SDK (IDE / direct hvigorw runs
+# read it too). The flutter tool regenerates the rest of the file.
+props="$project_root/ohos/local.properties"
+if [ -f "$props" ] && ! grep -qx "flutter.sdk=$ohos_sdk" "$props"; then
+  if grep -q "^flutter.sdk=" "$props"; then
+    sed -i.bak "s|^flutter.sdk=.*|flutter.sdk=$ohos_sdk|" "$props" && rm -f "$props.bak"
+  else
+    printf 'flutter.sdk=%s\n' "$ohos_sdk" >> "$props"
+  fi
+  echo "Updated ohos/local.properties flutter.sdk -> $ohos_sdk"
+fi
+
 if [ ! -d ohos ]; then
   echo "ERROR: HarmonyOS runner is missing: $project_root/ohos" >&2
   exit 1
@@ -81,11 +123,46 @@ if [ -z "${DEVECO_SDK_HOME:-}" ] || [ ! -d "$DEVECO_SDK_HOME" ]; then
   exit 1
 fi
 
-python3 "$project_root/tool/patch_ohos_system_ui.py"
+# Exit codes: 0 = already patched, 2 = patched something this run.
+apply_patch() {
+  python3 "$project_root/tool/patch_ohos_system_ui.py"
+}
 
-echo "Building HarmonyOS HAP: mode=$mode target=$target signed=$signed"
+build_hap() {
+  if [ "$signed" -eq 1 ]; then
+    "$flutter_bin" build hap "--$mode" --codesign -t "$target"
+  else
+    "$flutter_bin" build hap "--$mode" --no-codesign -t "$target"
+  fi
+}
+
+echo "Building HarmonyOS HAP: mode=$mode target=$target signed=$signed sdk=$ohos_sdk"
 if [ "$signed" -eq 1 ]; then
-  "$flutter_bin" build hap "--$mode" --codesign -t "$target"
-else
-  "$flutter_bin" build hap "--$mode" --no-codesign -t "$target"
+  # Signing material stays out of the repository: splice it in from a
+  # gitignored local file for the build, then always restore the clean profile.
+  python3 "$project_root/tool/ohos_signing.py" inject
+  restore_signing() {
+    python3 "$project_root/tool/ohos_signing.py" restore
+  }
+  trap restore_signing EXIT INT TERM
+fi
+
+first_patch_rc=0
+apply_patch || first_patch_rc=$?
+if [ "$first_patch_rc" != 0 ] && [ "$first_patch_rc" != 2 ]; then
+  exit "$first_patch_rc"
+fi
+
+build_hap
+
+# Cold-cache convergence: engine artifacts (flutter.har) download during the
+# first build, so a fresh clone can only be patched in full afterwards. If the
+# second pass changed anything, rebuild once with the patched embedding.
+second_patch_rc=0
+apply_patch || second_patch_rc=$?
+if [ "$second_patch_rc" -eq 2 ]; then
+  echo "Cold cache detected: engine artifacts were patched after the first build; rebuilding with the patched embedding."
+  build_hap
+elif [ "$second_patch_rc" != 0 ]; then
+  exit "$second_patch_rc"
 fi
