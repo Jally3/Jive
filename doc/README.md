@@ -22,6 +22,9 @@ doc/
 │   ├── PLAYBACK_PIPELINE.md                  # 播放全链路十步流水线与降级路径
 │   ├── CACHE_DOWNLOAD_FLOWS.md               # 缓存体系与下载任务生命周期
 │   └── PROTOTYPES.md                         # 全部页面 ASCII 原型图（线框+注解）
+├── website/
+│   ├── WEBSITE_INTRO.md                      # 官网介绍文案与截图使用/重生成说明
+│   └── screenshots/                          # 官网截图（集成测试驱动真实流程产出）
 ├── follow/
 │   └── FOLLOW_UPDATES_REQUIREMENTS.md        # 追更、更新检查与提醒需求
 ├── recommendation/
@@ -72,6 +75,7 @@ doc/
 | [`flows/PLAYBACK_PIPELINE.md`](flows/PLAYBACK_PIPELINE.md) | 持续生效 | 播放全链路十步流水线、播放模式五态与降级回退路径 |
 | [`flows/CACHE_DOWNLOAD_FLOWS.md`](flows/CACHE_DOWNLOAD_FLOWS.md) | 持续生效 | 缓存配额/磁盘布局/TTL 与下载任务生命周期、网络策略 |
 | [`flows/PROTOTYPES.md`](flows/PROTOTYPES.md) | 持续生效 | 全部页面 ASCII 原型图集（线框 + 区块注解 + 宽屏断点） |
+| [`website/WEBSITE_INTRO.md`](website/WEBSITE_INTRO.md) | 持续生效 | 官网介绍文案底稿：主/副标语、四张截图逐图文案、功能亮点短句与重生成方式 |
 | [`follow/FOLLOW_UPDATES_REQUIREMENTS.md`](follow/FOLLOW_UPDATES_REQUIREMENTS.md) | 待实施 | 收藏与追更关系、详情页动态按钮、前台更新检查、红点提醒和卡片更新状态 |
 | [`recommendation/README.md`](recommendation/README.md) | 客户端核心链路已实现，待真机联调 | 后端推荐客户端开发与联调入口 |
 | [`recommendation/CLIENT_RECOMMENDATION_API.md`](recommendation/CLIENT_RECOMMENDATION_API.md) | 可联调 | 推荐 HTTP 接口、数据模型、Cursor、事件与错误处理 |
