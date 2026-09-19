@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
-import '../../data/video_repository.dart';
-import '../../domain/video.dart';
-import '../../domain/video_feed.dart';
-import '../../domain/vod_source.dart';
+import '../../../data/video_repository.dart';
+import '../../../domain/video.dart';
+import '../../../domain/video_feed.dart';
+import '../../../domain/vod_source.dart';
 
 class PagedVideoController extends ChangeNotifier {
   PagedVideoController(

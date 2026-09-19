@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../app/theme.dart';
-import '../../domain/tmdb_catalog.dart';
-import 'recommended_feed_controller.dart';
+import '../../../app/theme.dart';
+import '../../../domain/tmdb_catalog.dart';
+import '../controllers/recommended_feed_controller.dart';
 
 class RecommendationUnavailableSection extends StatelessWidget {
   const RecommendationUnavailableSection({

@@ -10,7 +10,7 @@ import '../../domain/playback_progress.dart';
 import '../../domain/video.dart';
 import '../../domain/watch_record.dart';
 import '../../shared/app_toast.dart';
-import 'player_page.dart';
+import '../player/player_page.dart';
 
 Future<bool> confirmDeleteWatchRecord(
   BuildContext context, {

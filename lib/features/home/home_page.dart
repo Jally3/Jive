@@ -1,6 +1,5 @@
-import 'dart:ui';
 import 'dart:async';
-import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,15 +29,18 @@ import '../../shared/video_card.dart';
 import '../detail/detail_page.dart';
 import '../search/search_launch_request.dart';
 import './category_channels_page.dart';
-import './continue_watching_row.dart';
-import './curated_feed_controller.dart';
-import './curated_video_grid.dart';
-import './curated_vod_search_pool.dart';
-import './paged_video_controller.dart';
-import './recommendation_unavailable_section.dart';
-import './recommended_feed_controller.dart';
-
-enum _UnavailableAction { reviewCurrentSource, searchBackups }
+import './widgets/continue_watching_row.dart';
+import './controllers/curated_feed_controller.dart';
+import './support/curated_vod_search_pool.dart';
+import './support/home_scroll_memory.dart';
+import './controllers/paged_video_controller.dart';
+import './controllers/recommended_feed_controller.dart';
+import './widgets/home_back_to_top_button.dart';
+import './widgets/home_category_header.dart';
+import './widgets/home_curated_body.dart';
+import './widgets/home_recommended_body.dart';
+import './widgets/home_state_scroll_view.dart';
+import './widgets/home_unavailable_dialog.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key, this.active});
@@ -79,18 +81,12 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// null 表示未定制，展示全部根分类。
   List<int>? _myChannelIds;
 
-  /// 网格滚动控制器与"返回顶部"悬浮按钮的可见性（滚动超过一屏左右时出现）。
-  /// Feed/榜单分类分别保留内存位置；切换 VOD 分类或来源时仍回到顶部。
-  final _scrollController = ScrollController(keepScrollOffset: false);
-  final _showBackToTop = ValueNotifier<bool>(false);
+  /// Feed/榜单分类分别保留滚动位置；切换 VOD 分类或来源时仍回到顶部。
+  final _scrollMemory = FeedScrollMemory();
   final Map<VideoFeed, GlobalKey> _feedTabKeys = {
     for (final feed in VideoFeed.values)
       feed: GlobalKey(debugLabel: 'home-feed-${feed.name}'),
   };
-  final Map<String, double> _feedScrollOffsets = {};
-  int _scrollTransitionEpoch = 0;
-  int? _activeScrollTransition;
-  bool _userScrolledDuringTransition = false;
   final Set<String> _crossSourceSearchingIds = {};
   final CuratedVodSearchPool _curatedSearchPool = CuratedVodSearchPool();
 
@@ -116,8 +112,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     recommendedController?.removeListener(_changed);
     recommendedController?.dispose();
     _curatedSearchPool.close();
-    _scrollController.dispose();
-    _showBackToTop.dispose();
+    _scrollMemory.dispose();
     super.dispose();
   }
 
@@ -131,88 +126,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     });
   }
 
-  void _resetScrollPosition() {
-    _showBackToTop.value = false;
-    if (_scrollController.hasClients) _scrollController.jumpTo(0);
-  }
-
-  void _resetScrollPositionAfterBuild() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _resetScrollPosition();
-    });
-  }
-
   String _feedScrollKey(VodSource source) => _selectedFeed == VideoFeed.updated
       ? '${source.id}|${_selectedFeed.name}|${selectedCategoryId ?? ''}'
       : _selectedFeed == VideoFeed.recommended
       ? '${source.id}|${_selectedFeed.name}'
       : '${source.id}|${_selectedFeed.name}|${_catalogScope.name}';
-
-  void _saveFeedScrollPosition(VodSource source) {
-    if (!_scrollController.hasClients) return;
-    _feedScrollOffsets[_feedScrollKey(source)] = _scrollController.offset;
-  }
-
-  int _beginScrollTransition() {
-    final epoch = ++_scrollTransitionEpoch;
-    _activeScrollTransition = epoch;
-    _userScrolledDuringTransition = false;
-    return epoch;
-  }
-
-  void _finishScrollTransition(VodSource source, int epoch) {
-    if (_activeScrollTransition != epoch) return;
-    if (_userScrolledDuringTransition) {
-      _activeScrollTransition = null;
-      return;
-    }
-    _restoreFeedScrollPositionAfterBuild(source, transitionEpoch: epoch);
-  }
-
-  bool _trackLoadingScrollInteraction(ScrollNotification notification) {
-    if (_activeScrollTransition != null &&
-        notification.metrics.axis == Axis.vertical &&
-        notification is ScrollStartNotification &&
-        notification.dragDetails != null) {
-      _userScrolledDuringTransition = true;
-    }
-    return false;
-  }
-
-  void _restoreFeedScrollPositionAfterBuild(
-    VodSource source, {
-    required int transitionEpoch,
-  }) {
-    final expectedKey = _feedScrollKey(source);
-    final offset = _feedScrollOffsets[expectedKey] ?? 0;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _activeScrollTransition != transitionEpoch) {
-        return;
-      }
-      if (_userScrolledDuringTransition ||
-          expectedKey != _feedScrollKey(source) ||
-          !_scrollController.hasClients) {
-        _activeScrollTransition = null;
-        return;
-      }
-      final position = _scrollController.position;
-      final restoredOffset = offset
-          .clamp(0.0, position.maxScrollExtent)
-          .toDouble();
-      _scrollController.jumpTo(restoredOffset);
-      _showBackToTop.value = restoredOffset > 600;
-      _activeScrollTransition = null;
-    });
-  }
-
-  void _scrollToTop() {
-    if (!_scrollController.hasClients) return;
-    _scrollController.animateTo(
-      0,
-      duration: Duration(milliseconds: 300),
-      curve: Curves.easeOutCubic,
-    );
-  }
 
   void _ensureController(VodSource source) {
     final sourceFingerprint = curatedVodSourceFingerprint(source);
@@ -225,8 +143,8 @@ class _HomePageState extends ConsumerState<HomePage> {
         _activeSourceFingerprint != sourceFingerprint) {
       _curatedSearchPool.evictSource(_activeSourceFingerprint!);
     }
-    _resetScrollPositionAfterBuild();
-    _feedScrollOffsets.clear();
+    _scrollMemory.resetAfterBuild();
+    _scrollMemory.clear();
     controller?.removeListener(_changed);
     controller?.dispose();
     curatedController?.removeListener(_changed);
@@ -351,7 +269,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       await _selectRootLeaf(rootId, leafId);
       return;
     }
-    _resetScrollPosition();
+    _scrollMemory.reset();
     setState(() {
       _selectedRootId = rootId;
       selectedCategoryId = rootId;
@@ -364,7 +282,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 直接选中子分类：同步所属主分类高亮并按子分类查询。
   Future<void> _selectRootLeaf(int rootId, int leafId) async {
-    _resetScrollPosition();
+    _scrollMemory.reset();
     setState(() {
       _selectedRootId = rootId;
       selectedCategoryId = leafId;
@@ -382,8 +300,8 @@ class _HomePageState extends ConsumerState<HomePage> {
       showAppToast(context, '当前来源不支持榜单资源检索');
       return;
     }
-    _saveFeedScrollPosition(source);
-    final scrollTransition = _beginScrollTransition();
+    _scrollMemory.savePosition(_feedScrollKey(source));
+    final scrollTransition = _scrollMemory.beginTransition();
     if (_selectedFeed == VideoFeed.recommended) {
       recommendedController?.setViewActive(false);
     }
@@ -404,7 +322,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       await curatedController?.selectFeed(feed);
     }
     if (mounted && _selectedFeed == feed) {
-      _finishScrollTransition(source, scrollTransition);
+      _scrollMemory.finishTransition(
+        scrollTransition,
+        currentKey: () => _feedScrollKey(source),
+      );
     }
   }
 
@@ -444,12 +365,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     TmdbCatalogScope scope,
   ) async {
     if (_catalogScope == scope) return;
-    _saveFeedScrollPosition(source);
-    final scrollTransition = _beginScrollTransition();
+    _scrollMemory.savePosition(_feedScrollKey(source));
+    final scrollTransition = _scrollMemory.beginTransition();
     setState(() => _catalogScope = scope);
     await curatedController?.selectScope(scope);
     if (mounted && _catalogScope == scope) {
-      _finishScrollTransition(source, scrollTransition);
+      _scrollMemory.finishTransition(
+        scrollTransition,
+        currentKey: () => _feedScrollKey(source),
+      );
     }
   }
 
@@ -519,23 +443,30 @@ class _HomePageState extends ConsumerState<HomePage> {
     ).push(MaterialPageRoute(builder: (_) => VideoDetailPage(video: video)));
   }
 
-  Future<void> _findAcrossSources(
-    VodSource currentSource,
-    TmdbCatalogItem item,
-  ) async {
-    if (_crossSourceSearchingIds.contains(item.globalId)) return;
+  /// 跨源查找公共骨架：登记进行中状态 → 逐个解析备用来源的严格匹配 →
+  /// 命中即打开，未命中弹“未找到”提示。推荐流在此基础上附带上报事件。
+  Future<void> _runCrossSourceSearch({
+    required String trackingId,
+    required VideoSearchTarget target,
+    required VodSource currentSource,
+    required String notFoundTitle,
+    Future<void> Function()? beforeSearch,
+    Future<void> Function()? onResolved,
+  }) async {
+    if (_crossSourceSearchingIds.contains(trackingId)) return;
     final registry = ref.read(vodSourceRegistryProvider).value;
     if (registry == null) {
       showAppToast(context, '来源列表尚未就绪');
       return;
     }
-    setState(() => _crossSourceSearchingIds.add(item.globalId));
+    setState(() => _crossSourceSearchingIds.add(trackingId));
+    await beforeSearch?.call();
     final service = CrossSourceSearchService(
       repository: ref.read(videoRepositoryProvider),
       registry: registry,
     );
     final results = await service.search(
-      VideoSearchTarget.fromCatalog(item),
+      target,
       excludedSourceId: currentSource.id,
       limit: 3,
     );
@@ -551,79 +482,9 @@ class _HomePageState extends ConsumerState<HomePage> {
       }
     }
     if (!mounted) return;
-    setState(() => _crossSourceSearchingIds.remove(item.globalId));
-    if (resolved != null) {
-      _open(resolved);
-      return;
-    }
-    final failed = results
-        .where(
-          (result) => result.status == CrossSourceSearchStatus.requestFailed,
-        )
-        .length;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('未找到可播放资源'),
-        content: Text(
-          failed == results.length && results.isNotEmpty
-              ? '备用来源本次均请求失败，请稍后重试。'
-              : '已检索 ${results.length} 个备用来源，暂未找到可解析播放的《${item.localizedTitle}》。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text('知道了'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _findRecommendationAcrossSources(
-    VodSource currentSource,
-    RecommendedCandidateSlot slot,
-  ) async {
-    final candidate = slot.candidate;
-    final trackingId = candidate.identity;
-    if (_crossSourceSearchingIds.contains(trackingId)) return;
-    final registry = ref.read(vodSourceRegistryProvider).value;
-    if (registry == null) {
-      showAppToast(context, '来源列表尚未就绪');
-      return;
-    }
-    setState(() => _crossSourceSearchingIds.add(trackingId));
-    recommendedController?.reportManualEvent(
-      slot,
-      RecommendationEventType.sourceSwitchOpened,
-    );
-    final service = CrossSourceSearchService(
-      repository: ref.read(videoRepositoryProvider),
-      registry: registry,
-    );
-    final results = await service.search(
-      candidate.searchTarget,
-      excludedSourceId: currentSource.id,
-      limit: 3,
-    );
-    Video? resolved;
-    for (final result in results.where(
-      (result) => result.status == CrossSourceSearchStatus.matched,
-    )) {
-      try {
-        resolved = await service.resolve(result);
-        break;
-      } catch (_) {
-        // 一个备用来源解析失败时继续检查下一个严格匹配结果。
-      }
-    }
-    if (!mounted) return;
     setState(() => _crossSourceSearchingIds.remove(trackingId));
     if (resolved != null) {
-      recommendedController?.reportManualEvent(
-        slot,
-        RecommendationEventType.manualPlayableFound,
-      );
+      await onResolved?.call();
       _open(resolved);
       return;
     }
@@ -639,7 +500,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         content: Text(
           failed == results.length && results.isNotEmpty
               ? '备用来源本次均请求失败，请稍后重试。'
-              : '已检索 ${results.length} 个备用来源，暂未找到可解析播放的《${candidate.title}》。',
+              : '已检索 ${results.length} 个备用来源，暂未找到可解析播放的《$notFoundTitle》。',
         ),
         actions: [
           TextButton(
@@ -647,6 +508,37 @@ class _HomePageState extends ConsumerState<HomePage> {
             child: const Text('知道了'),
           ),
         ],
+      ),
+    );
+  }
+
+  Future<void> _findAcrossSources(
+    VodSource currentSource,
+    TmdbCatalogItem item,
+  ) => _runCrossSourceSearch(
+    trackingId: item.globalId,
+    target: VideoSearchTarget.fromCatalog(item),
+    currentSource: currentSource,
+    notFoundTitle: item.localizedTitle,
+  );
+
+  Future<void> _findRecommendationAcrossSources(
+    VodSource currentSource,
+    RecommendedCandidateSlot slot,
+  ) {
+    final candidate = slot.candidate;
+    return _runCrossSourceSearch(
+      trackingId: candidate.identity,
+      target: candidate.searchTarget,
+      currentSource: currentSource,
+      notFoundTitle: candidate.title,
+      beforeSearch: () async => recommendedController?.reportManualEvent(
+        slot,
+        RecommendationEventType.sourceSwitchOpened,
+      ),
+      onResolved: () async => recommendedController?.reportManualEvent(
+        slot,
+        RecommendationEventType.manualPlayableFound,
       ),
     );
   }
@@ -661,41 +553,20 @@ class _HomePageState extends ConsumerState<HomePage> {
         : entry.query.trim();
     final hasResults = entry.rawResultCount > 0;
     final candidates = entry.candidateTitles.take(3).join('、');
-    final action = await showDialog<_UnavailableAction>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(hasResults ? '当前来源有结果但无法确认' : '当前来源无结果'),
-        content: Text(
-          hasResults
-              ? '使用“$query”在 ${currentSource.name} 搜索到 '
-                    '${entry.rawResultCount} 条结果，但自动匹配无法确认正确影片。'
-                    '${candidates.isEmpty ? '' : '\n候选：$candidates'}'
-              : '使用“$query”在 ${currentSource.name} 未搜索到结果。'
-                    '你可以进入搜索页调整关键词，或继续查找 3 个备用源。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, _UnavailableAction.searchBackups),
-            child: const Text('继续查找 3 个备用源'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              _UnavailableAction.reviewCurrentSource,
-            ),
-            child: Text(hasResults ? '查看搜索结果' : '前往搜索页'),
-          ),
-        ],
-      ),
+    final action = await showHomeUnavailableDialog(
+      context,
+      title: hasResults ? '当前来源有结果但无法确认' : '当前来源无结果',
+      message: hasResults
+          ? '使用“$query”在 ${currentSource.name} 搜索到 '
+                '${entry.rawResultCount} 条结果，但自动匹配无法确认正确影片。'
+                '${candidates.isEmpty ? '' : '\n候选：$candidates'}'
+          : '使用“$query”在 ${currentSource.name} 未搜索到结果。'
+                '你可以进入搜索页调整关键词，或继续查找 3 个备用源。',
+      confirmLabel: hasResults ? '查看搜索结果' : '前往搜索页',
     );
     if (!mounted || action == null) return;
     switch (action) {
-      case _UnavailableAction.reviewCurrentSource:
+      case HomeUnavailableAction.reviewCurrentSource:
         ref
             .read(searchLaunchRequestProvider.notifier)
             .launch(
@@ -704,7 +575,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               mode: SearchLaunchMode.reviewCurrentSource,
             );
         return;
-      case _UnavailableAction.searchBackups:
+      case HomeUnavailableAction.searchBackups:
         await _findAcrossSources(currentSource, item);
         return;
     }
@@ -721,50 +592,27 @@ class _HomePageState extends ConsumerState<HomePage> {
     final hasResults = slot.rawResultCount > 0;
     final searchFailed = slot.status == RecommendedCandidateStatus.failed;
     final candidates = slot.candidateTitles.take(3).join('、');
-    final action = await showDialog<_UnavailableAction>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(
-          searchFailed
-              ? '当前来源搜索失败'
-              : hasResults
-              ? '当前来源有结果但无法确认'
-              : '当前来源无结果',
-        ),
-        content: Text(
-          searchFailed
-              ? '使用“$query”搜索 ${currentSource.name} 时请求失败。'
-                    '你可以进入搜索页重试，或继续查找 3 个备用源。'
-              : hasResults
-              ? '使用“$query”在 ${currentSource.name} 搜索到 '
-                    '${slot.rawResultCount} 条结果，但自动匹配无法确认正确影片。'
-                    '${candidates.isEmpty ? '' : '\n候选：$candidates'}'
-              : '使用“$query”在 ${currentSource.name} 未搜索到结果。'
-                    '你可以进入搜索页调整关键词，或继续查找 3 个备用源。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, _UnavailableAction.searchBackups),
-            child: const Text('继续查找 3 个备用源'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              _UnavailableAction.reviewCurrentSource,
-            ),
-            child: Text(hasResults && !searchFailed ? '查看搜索结果' : '前往搜索页'),
-          ),
-        ],
-      ),
+    final action = await showHomeUnavailableDialog(
+      context,
+      title: searchFailed
+          ? '当前来源搜索失败'
+          : hasResults
+          ? '当前来源有结果但无法确认'
+          : '当前来源无结果',
+      message: searchFailed
+          ? '使用“$query”搜索 ${currentSource.name} 时请求失败。'
+                '你可以进入搜索页重试，或继续查找 3 个备用源。'
+          : hasResults
+          ? '使用“$query”在 ${currentSource.name} 搜索到 '
+                '${slot.rawResultCount} 条结果，但自动匹配无法确认正确影片。'
+                '${candidates.isEmpty ? '' : '\n候选：$candidates'}'
+          : '使用“$query”在 ${currentSource.name} 未搜索到结果。'
+                '你可以进入搜索页调整关键词，或继续查找 3 个备用源。',
+      confirmLabel: hasResults && !searchFailed ? '查看搜索结果' : '前往搜索页',
     );
     if (!mounted || action == null) return;
     switch (action) {
-      case _UnavailableAction.reviewCurrentSource:
+      case HomeUnavailableAction.reviewCurrentSource:
         recommendedController?.reportManualEvent(
           slot,
           RecommendationEventType.manualSearchOpened,
@@ -777,7 +625,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               mode: SearchLaunchMode.reviewCurrentSource,
             );
         return;
-      case _UnavailableAction.searchBackups:
+      case HomeUnavailableAction.searchBackups:
         await _findRecommendationAcrossSources(currentSource, slot);
         return;
     }
@@ -840,7 +688,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       final before = previous?.value;
       final after = next.value;
       if (before == null || after == null || before == after) return;
-      _resetScrollPositionAfterBuild();
+      _scrollMemory.resetAfterBuild();
       controller?.removeListener(_changed);
       controller?.dispose();
       curatedController?.removeListener(_changed);
@@ -878,89 +726,54 @@ class _HomePageState extends ConsumerState<HomePage> {
     children: [
       Positioned.fill(
         child: NotificationListener<ScrollNotification>(
-          onNotification: _trackLoadingScrollInteraction,
+          onNotification: _scrollMemory.trackLoadingInteraction,
           child: _body(source),
         ),
       ),
-      Positioned(right: 16, bottom: 88, child: _backToTopButton()),
+      Positioned(
+        right: 16,
+        bottom: 88,
+        child: HomeBackToTopButton(
+          showBackToTop: _scrollMemory.showBackToTop,
+          onTap: _scrollMemory.scrollToTop,
+        ),
+      ),
     ],
   );
 
-  /// 返回顶部悬浮按钮：与底栏同款毛玻璃质感，滚动超阈值后淡入。
-  Widget _backToTopButton() => ValueListenableBuilder<bool>(
-    valueListenable: _showBackToTop,
-    builder: (context, show, _) => AnimatedOpacity(
-      opacity: show ? 1 : 0,
-      duration: Duration(milliseconds: 200),
-      child: IgnorePointer(
-        ignoring: !show,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(22),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Material(
-              color: context.appColors.surface.withValues(alpha: 0.75),
-              shape: CircleBorder(
-                side: BorderSide(color: context.appColors.divider),
-              ),
-              child: InkWell(
-                customBorder: CircleBorder(),
-                onTap: _scrollToTop,
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Icon(
-                    Icons.arrow_upward_rounded,
-                    color: context.appColors.accentForeground,
-                    size: 22,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-
-  double _mainCategoryRowHeight(BuildContext context) =>
-      math.max(56, MediaQuery.textScalerOf(context).scale(14) + 28);
-
-  double _subCategoryRowHeight(BuildContext context) =>
-      math.max(48, MediaQuery.textScalerOf(context).scale(13) + 24);
-
-  double _leafCategoryRowHeight(BuildContext context) =>
-      math.max(42, MediaQuery.textScalerOf(context).scale(12) + 22);
-
   List<Widget> _homeHeaderSlivers(VodSource source) {
-    final mainRowHeight = _mainCategoryRowHeight(context);
-    final subRowHeight = _subCategoryRowHeight(context);
-    final leafRowHeight = _leafCategoryRowHeight(context);
     final visibleFeeds = _visibleFeeds(source);
-    final showFeedRow = visibleFeeds.length > 1;
-    final showSecondaryRow = _selectedFeed != VideoFeed.recommended;
-    final showLeafRow =
-        _selectedFeed == VideoFeed.updated &&
-        _selectedRootId != null &&
-        (_children[_selectedRootId]?.isNotEmpty ?? false);
-    final pinnedHeight =
-        (showSecondaryRow ? subRowHeight : 0.0) +
-        (showFeedRow ? mainRowHeight : 0.0) +
-        (showLeafRow ? leafRowHeight : 0.0) +
-        1.0;
     return [
       SliverToBoxAdapter(child: _introHeader()),
       SliverToBoxAdapter(child: ContinueWatchingSection()),
       SliverPersistentHeader(
         pinned: true,
-        delegate: _PinnedHeaderDelegate(
-          height: pinnedHeight,
-          child: _categoryHeader(
-            source,
-            mainRowHeight: mainRowHeight,
-            subRowHeight: subRowHeight,
-            leafRowHeight: leafRowHeight,
+        delegate: HomePinnedHeaderDelegate(
+          height: HomeCategoryHeader.pinnedHeightOf(
+            context: context,
+            selectedFeed: _selectedFeed,
+            selectedRootId: _selectedRootId,
+            children: _children,
             visibleFeeds: visibleFeeds,
+          ),
+          child: HomeCategoryHeader(
+            source: source,
+            visibleFeeds: visibleFeeds,
+            selectedFeed: _selectedFeed,
+            catalogScope: _catalogScope,
+            selectedRootId: _selectedRootId,
+            selectedCategoryId: selectedCategoryId,
+            children: _children,
+            visibleRoots: _visibleRoots,
+            categoryError: categoryError,
+            feedTabKeys: _feedTabKeys,
+            onSelectFeed: (feed) => _selectFeed(source, feed),
+            onSelectCatalogScope: (scope) => _selectCatalogScope(source, scope),
+            onSelectRoot: (rootId) => _selectRoot(source, rootId),
+            onSelectRootLeaf: (rootId, leafId) =>
+                _selectRootLeaf(rootId, leafId),
+            onLoadCategories: () => _loadCategories(source),
+            onOpenChannelsPage: () => _openChannelsPage(source),
           ),
         ),
       ),
@@ -1029,252 +842,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     await ref.read(contentFilterEnabledProvider.notifier).setEnabled(!enabled);
   }
 
-  /// 分类栏由 Sliver 系统与网格共享同一滚动位置，不再单独动画或填充顶部间距。
-  Widget _categoryHeader(
-    VodSource source, {
-    required double mainRowHeight,
-    required double subRowHeight,
-    required double leafRowHeight,
-    required List<VideoFeed> visibleFeeds,
-  }) {
-    final selectedChildren = _selectedFeed == VideoFeed.updated
-        ? (_children[_selectedRootId] ?? const <VideoCategory>[])
-        : const <VideoCategory>[];
-    return ClipRect(
-      key: ValueKey('home-category-header'),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: ColoredBox(
-          color: context.appColors.background.withValues(alpha: 0.72),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (visibleFeeds.length > 1)
-                SizedBox(
-                  height: mainRowHeight,
-                  child: ChipTheme(
-                    data: categoryChipTheme(context).copyWith(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 7,
-                      ),
-                    ),
-                    child: ListView(
-                      key: PageStorageKey<String>(
-                        'home-feed-tabs-${source.id}',
-                      ),
-                      padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
-                      scrollDirection: Axis.horizontal,
-                      physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics(),
-                      ),
-                      children: [
-                        for (
-                          var index = 0;
-                          index < visibleFeeds.length;
-                          index++
-                        )
-                          Padding(
-                            key: _feedTabKeys[visibleFeeds[index]],
-                            padding: EdgeInsets.only(
-                              right: index == visibleFeeds.length - 1 ? 0 : 8,
-                            ),
-                            child: ChoiceChip(
-                              key: ValueKey(
-                                'home-feed-${visibleFeeds[index].name}',
-                              ),
-                              label: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                ),
-                                child: Text(visibleFeeds[index].label),
-                              ),
-                              selected: _selectedFeed == visibleFeeds[index],
-                              showCheckmark: false,
-                              onSelected: (_) =>
-                                  _selectFeed(source, visibleFeeds[index]),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              if (_selectedFeed != VideoFeed.updated &&
-                  _selectedFeed != VideoFeed.recommended)
-                SizedBox(
-                  height: subRowHeight,
-                  child: ChipTheme(
-                    data: _secondaryCategoryChipTheme(context),
-                    child: ListView(
-                      key: PageStorageKey<String>(
-                        'home-tmdb-scope-tabs-${source.id}',
-                      ),
-                      padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
-                      scrollDirection: Axis.horizontal,
-                      children: [
-                        for (final scope in TmdbCatalogScope.values)
-                          Padding(
-                            padding: EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              key: ValueKey('home-tmdb-scope-${scope.name}'),
-                              label: Text(scope.label),
-                              selected: _catalogScope == scope,
-                              showCheckmark: false,
-                              onSelected: (_) =>
-                                  _selectCatalogScope(source, scope),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                )
-              else if (_selectedFeed == VideoFeed.updated)
-                SizedBox(
-                  height: subRowHeight,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ChipTheme(
-                          data: _secondaryCategoryChipTheme(context),
-                          child: ListView(
-                            key: PageStorageKey<String>(
-                              'home-root-category-tabs-${source.id}',
-                            ),
-                            padding: EdgeInsets.fromLTRB(16, 2, 8, 2),
-                            scrollDirection: Axis.horizontal,
-                            children: [
-                              Padding(
-                                padding: EdgeInsets.only(right: 8),
-                                child: ChoiceChip(
-                                  label: Text('全部'),
-                                  selected: _selectedRootId == null,
-                                  showCheckmark: false,
-                                  onSelected: (_) => _selectRoot(source, null),
-                                ),
-                              ),
-                              ...?_visibleRoots?.map(
-                                (item) => Padding(
-                                  padding: EdgeInsets.only(right: 8),
-                                  child: ChoiceChip(
-                                    label: Text(item.name),
-                                    selected: _selectedRootId == item.id,
-                                    showCheckmark: false,
-                                    onSelected: (_) =>
-                                        _selectRoot(source, item.id),
-                                  ),
-                                ),
-                              ),
-                              if (categoryError != null)
-                                ActionChip(
-                                  label: Text('重试'),
-                                  onPressed: () => _loadCategories(source),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      if (_visibleRoots?.isNotEmpty ?? false)
-                        Padding(
-                          padding: EdgeInsets.only(right: 8),
-                          child: IconButton(
-                            key: ValueKey('home-category-expand-button'),
-                            tooltip: '全部频道',
-                            visualDensity: VisualDensity.compact,
-                            icon: Icon(
-                              Icons.grid_view_rounded,
-                              size: 20,
-                              color: context.appColors.secondary,
-                            ),
-                            onPressed: () => _openChannelsPage(source),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              if (selectedChildren.isNotEmpty)
-                SizedBox(
-                  height: leafRowHeight,
-                  child: ChipTheme(
-                    data: categoryChipTheme(context).copyWith(
-                      backgroundColor: Colors.transparent,
-                      side: BorderSide(color: context.appColors.divider),
-                      labelStyle: TextStyle(
-                        color: context.appColors.secondary,
-                        fontSize: 12,
-                      ),
-                      secondaryLabelStyle: TextStyle(
-                        color: context.appColors.accentForeground,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      color: WidgetStateProperty.resolveWith((states) {
-                        if (states.contains(WidgetState.selected)) {
-                          return context.appColors.accent.withValues(
-                            alpha: 0.18,
-                          );
-                        }
-                        return Colors.transparent;
-                      }),
-                    ),
-                    child: ListView(
-                      key: PageStorageKey<String>(
-                        'home-child-category-tabs-${source.id}-$_selectedRootId',
-                      ),
-                      padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
-                      scrollDirection: Axis.horizontal,
-                      children: [
-                        for (final child in selectedChildren)
-                          Padding(
-                            padding: EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              key: ValueKey('home-child-category-${child.id}'),
-                              label: Text(child.name),
-                              selected: selectedCategoryId == child.id,
-                              showCheckmark: false,
-                              onSelected: (_) =>
-                                  _selectRootLeaf(_selectedRootId!, child.id),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              Container(
-                height: 1,
-                color: context.appColors.divider.withValues(alpha: 0.6),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  ChipThemeData _secondaryCategoryChipTheme(BuildContext context) =>
-      categoryChipTheme(context).copyWith(
-        backgroundColor: Colors.transparent,
-        side: BorderSide(
-          color: context.appColors.divider.withValues(alpha: 0.72),
-        ),
-        labelStyle: TextStyle(color: context.appColors.secondary, fontSize: 13),
-        secondaryLabelStyle: TextStyle(
-          color: context.appColors.accentForeground,
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-        ),
-        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        color: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return context.appColors.accent.withValues(alpha: 0.16);
-          }
-          return Colors.transparent;
-        }),
-      );
-
   Widget _body(VodSource source) {
     if (_selectedFeed == VideoFeed.recommended) {
       return _recommendedBody(source);
@@ -1283,15 +850,16 @@ class _HomePageState extends ConsumerState<HomePage> {
     final unreadUpdates = ref.watch(unreadFollowUpdatesByGlobalIdProvider);
     final c = controller;
     if (c == null) {
-      return _stateScrollView(source, AppLoadingView());
+      return _loadingStateView(source);
     }
     if (c.items.isEmpty && c.loading) {
-      return _stateScrollView(source, AppLoadingView());
+      return _loadingStateView(source);
     }
     if (c.items.isEmpty && c.error != null) {
-      return _stateScrollView(
-        source,
-        AppErrorView(
+      return homeStateScrollView(
+        headerSlivers: _homeHeaderSlivers(source),
+        controller: _scrollMemory.scrollController,
+        state: AppErrorView(
           message: c.error!,
           onRetry: c.refresh,
           secondaryLabel: '切换来源',
@@ -1300,7 +868,11 @@ class _HomePageState extends ConsumerState<HomePage> {
       );
     }
     if (c.items.isEmpty) {
-      return _stateScrollView(source, AppEmptyView(message: '暂时没有内容'));
+      return homeStateScrollView(
+        headerSlivers: _homeHeaderSlivers(source),
+        controller: _scrollMemory.scrollController,
+        state: AppEmptyView(message: '暂时没有内容'),
+      );
     }
     return NotificationListener<ScrollNotification>(
       onNotification: (event) {
@@ -1310,7 +882,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         }
         // 滚动超过约一屏后显示"返回顶部"悬浮按钮。
         final showTop = event.metrics.pixels > 600;
-        if (showTop != _showBackToTop.value) _showBackToTop.value = showTop;
+        if (showTop != _scrollMemory.showBackToTop.value) {
+          _scrollMemory.showBackToTop.value = showTop;
+        }
         if (event.metrics.extentAfter < 400) c.loadMore();
         return false;
       },
@@ -1319,10 +893,6 @@ class _HomePageState extends ConsumerState<HomePage> {
         child: VideoGrid(
           videos: c.items,
           onTap: (video) {
-            // if (c.isProvisionalVideo(video)) {
-            //   showAppToast(context, '推荐生成中，完成后即可播放');
-            //   return;
-            // }
             _open(video);
           },
           overlayBuilder: (video) {
@@ -1333,7 +903,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           },
           topPadding: 12,
           bottomPadding: 96,
-          controller: _scrollController,
+          controller: _scrollMemory.scrollController,
           physics: AlwaysScrollableScrollPhysics(),
           headerSlivers: _homeHeaderSlivers(source),
           footer: c.loading
@@ -1362,413 +932,40 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  Widget _loadingStateView(VodSource source) => homeStateScrollView(
+    headerSlivers: _homeHeaderSlivers(source),
+    controller: _scrollMemory.scrollController,
+    state: AppLoadingView(),
+  );
+
   Widget _recommendedBody(VodSource source) {
     final c = recommendedController;
-    if (c == null) {
-      return _stateScrollView(source, const AppLoadingView());
-    }
-    if (c.items.isEmpty && c.slots.isEmpty && c.loading) {
-      return _stateScrollView(
-        source,
-        AppLoadingView(
-          label: c.generating
-              ? '阶段 1/2 · AI 正在生成个性化推荐…'
-              : '阶段 2/2 · 正在当前来源匹配可播资源…',
-        ),
-      );
-    }
-    if (c.coldStart) {
-      return _stateScrollView(
-        source,
-        const AppEmptyView(message: '看过或收藏几部影片后，这里会出现更懂你的推荐。'),
-      );
-    }
-    if (c.items.isEmpty && c.unavailableSlots.isEmpty && c.error != null) {
-      return _stateScrollView(
-        source,
-        AppErrorView(
-          message: c.error!,
-          onRetry: () => _loadRecommendations(forceRefresh: true),
-          secondaryLabel: '切换来源',
-          secondaryAction: () => SourceSelectorSheet.show(context),
-        ),
-      );
-    }
-    if (c.items.isEmpty && c.unavailableSlots.isEmpty && !c.loading) {
-      return _stateScrollView(
-        source,
-        AppEmptyView(message: '当前来源暂未找到可播放的推荐内容'),
-      );
-    }
-    return NotificationListener<ScrollNotification>(
-      onNotification: (event) {
-        if (event.depth != 0 || event.metrics.axis != Axis.vertical) {
-          return false;
-        }
-        final showTop = event.metrics.pixels > 600;
-        if (showTop != _showBackToTop.value) _showBackToTop.value = showTop;
-        return false;
-      },
-      child: RefreshIndicator(
-        onRefresh: () => _loadRecommendations(forceRefresh: true),
-        child: VideoGrid(
-          videos: c.items,
-          onTap: _open,
-          topPadding: 12,
-          bottomPadding: 96,
-          controller: _scrollController,
-          physics: const AlwaysScrollableScrollPhysics(),
-          headerSlivers: [
-            ..._homeHeaderSlivers(source),
-            if (c.matching && !c.loadingMore)
-              SliverToBoxAdapter(
-                child: _recommendationMatchingProgress(source, c),
-              ),
-          ],
-          footer: _recommendedFooter(source, c),
-        ),
-      ),
+    if (c == null) return _loadingStateView(source);
+    return HomeRecommendedBody(
+      controller: c,
+      source: source,
+      headerSlivers: _homeHeaderSlivers(source),
+      scrollController: _scrollMemory.scrollController,
+      showBackToTop: _scrollMemory.showBackToTop,
+      searchingIds: _crossSourceSearchingIds,
+      onOpen: _open,
+      onRefresh: () => _loadRecommendations(forceRefresh: true),
+      onSlotUnavailable: (slot) => _handleRecommendedUnavailable(source, slot),
     );
   }
-
-  Widget _recommendationMatchingProgress(
-    VodSource source,
-    RecommendedFeedController controller,
-  ) {
-    final total = controller.candidates.length;
-    final completed = controller.searched.clamp(0, total);
-    final progress = total == 0 ? null : completed / total;
-    return Semantics(
-      liveRegion: true,
-      label:
-          '正在${source.name}匹配可播资源，已检查 $completed 部，'
-          '共 $total 部，已找到 ${controller.items.length} 部',
-      child: Container(
-        key: const ValueKey('recommendation-matching-progress'),
-        margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: context.appColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: context.appColors.divider),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    '阶段 2/2 · VOD 匹配',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              '正在${source.name}搜索可播资源',
-              style: TextStyle(
-                color: context.appColors.secondary,
-                fontSize: 13,
-              ),
-            ),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: progress),
-            const SizedBox(height: 8),
-            Text(
-              '已检查 $completed/$total · 可播放 ${controller.items.length}',
-              style: TextStyle(
-                color: context.appColors.secondary,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _recommendedFooter(
-    VodSource source,
-    RecommendedFeedController controller,
-  ) => Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      _recommendedSummary(controller),
-      _recommendedLoadControl(controller),
-      if (controller.unavailableSlots.isNotEmpty)
-        RecommendationUnavailableSection(
-          key: ValueKey(
-            'recommendation-unavailable-'
-            '${controller.sessionId ?? identityHashCode(controller)}',
-          ),
-          slots: controller.unavailableSlots,
-          playableCount: controller.items.length,
-          searchingIds: _crossSourceSearchingIds,
-          onTap: (slot) => _handleRecommendedUnavailable(source, slot),
-        ),
-    ],
-  );
-
-  Widget _recommendedLoadControl(RecommendedFeedController controller) {
-    if (controller.matching && !controller.loadingMore) {
-      return const SizedBox.shrink();
-    }
-    if (controller.fetchingMore) {
-      return const Padding(
-        key: ValueKey('recommendation-loading-more'),
-        padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(width: 10),
-            Text('正在获取下一页推荐…'),
-          ],
-        ),
-      );
-    }
-    if (controller.matchingMore) {
-      return const Padding(
-        key: ValueKey('recommendation-matching-more'),
-        padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(width: 10),
-            Text('正在当前来源匹配新推荐…'),
-          ],
-        ),
-      );
-    }
-    if (controller.error != null) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-        child: Column(
-          children: [
-            Text(
-              controller.error!,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: context.appColors.error, fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              key: const ValueKey('recommendation-retry-more'),
-              onPressed: controller.hasMore ? controller.loadMore : null,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('重试加载'),
-            ),
-          ],
-        ),
-      );
-    }
-    if (controller.hasMore) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-        child: FilledButton.tonalIcon(
-          key: const ValueKey('recommendation-load-more'),
-          onPressed: controller.loadMore,
-          icon: const Icon(Icons.expand_more_rounded, size: 18),
-          label: const Text('加载更多推荐'),
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-      child: Text(
-        '没有更多推荐了',
-        style: TextStyle(color: context.appColors.tertiary, fontSize: 12),
-      ),
-    );
-  }
-
-  Widget _recommendedSummary(RecommendedFeedController controller) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-    child: Text(
-      controller.playableFromCache
-          ? '本地缓存 · 可播放 ${controller.items.length} 部'
-          : [
-              '模型 ${controller.candidates.length} 部',
-              '已搜索 ${controller.searched}',
-              '可播放 ${controller.items.length}',
-              '未找到 ${controller.notFound}',
-              '歧义 ${controller.ambiguous}',
-              '失败 ${controller.failed}',
-              if (controller.fromCache) '模型缓存',
-              if (controller.matching && !controller.loadingMore) '匹配中',
-            ].join(' · '),
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        color: context.appColors.secondary,
-        fontSize: 12,
-        height: 1.5,
-      ),
-    ),
-  );
 
   Widget _curatedBody(VodSource source) {
     final c = curatedController;
-    if (c == null || (c.slots.isEmpty && c.catalogLoading)) {
-      return _stateScrollView(source, AppLoadingView(label: '正在获取榜单…'));
-    }
-    if (c.slots.isEmpty && c.error != null) {
-      return _stateScrollView(
-        source,
-        AppErrorView(
-          message: c.error!,
-          onRetry: c.refresh,
-          secondaryLabel: '切换来源',
-          secondaryAction: () => SourceSelectorSheet.show(context),
-        ),
-      );
-    }
-    if (c.slots.isEmpty) {
-      return _stateScrollView(source, AppEmptyView(message: '当前榜单暂无影片'));
-    }
-    return NotificationListener<ScrollNotification>(
-      onNotification: (event) {
-        if (event.depth != 0 || event.metrics.axis != Axis.vertical) {
-          return false;
-        }
-        final showTop = event.metrics.pixels > 600;
-        if (showTop != _showBackToTop.value) _showBackToTop.value = showTop;
-        return false;
-      },
-      child: RefreshIndicator(
-        onRefresh: c.refresh,
-        child: CuratedVideoGrid(
-          slots: c.slots,
-          onTap: (slot) => _handleCuratedSlot(source, slot),
-          topPadding: 12,
-          bottomPadding: 96,
-          controller: _scrollController,
-          physics: AlwaysScrollableScrollPhysics(),
-          headerSlivers: _homeHeaderSlivers(source),
-          footer: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _curatedSummary(c),
-              if (c.hasMore || c.failedEntries.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-                  child: Wrap(
-                    spacing: 12,
-                    runSpacing: 8,
-                    alignment: WrapAlignment.center,
-                    children: [
-                      if (c.failedEntries.isNotEmpty)
-                        OutlinedButton.icon(
-                          onPressed: c.retryFailed,
-                          icon: const Icon(Icons.refresh_rounded, size: 18),
-                          label: const Text('重试失败项'),
-                        ),
-                      if (c.hasMore)
-                        FilledButton.tonalIcon(
-                          key: const ValueKey('curated-load-more'),
-                          onPressed: c.loadMore,
-                          icon: const Icon(Icons.expand_more_rounded, size: 18),
-                          label: const Text('继续加载榜单'),
-                        ),
-                    ],
-                  ),
-                )
-              else
-                Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Center(
-                    child: Text(
-                      '没有更多了',
-                      style: TextStyle(
-                        color: context.appColors.tertiary,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
+    if (c == null) return _loadingStateView(source);
+    return HomeCuratedBody(
+      controller: c,
+      source: source,
+      headerSlivers: _homeHeaderSlivers(source),
+      scrollController: _scrollMemory.scrollController,
+      showBackToTop: _scrollMemory.showBackToTop,
+      onOpen: _open,
+      onRefresh: c.refresh,
+      onSlotTap: (slot) => _handleCuratedSlot(source, slot),
     );
   }
-
-  Widget _curatedSummary(CuratedFeedController controller) {
-    int count(CuratedSlotStatus status) =>
-        controller.slots.where((slot) => slot.status == status).length;
-    final pending =
-        count(CuratedSlotStatus.queued) + count(CuratedSlotStatus.searching);
-    final unavailable =
-        count(CuratedSlotStatus.unavailable) +
-        count(CuratedSlotStatus.duplicate);
-    final parts = <String>[
-      '当前 ${controller.slots.length} 部：可播放 ${count(CuratedSlotStatus.available)}',
-      '当前源暂无 $unavailable',
-      '多候选 ${count(CuratedSlotStatus.ambiguous)}',
-      '请求失败 ${count(CuratedSlotStatus.failed)}',
-      if (pending > 0) '搜索中 $pending',
-    ];
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-      child: Text(
-        controller.sourceUnavailable
-            ? '${parts.join(' · ')}\n当前来源暂不可用，已暂停后续搜索'
-            : parts.join(' · '),
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: context.appColors.secondary,
-          fontSize: 12,
-          height: 1.5,
-        ),
-      ),
-    );
-  }
-
-  Widget _stateScrollView(VodSource source, Widget state) => CustomScrollView(
-    controller: _scrollController,
-    physics: AlwaysScrollableScrollPhysics(),
-    slivers: [
-      ..._homeHeaderSlivers(source),
-      SliverFillRemaining(hasScrollBody: false, child: state),
-    ],
-  );
-}
-
-class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
-  _PinnedHeaderDelegate({required this.height, required this.child});
-
-  final double height;
-  final Widget child;
-
-  @override
-  double get minExtent => height;
-
-  @override
-  double get maxExtent => height;
-
-  @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
-  ) => SizedBox.expand(child: child);
-
-  @override
-  bool shouldRebuild(_PinnedHeaderDelegate oldDelegate) =>
-      height != oldDelegate.height || child != oldDelegate.child;
 }

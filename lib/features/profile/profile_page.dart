@@ -14,7 +14,7 @@ import '../../shared/video_grid.dart';
 import '../detail/detail_page.dart';
 import '../download/download_management_page.dart';
 import '../settings/more_settings_page.dart';
-import '../player/resume_watch.dart';
+import '../watch_history/resume_watch.dart';
 import '../settings/source_management_page.dart';
 
 class ProfilePage extends ConsumerWidget {
