@@ -12,10 +12,16 @@ doc/
 ├── interview/
 │   └── PROJECT_TECHNICAL_HIGHLIGHTS.md       # 项目技术亮点、原理与面试问答
 ├── hot-update/
-│   ├── HOT_UPDATE_TECHNICAL_RESEARCH.md      # 生产热更新调研、合规边界与实施方案
 │   └── APK_UPDATE_REMINDER_REQUIREMENTS.md   # Android APK 新版本弹窗与外部下载需求
 ├── design/
 │   └── DESIGN_SYSTEM.md                      # 夜幕影院设计规范
+├── flows/
+│   ├── README.md                             # 应用流程剖析与原型图主题入口
+│   ├── NAVIGATION_MAP.md                     # 启动链路、AppShell 骨架与全局导航地图
+│   ├── USER_FLOWS.md                         # 浏览/搜索/详情换源/续播/追更/设置流程
+│   ├── PLAYBACK_PIPELINE.md                  # 播放全链路十步流水线与降级路径
+│   ├── CACHE_DOWNLOAD_FLOWS.md               # 缓存体系与下载任务生命周期
+│   └── PROTOTYPES.md                         # 全部页面 ASCII 原型图（线框+注解）
 ├── follow/
 │   └── FOLLOW_UPDATES_REQUIREMENTS.md        # 追更、更新检查与提醒需求
 ├── recommendation/
@@ -58,9 +64,14 @@ doc/
 | --- | --- | --- |
 | [`codebase/CODEBASE_MAP.md`](codebase/CODEBASE_MAP.md) | 持续生效 | 代码文件地图：`lib/` 逐文件作用索引，新增/移动/删除文件时须同步 |
 | [`interview/PROJECT_TECHNICAL_HIGHLIGHTS.md`](interview/PROJECT_TECHNICAL_HIGHLIGHTS.md) | 持续生效 | 基于当前实现的项目介绍、技术原理、权衡、面试追问与 STAR 案例 |
-| [`hot-update/HOT_UPDATE_TECHNICAL_RESEARCH.md`](hot-update/HOT_UPDATE_TECHNICAL_RESEARCH.md) | 待决策 | 生产 OTA 能力边界、Shorebird 方案、商店合规、远程 JS 加固与分阶段实施路线 |
 | [`hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md`](hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md) | 核心流程已实现 | Android 新版本后台检查、弹窗提示和外部浏览器打开 APK 下载链接；待部署清单并真机验收 |
 | [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) | 持续生效 | 「夜幕影院」深色主题设计规范（颜色/字号/组件 Token），UI 改动须遵守 |
+| [`flows/README.md`](flows/README.md) | 持续生效 | 应用流程剖析与原型图主题入口（基于 v1.1.0+5 盘点），改版/重构规划的现状底稿 |
+| [`flows/NAVIGATION_MAP.md`](flows/NAVIGATION_MAP.md) | 持续生效 | 启动链路、AppShell 骨架、全局导航地图与路由/弹层方式盘点 |
+| [`flows/USER_FLOWS.md`](flows/USER_FLOWS.md) | 持续生效 | 内容浏览、搜索、详情换源、续播、收藏追更、设置的用户流程与状态分支 |
+| [`flows/PLAYBACK_PIPELINE.md`](flows/PLAYBACK_PIPELINE.md) | 持续生效 | 播放全链路十步流水线、播放模式五态与降级回退路径 |
+| [`flows/CACHE_DOWNLOAD_FLOWS.md`](flows/CACHE_DOWNLOAD_FLOWS.md) | 持续生效 | 缓存配额/磁盘布局/TTL 与下载任务生命周期、网络策略 |
+| [`flows/PROTOTYPES.md`](flows/PROTOTYPES.md) | 持续生效 | 全部页面 ASCII 原型图集（线框 + 区块注解 + 宽屏断点） |
 | [`follow/FOLLOW_UPDATES_REQUIREMENTS.md`](follow/FOLLOW_UPDATES_REQUIREMENTS.md) | 待实施 | 收藏与追更关系、详情页动态按钮、前台更新检查、红点提醒和卡片更新状态 |
 | [`recommendation/README.md`](recommendation/README.md) | 客户端核心链路已实现，待真机联调 | 后端推荐客户端开发与联调入口 |
 | [`recommendation/CLIENT_RECOMMENDATION_API.md`](recommendation/CLIENT_RECOMMENDATION_API.md) | 可联调 | 推荐 HTTP 接口、数据模型、Cursor、事件与错误处理 |
