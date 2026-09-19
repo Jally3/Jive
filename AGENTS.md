@@ -26,9 +26,11 @@ fvm flutter analyze             # Run the configured static lints and analyzer
 fvm flutter test                # Run all unit and widget tests
 fvm flutter run                 # Launch on a connected device or emulator
 fvm flutter build apk           # Build the Android APK
+./tool/setup_ohos_sdk.sh        # One-time: install the shared CPF OHOS Flutter SDK (~/.ohos-flutter)
+./tool/build_ohos.sh            # Build the HarmonyOS HAP (uses the CPF OHOS SDK, not fvm)
 ```
 
-Use `fvm flutter test test/video_repository_test.dart` to run one test file. `.fvmrc` is the single source of truth for the Flutter version; never mix bare `flutter` commands with `fvm flutter` in this repository.
+Use `fvm flutter test test/video_repository_test.dart` to run one test file. `.fvmrc` is the single source of truth for the Flutter version; never mix bare `flutter` commands with `fvm flutter` in this repository. Two SDKs coexist long-term: official Flutter (fvm, for analyze/test/Android/iOS) and the CPF OpenHarmony fork (for OHOS builds only). Never run `fvm use` against the CPF SDK or install it under `~/fvm/versions/`; see `doc/ohos/SDK_SETUP.md` for the layout, resolution rules, and the mandatory system UI patch.
 
 ## Coding Style & Naming Conventions
 
