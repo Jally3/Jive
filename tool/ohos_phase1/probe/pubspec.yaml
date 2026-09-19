@@ -1,0 +1,24 @@
+name: jive_playback_probe
+description: Isolated OpenHarmony video_player playback probe.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  video_player:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      path: packages/video_player/video_player
+      ref: video_player-v2.11.1-ohos-1.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

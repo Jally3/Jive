@@ -9,6 +9,9 @@ doc/
 ├── README.md                                 # 本索引
 ├── codebase/
 │   └── CODEBASE_MAP.md                       # 代码文件地图（逐文件索引）
+├── ohos/
+│   ├── PHASE1_VALIDATION.md                  # 鸿蒙播放链路第一阶段验证记录
+│   └── PHASE2_VALIDATION.md                  # 鸿蒙完整应用与播放稳定性验证记录
 ├── interview/
 │   └── PROJECT_TECHNICAL_HIGHLIGHTS.md       # 项目技术亮点、原理与面试问答
 ├── hot-update/
@@ -57,6 +60,8 @@ doc/
 | 文档 | 状态 | 说明 |
 | --- | --- | --- |
 | [`codebase/CODEBASE_MAP.md`](codebase/CODEBASE_MAP.md) | 持续生效 | 代码文件地图：`lib/` 逐文件作用索引，新增/移动/删除文件时须同步 |
+| [`ohos/PHASE1_VALIDATION.md`](ohos/PHASE1_VALIDATION.md) | 验证中 | 鸿蒙适配 SDK、播放器、最小播放入口与环境阻塞记录 |
+| [`ohos/PHASE2_VALIDATION.md`](ohos/PHASE2_VALIDATION.md) | 进行中 | 完整 Jive 主路径、横竖屏、拖动、生命周期与剩余真机门槛 |
 | [`interview/PROJECT_TECHNICAL_HIGHLIGHTS.md`](interview/PROJECT_TECHNICAL_HIGHLIGHTS.md) | 持续生效 | 基于当前实现的项目介绍、技术原理、权衡、面试追问与 STAR 案例 |
 | [`hot-update/HOT_UPDATE_TECHNICAL_RESEARCH.md`](hot-update/HOT_UPDATE_TECHNICAL_RESEARCH.md) | 待决策 | 生产 OTA 能力边界、Shorebird 方案、商店合规、远程 JS 加固与分阶段实施路线 |
 | [`hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md`](hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md) | 核心流程已实现 | Android 新版本后台检查、弹窗提示和外部浏览器打开 APK 下载链接；待部署清单并真机验收 |
