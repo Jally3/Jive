@@ -8,7 +8,7 @@ Jive is a Flutter Android/iOS video-on-demand MVP. Application code lives in `li
 - `lib/shared/` contains reusable widgets and shared UI state views: `app_states.dart` (moved from the removed `lib/core/`), `app_toast.dart`, `playback_scrubber.dart`, `source_selector.dart`, `video_card.dart`, and `video_grid.dart`.
 - `lib/domain/` contains pure business models such as `Video`, `Library`, `VodSource`, and playback records.
 - `lib/data/` contains repositories and API/persistence integration. `video_repository.dart`, `library_repository.dart`, and `history_repository.dart` sit at its root, alongside five subdirectories: `vod_source/` (source config/registry/adapter interface/preferences plus `adapters/` implementations), `content/` (category nav, blocklist, filter policy), `playback/` (playback session, URL resolver, local proxy, HLS/ad filtering/sniffing/prefetch), `cache/` (cache manager/index/IO/TTL/policy/providers), and `download/` (download managers, providers, disk space).
-- `lib/features/` contains one subdirectory per page/feature: `home/`, `search/`, `detail/`, `player/` (page plus `widgets/` components), `profile/`, `cache/`, `download/`, and `settings/`.
+- `lib/features/` contains one subdirectory per page/feature: `home/`, `search/`, `detail/`, `player/` (page plus `widgets/` components), `profile/`, `watch_history/` (watch-record resume/delete flows shared by home and profile), `cache/`, `download/`, and `settings/`.
 - `test/` mirrors `lib/`: `test/data/{playback,cache,download,vod_source,content}/`, `test/domain/`, `test/features/<feature>/`, and `test/shared/`, with `widget_test.dart` at the root.
 
 For a per-file index of what each Dart file does, see `doc/codebase/CODEBASE_MAP.md` (keep it in sync when adding/moving/deleting files).
@@ -22,6 +22,7 @@ Run these from the repository root:
 fvm use                         # Sync the local SDK link to .fvmrc
 fvm flutter pub get             # Install/resolve Dart and Flutter dependencies
 ./tool/check_flutter_sdk.sh     # Verify generated configs use the same SDK
+./tool/restore_fvm.sh           # Restore FVM-managed generated configs after any ohos-flutter command
 fvm flutter analyze             # Run the configured static lints and analyzer
 fvm flutter test                # Run all unit and widget tests
 fvm flutter run                 # Launch on a connected device or emulator
