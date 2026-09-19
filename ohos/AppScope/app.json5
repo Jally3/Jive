@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "com.jive.app.jive",
+    "vendor": "Jive",
+    "versionCode": 5,
+    "versionName": "1.1.0",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}

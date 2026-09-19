@@ -56,3 +56,9 @@ app.*.map.json
 
 # FVM local SDK cache
 .fvm/
+
+# Local OpenHarmony SDK checkout used for the isolated playback probe
+.ohos-sdk/
+
+# Local intermediate used while preparing the HarmonyOS application icon
+tool/app_icon_ohos_rounded.png

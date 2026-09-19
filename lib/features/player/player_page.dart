@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1045,20 +1046,42 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           !isTv && MediaQuery.sizeOf(context).shortestSide < 600;
     }
     final portraitVideo = _isPortraitVideo && !isTv;
-    await SystemChrome.setPreferredOrientations(
-      enabled
-          ? (portraitVideo
-                ? const [DeviceOrientation.portraitUp]
-                : const [
-                    DeviceOrientation.landscapeLeft,
-                    DeviceOrientation.landscapeRight,
-                  ])
-          : _idlePreferredOrientations(),
+    await _awaitSystemUiChange(
+      SystemChrome.setPreferredOrientations(
+        enabled
+            ? (portraitVideo
+                  ? const [DeviceOrientation.portraitUp]
+                  : const [
+                      DeviceOrientation.landscapeLeft,
+                      DeviceOrientation.landscapeRight,
+                    ])
+            : _idlePreferredOrientations(),
+      ),
     );
     _fullScreenLockedPortrait = enabled && portraitVideo;
-    await SystemChrome.setEnabledSystemUIMode(
-      enabled ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+    await _awaitSystemUiChange(
+      SystemChrome.setEnabledSystemUIMode(
+        enabled ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+      ),
     );
+  }
+
+  Future<void> _awaitSystemUiChange(Future<void> change) async {
+    if (Platform.operatingSystem != 'ohos') {
+      await change;
+      return;
+    }
+    try {
+      await change.timeout(const Duration(seconds: 2));
+    } on TimeoutException {
+      // Some Flutter-OH system channel handlers do not reply after applying
+      // the change. Keep the fullscreen transition responsive in that case.
+    } on PlatformException {
+      // A failed orientation or system UI request must not restore the
+      // fullscreen player after the user has already asked to leave it.
+    } on MissingPluginException {
+      // Keep the player controls usable with older Flutter-OH runtimes.
+    }
   }
 
   List<DeviceOrientation> _idlePreferredOrientations() => _lockPortraitOnExit
