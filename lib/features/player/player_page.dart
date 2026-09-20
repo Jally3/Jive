@@ -1323,10 +1323,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   void _scheduleControlsHide() {
     controlsTimer?.cancel();
+    final value = controller?.value;
     if (_screenLocked ||
-        controller?.value.isPlaying != true ||
+        value == null ||
+        !value.isInitialized ||
+        value.isCompleted ||
+        failed ||
         isSeeking ||
-        _popupMenuOpen) {
+        _popupMenuOpen ||
+        (_isTv && !value.isPlaying)) {
       return;
     }
     controlsTimer = Timer(const Duration(seconds: 3), () {
@@ -1589,10 +1594,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       controlsTimer?.cancel();
       _activeSession?.prefetcher?.pause();
       unawaited(_save());
-      if (mounted) setState(() => controlsVisible = true);
+      if (mounted) {
+        setState(() => controlsVisible = true);
+        _scheduleControlsHide();
+      }
     } catch (_) {
       _playbackDesired = true;
-      if (mounted) showAppToast(context, '暂停失败，请稍后重试');
+      if (mounted) {
+        showAppToast(context, '暂停失败，请稍后重试');
+      }
     } finally {
       playbackToggleInFlight = false;
     }
@@ -1894,6 +1904,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               ),
             ),
           ),
+        if (!showStandaloneBack && !_isTv)
+          PlayerScreenLockButton(
+            locked: _screenLocked,
+            visible: _screenLocked ? _lockButtonVisible : controlsVisible,
+            onPressed: _toggleScreenLock,
+          ),
       ],
     );
   }
@@ -2103,15 +2119,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           onSeekEnd: _seekEnd,
           onSeekCancel: _seekCancel,
         ),
-        // Paint the paused-state button after the bottom controls so it
-        // remains visible in the non-fullscreen player.
         if (!lockActive)
-          PlayerCenterPlayButton(
+          PlayerCenterReplayButton(
             controller: current,
-            screenSeeking: screenSeeking,
             controlsVisible: controlsVisible,
-            playbackDesired: _playbackDesired,
-            onResume: _resumePlayback,
+            onReplay: _resumePlayback,
           ),
         if (!lockActive &&
             !compactControls &&
@@ -2126,12 +2138,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               if (value > 0) volumeBeforeMute = value;
               _showControls();
             },
-          ),
-        if (overlayLayout && !_isTv)
-          PlayerScreenLockButton(
-            locked: lockActive,
-            visible: lockActive ? _lockButtonVisible : controlsVisible,
-            onPressed: _toggleScreenLock,
           ),
       ],
     );

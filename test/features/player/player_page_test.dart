@@ -958,8 +958,10 @@ void main() {
     (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(844, 390);
+      tester.view.padding = const FakeViewPadding(left: 59);
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetPadding);
       final video = _playableVideo('https://example.com/1.mp4');
 
       await _pumpPlayerPage(
@@ -976,6 +978,12 @@ void main() {
                 .isNotEmpty &&
             videoPlatform.playing[videoPlatform.lastPlayerId] == true,
         reason: 'landscape player did not finish initialization',
+      );
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('player-screen-lock-button')))
+            .left,
+        83,
       );
 
       await tester.tap(find.byKey(const ValueKey('playback-speed-menu')));
@@ -1543,6 +1551,41 @@ void main() {
     expect(videoPlatform.playing[videoPlatform.lastPlayerId], isTrue);
     await _unmountPlayerPage(tester);
   });
+
+  testWidgets(
+    'pause has no center feedback and only the controls bar resumes playback',
+    (tester) async {
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+
+      await tester.tap(find.byTooltip('暂停'));
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == false);
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('player-pause-feedback')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('player-center-play-button')),
+        findsNothing,
+      );
+
+      await tester.pump(const Duration(milliseconds: 3100));
+      expect(_controlsBarOpacity(tester), 0);
+
+      await tester.tapAt(tester.getCenter(find.byType(PlayerGestureLayer)));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(videoPlatform.playing[0], isFalse);
+      expect(_controlsBarOpacity(tester), 1);
+
+      await tester.tap(find.byTooltip('播放'));
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+      await _unmountPlayerPage(tester);
+    },
+  );
 
   testWidgets('last episode still exposes replay when playback completes', (
     tester,

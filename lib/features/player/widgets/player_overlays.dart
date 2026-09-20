@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../app/theme.dart';
-
 /// 沉浸式播放器左侧中部的操作锁。
 class PlayerScreenLockButton extends StatelessWidget {
   const PlayerScreenLockButton({
@@ -31,18 +29,20 @@ class PlayerScreenLockButton extends StatelessWidget {
               top: false,
               right: false,
               bottom: false,
-              minimum: const EdgeInsets.only(left: 8),
-              child: IconButton.filledTonal(
-                key: const ValueKey('player-screen-lock-button'),
-                onPressed: onPressed,
-                tooltip: locked ? '解除锁定' : '锁定操作',
-                iconSize: 22,
-                style: IconButton.styleFrom(
-                  minimumSize: const Size.square(48),
-                  foregroundColor: Colors.white,
-                  backgroundColor: Colors.black.withValues(alpha: 0.45),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 24),
+                child: IconButton.filledTonal(
+                  key: const ValueKey('player-screen-lock-button'),
+                  onPressed: onPressed,
+                  tooltip: locked ? '解除锁定' : '锁定操作',
+                  iconSize: 22,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size.square(48),
+                    foregroundColor: Colors.white,
+                    backgroundColor: Colors.black.withValues(alpha: 0.45),
+                  ),
+                  icon: Icon(locked ? Icons.lock : Icons.lock_open),
                 ),
-                icon: Icon(locked ? Icons.lock : Icons.lock_open),
               ),
             ),
           ),
@@ -52,56 +52,46 @@ class PlayerScreenLockButton extends StatelessWidget {
   }
 }
 
-/// 暂停状态下的画面中央大播放按钮。
-/// 绘制在底部控制条之后，非全屏播放器中也保持可见。
-class PlayerCenterPlayButton extends StatelessWidget {
-  const PlayerCenterPlayButton({
+/// 播放完成后的中央重播入口。暂停状态不会构建此按钮。
+class PlayerCenterReplayButton extends StatelessWidget {
+  const PlayerCenterReplayButton({
     super.key,
     required this.controller,
-    required this.screenSeeking,
     required this.controlsVisible,
-    required this.playbackDesired,
-    required this.onResume,
+    required this.onReplay,
   });
 
   final VideoPlayerController controller;
-  final ValueNotifier<bool> screenSeeking;
   final bool controlsVisible;
-  final bool playbackDesired;
-  final VoidCallback onResume;
+  final VoidCallback onReplay;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([controller, screenSeeking]),
-      builder: (_, _) {
-        final paused =
-            !controller.value.isPlaying &&
-            !(playbackDesired && controller.value.isBuffering) &&
-            !screenSeeking.value;
-        return AnimatedOpacity(
-          opacity: controlsVisible || paused ? 1 : 0,
-          duration: const Duration(milliseconds: 200),
-          child: IgnorePointer(
-            ignoring: !controlsVisible && !paused,
-            child: Center(
-              child: paused
-                  ? IconButton.filled(
-                      onPressed: onResume,
-                      tooltip: controller.value.isCompleted ? '重新播放' : '播放',
-                      iconSize: 38,
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size.square(60),
-                        backgroundColor: AppColors.accent,
-                        foregroundColor: AppColors.onAccent,
-                      ),
-                      icon: const Icon(Icons.play_arrow),
-                    )
-                  : const SizedBox.shrink(),
-            ),
+      animation: controller,
+      builder: (_, _) => AnimatedOpacity(
+        opacity: controlsVisible && controller.value.isCompleted ? 1 : 0,
+        duration: const Duration(milliseconds: 200),
+        child: IgnorePointer(
+          ignoring: !controlsVisible || !controller.value.isCompleted,
+          child: Center(
+            child: controller.value.isCompleted
+                ? IconButton.filled(
+                    key: const ValueKey('player-center-replay-button'),
+                    onPressed: onReplay,
+                    tooltip: '重新播放',
+                    iconSize: 38,
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size.square(60),
+                      backgroundColor: const Color(0x99F2F2F2),
+                      foregroundColor: const Color(0xFF242424),
+                    ),
+                    icon: const Icon(Icons.replay),
+                  )
+                : const SizedBox.shrink(),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
