@@ -27,20 +27,24 @@ class _FakeDiskSpace implements DiskSpaceProvider {
 
 final _segmentId = 'sha256:${'a' * 64}';
 
-PlaybackSelection _selection() => PlaybackSelection(
+PlaybackSelection _selection({
+  String episodeId = '1',
+  String episodeIdentity = 'ep',
+  String url = 'https://cdn.example.com/a.m3u8',
+}) => PlaybackSelection(
   sourceId: 's',
   sourceVideoId: 'v',
   title: '影片',
   playbackLineIdentity: 'line',
-  episodeIdentity: 'ep',
-  episode: const Episode(
-    id: '1',
-    name: '第1集',
-    url: 'https://cdn.example.com/a.m3u8',
-    identity: 'ep',
+  episodeIdentity: episodeIdentity,
+  episode: Episode(
+    id: episodeId,
+    name: '第$episodeId集',
+    url: url,
+    identity: episodeIdentity,
   ),
   playbackSource: PlaybackSource(
-    url: Uri.parse('https://cdn.example.com/a.m3u8'),
+    url: Uri.parse(url),
     format: PlaybackFormat.hls,
   ),
 );
@@ -198,6 +202,68 @@ void main() {
       expect(await restored.stats(), isNotNull);
     },
   );
+
+  test('next episode creates and runs a fresh prefetcher', () async {
+    final fetchedSegments = <String>[];
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('.m3u8')) {
+        final episode = request.url.pathSegments.last.split('.').first;
+        return http.Response(
+          '#EXTM3U\n'
+          '#EXT-X-TARGETDURATION:4\n'
+          '#EXTINF:4.0,\n'
+          'https://cdn.example.com/$episode-seg.ts\n'
+          '#EXT-X-ENDLIST\n',
+          200,
+        );
+      }
+      fetchedSegments.add(request.url.path);
+      return http.Response.bytes([0x47, 0, 0, 0], 200);
+    });
+
+    final firstPreparation = await PlaybackSession.prepare(
+      selection: _selection(
+        episodeId: '1',
+        episodeIdentity: 'ep-1',
+        url: 'https://cdn.example.com/ep1.m3u8',
+      ),
+      proxy: proxy,
+      parser: HlsParser(client: client),
+      client: client,
+      cacheManager: manager,
+      store: store,
+    );
+    final firstSession = firstPreparation.session!;
+    final firstPrefetcher = firstSession.buildPrefetcher(
+      windowSize: () => const Duration(minutes: 10),
+    );
+    expect(firstPrefetcher, isNotNull);
+    await firstPrefetcher!.prefetch(fromPosition: Duration.zero);
+    await firstSession.close(proxy);
+
+    final secondPreparation = await PlaybackSession.prepare(
+      selection: _selection(
+        episodeId: '2',
+        episodeIdentity: 'ep-2',
+        url: 'https://cdn.example.com/ep2.m3u8',
+      ),
+      proxy: proxy,
+      parser: HlsParser(client: client),
+      client: client,
+      cacheManager: manager,
+      store: store,
+    );
+    final secondSession = secondPreparation.session!;
+    final secondPrefetcher = secondSession.buildPrefetcher(
+      windowSize: () => const Duration(minutes: 10),
+    );
+    expect(secondPrefetcher, isNotNull);
+    expect(identical(firstPrefetcher, secondPrefetcher), isFalse);
+    await secondPrefetcher!.prefetch(fromPosition: Duration.zero);
+
+    expect(fetchedSegments, ['/ep1-seg.ts', '/ep2-seg.ts']);
+    await secondSession.close(proxy);
+  });
 
   test(
     'online prepare with ad filter persists filtered manifest and timeline',

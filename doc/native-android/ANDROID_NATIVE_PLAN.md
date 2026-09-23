@@ -157,7 +157,7 @@ B: P0 P1  P4──────  P5──  P6── P7── P8
 | P3-3 | 缓存 IO | 资源 sha256 id、扩展名白名单（ts/m4s/mp4/key…）、并发读写 | §2.2 | — | 1.5 |
 | P3-4 | CacheManager | 配额（5% 安全余量钳 2–10GB）、WriteLease、引用租约、`initialize`（evictExpired+孤儿清扫）、播放中条目拒删 | §2.1 | 配额边界单测；扫描清理单测 | 2.5 |
 | P3-5 | TTL 七档 | never/onExit（兜底 1 天）/1h/5h/1d/3d/7d 按最后访问清扫；旧值迁移 | §2.3 | 每档行为单测 | 0.5 |
-| P3-6 | 边播边写 + 预取 | ResourceFetcher 边播边写；SegmentPrefetcher 时间窗（Wi-Fi 300s/蜂窝 120s/可关、并发 5、指数退避、updatePosition 重锚定） | PLAYBACK §1⑥⑩ | 播放中命中缓存路径（蓝点）；预取策略单测 | 1.5 |
+| P3-6 | 边播边写 + 预取 | ResourceFetcher 边播边写；SegmentPrefetcher 时间窗（Wi-Fi 600s/蜂窝 120s/可关、并发 5、指数退避、updatePosition 重锚定） | PLAYBACK §1⑥⑩ | 播放中命中缓存路径（蓝点）；预取策略单测 | 1.5 |
 | P3-7 | 下载任务管理器 | 状态机全路径（queued/downloading/paused/completed 验收/failed/cancelled/对账不一致→paused+cacheWriteFailed）、`finalizeEntry`、启动对账、`download_tasks.json` | §3.1 | 状态机每条边一个测试 | 1.5 |
 | P3-8 | 网络策略 + 磁盘 | Wi-Fi/蜂窝/无网三态 + 蜂窝受限；后台 pauseForBackground/回前台 resume；StatFs 磁盘信息 | §3.2；§4 | NetworkCallback 注入测试 | 0.5 |
 

@@ -10,7 +10,7 @@ const _prefetchModeKey = 'prefetch_mode';
 
 /// Wi-Fi 下的预取目标：领先播放位置的时长。按时间而非片数开窗，
 /// 自动适配不同源站 0.5s~10s 不等的分片时长。
-const Duration prefetchAheadWifi = Duration(seconds: 300);
+const Duration prefetchAheadWifi = Duration(minutes: 10);
 
 /// 蜂窝网络下的预取目标：领先播放位置的时长。
 const Duration prefetchAheadCellular = Duration(seconds: 120);
