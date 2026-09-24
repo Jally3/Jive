@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -17,6 +18,9 @@ class ProxySessionRoute {
     required this.sessionHeaders,
     required this.client,
     this.fetcher,
+    this.mapResourceId,
+    this.onStartupTraceEvent,
+    this.startupTraceResourceLimit = 3,
   });
 
   final String token;
@@ -26,9 +30,21 @@ class ProxySessionRoute {
   final Map<String, String> sessionHeaders;
   final http.Client client;
   final ResourceFetcher? fetcher;
+  final String? mapResourceId;
+  final ResourceTraceEventCallback? onStartupTraceEvent;
+  final int startupTraceResourceLimit;
 
   int activeReads = 0;
   bool closing = false;
+  int _startupTraceResourceCount = 0;
+
+  int? claimStartupTraceResource() {
+    if (onStartupTraceEvent == null ||
+        _startupTraceResourceCount >= startupTraceResourceLimit) {
+      return null;
+    }
+    return ++_startupTraceResourceCount;
+  }
 }
 
 /// 仅监听 127.0.0.1 的轻量 HTTP 代理，为播放器提供统一 HLS 地址。
@@ -109,12 +125,24 @@ class LocalProxyServer {
         return;
       }
       if (segments.length == 3 && segments[2] == 'index.m3u8') {
+        final manifestClock = route.onStartupTraceEvent == null
+            ? null
+            : (Stopwatch()..start());
+        if (manifestClock != null) {
+          _trace(route, {'event': 'proxyManifestReceived'});
+        }
         await _respond(
           request,
           HttpStatus.ok,
           route.proxyManifest,
           contentType: 'application/vnd.apple.mpegurl',
         );
+        if (manifestClock != null) {
+          _trace(route, {
+            'event': 'proxyManifestResponse',
+            'durationMs': manifestClock.elapsedMicroseconds / 1000,
+          });
+        }
         return;
       }
       if (segments.length == 4 && segments[2] == 'res') {
@@ -150,18 +178,45 @@ class LocalProxyServer {
       return;
     }
     route.activeReads++;
+    final traceIndex = route.claimStartupTraceResource();
+    final requestClock = traceIndex == null ? null : (Stopwatch()..start());
+    final ext = route.extByResourceId[resourceId] ?? 'bin';
+    final trace = traceIndex == null
+        ? null
+        : (Map<String, Object?> event) {
+            _trace(route, {'resourceIndex': traceIndex, ...event});
+          };
+    trace?.call({
+      'event': 'resourceStart',
+      'method': request.method,
+      'type': resourceId == route.mapResourceId
+          ? 'map'
+          : ext == 'key'
+          ? 'key'
+          : 'segment',
+      'ext': ext,
+      if (request.headers.value(HttpHeaders.rangeHeader) case final range?)
+        'range': range,
+    });
     try {
       final fetcher = route.fetcher;
       if (fetcher == null) {
-        await _legacyPassthrough(request, route, origin);
+        await _legacyPassthrough(
+          request,
+          route,
+          origin,
+          trace: trace,
+          requestClock: requestClock,
+        );
         return;
       }
       final result = await fetcher.fetch(
         method: request.method,
         origin: origin,
         resourceId: resourceId,
-        ext: route.extByResourceId[resourceId] ?? 'bin',
+        ext: ext,
         downstreamHeaders: _headerMap(request.headers),
+        trace: trace,
       );
       final response = request.response;
       response.statusCode = result.statusCode;
@@ -177,10 +232,43 @@ class LocalProxyServer {
       if (request.method == 'HEAD') {
         await result.body.drain<void>();
         await response.close();
+        trace?.call({
+          'event': 'downstreamComplete',
+          'durationMs': (requestClock?.elapsedMicroseconds ?? 0) / 1000,
+          'bytes': 0,
+          'statusCode': result.statusCode,
+        });
         return;
       }
-      await response.addStream(result.body);
+      var downstreamBytes = 0;
+      var firstDownstreamByte = true;
+      final tracedBody = trace == null
+          ? result.body
+          : result.body.transform(
+              StreamTransformer<List<int>, List<int>>.fromHandlers(
+                handleData: (chunk, sink) {
+                  if (firstDownstreamByte) {
+                    firstDownstreamByte = false;
+                    trace({
+                      'event': 'downstreamFirstByte',
+                      'elapsedMs':
+                          (requestClock?.elapsedMicroseconds ?? 0) / 1000,
+                    });
+                  }
+                  downstreamBytes += chunk.length;
+                  sink.add(chunk);
+                },
+              ),
+            );
+      await response.addStream(tracedBody);
       await response.close();
+      trace?.call({
+        'event': 'downstreamComplete',
+        'durationMs': (requestClock?.elapsedMicroseconds ?? 0) / 1000,
+        'bytes': downstreamBytes,
+        'statusCode': result.statusCode,
+        'fromCache': result.fromCache,
+      });
     } finally {
       route.activeReads--;
     }
@@ -190,8 +278,10 @@ class LocalProxyServer {
   Future<void> _legacyPassthrough(
     HttpRequest request,
     ProxySessionRoute route,
-    Uri origin,
-  ) async {
+    Uri origin, {
+    ResourceTraceEventCallback? trace,
+    Stopwatch? requestClock,
+  }) async {
     if (origin.scheme != 'https') {
       await _respond(request, HttpStatus.badRequest, null);
       return;
@@ -201,6 +291,7 @@ class LocalProxyServer {
       ...filterDownstreamHeaders(_headerMap(request.headers)),
     };
     http.StreamedResponse upstream;
+    final upstreamClock = trace == null ? null : (Stopwatch()..start());
     try {
       final upstreamRequest = http.Request(request.method, origin);
       upstreamRequest.headers.addAll(headers);
@@ -209,6 +300,12 @@ class LocalProxyServer {
       await _respond(request, HttpStatus.badGateway, null);
       return;
     }
+    trace?.call({
+      'event': 'upstreamHeaders',
+      'durationMs': (upstreamClock?.elapsedMicroseconds ?? 0) / 1000,
+      'statusCode': upstream.statusCode,
+      'mode': 'proxyWithoutCaching',
+    });
     final response = request.response;
     response.statusCode = upstream.statusCode;
     for (final name in responseHeaderWhitelist) {
@@ -218,10 +315,54 @@ class LocalProxyServer {
     if (request.method == 'HEAD') {
       await upstream.stream.drain<void>();
       await response.close();
+      trace?.call({
+        'event': 'downstreamComplete',
+        'durationMs': (requestClock?.elapsedMicroseconds ?? 0) / 1000,
+        'bytes': 0,
+        'statusCode': upstream.statusCode,
+      });
       return;
     }
-    await response.addStream(upstream.stream);
+    var bytes = 0;
+    var firstByte = true;
+    final body = trace == null
+        ? upstream.stream
+        : upstream.stream.transform(
+            StreamTransformer<List<int>, List<int>>.fromHandlers(
+              handleData: (chunk, sink) {
+                if (firstByte) {
+                  firstByte = false;
+                  trace({
+                    'event': 'upstreamFirstByte',
+                    'elapsedMs':
+                        (upstreamClock?.elapsedMicroseconds ?? 0) / 1000,
+                  });
+                  trace({
+                    'event': 'downstreamFirstByte',
+                    'elapsedMs':
+                        (requestClock?.elapsedMicroseconds ?? 0) / 1000,
+                  });
+                }
+                bytes += chunk.length;
+                sink.add(chunk);
+              },
+            ),
+          );
+    await response.addStream(body);
     await response.close();
+    trace?.call({
+      'event': 'downloadComplete',
+      'durationMs': (upstreamClock?.elapsedMicroseconds ?? 0) / 1000,
+      'bytes': bytes,
+      'completed': true,
+    });
+    trace?.call({
+      'event': 'downstreamComplete',
+      'durationMs': (requestClock?.elapsedMicroseconds ?? 0) / 1000,
+      'bytes': bytes,
+      'statusCode': upstream.statusCode,
+      'fromCache': false,
+    });
   }
 
   /// 写入简单的状态码/文本响应，常用于 manifest 和错误返回。
@@ -249,5 +390,11 @@ class LocalProxyServer {
       if (values.isNotEmpty) result[name] = values.first;
     });
     return result;
+  }
+
+  static void _trace(ProxySessionRoute route, Map<String, Object?> event) {
+    try {
+      route.onStartupTraceEvent?.call(event);
+    } catch (_) {}
   }
 }

@@ -5,8 +5,10 @@ import '../../data/cache/cache_controller.dart';
 import '../../data/cache/cache_ttl_policy.dart';
 import '../../data/download/download_network_policy.dart';
 import '../../data/playback/prefetch_policy.dart';
+import '../../data/playback/trace/playback_trace_config.dart';
 import '../../data/theme_mode_preferences.dart';
 import '../cache/cache_management_page.dart';
+import 'playback_trace/playback_trace_viewer_page.dart';
 
 String _formatBytes(int bytes) {
   if (bytes <= 0) return '0 B';
@@ -281,6 +283,29 @@ class _MoreSettingsPageState extends ConsumerState<MoreSettingsPage> {
             ),
           ],
         ),
+        if (PlaybackTraceConfig.enabled) ...[
+          SizedBox(height: 16),
+          _SettingsSection(
+            title: '开发诊断',
+            children: [
+              ListTile(
+                leading: Icon(Icons.analytics_outlined),
+                title: Text('播放耗时分析'),
+                subtitle: Text(
+                  '导入 JIVE_PLAYBACK_TRACE 日志查看启动阶段耗时',
+                  style: TextStyle(fontSize: 13),
+                ),
+                trailing: Icon(
+                  Icons.chevron_right,
+                  color: context.appColors.tertiary,
+                ),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => PlaybackTraceViewerPage()),
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     ),
   );

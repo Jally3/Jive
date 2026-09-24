@@ -88,6 +88,7 @@ class PlaybackSession {
     bool offlineOnly = false,
     Duration timeout = const Duration(seconds: 15),
     void Function(PlaybackFallbackReason reason)? onCacheBypass,
+    ResourceTraceEventCallback? onStartupTraceEvent,
   }) async {
     try {
       final cachedEnabled = cacheManager != null && store != null;
@@ -121,6 +122,7 @@ class PlaybackSession {
             entry: cached,
             manifestBaseUrl: manifestBaseUrl,
             onCacheBypass: onCacheBypass,
+            onStartupTraceEvent: onStartupTraceEvent,
           );
           if (offline != null) {
             return PlaybackSessionPreparation(
@@ -239,6 +241,8 @@ class PlaybackSession {
         sessionHeaders: selection.playbackSource.headers,
         client: client,
         fetcher: fetcher,
+        mapResourceId: plan.mapResourceId,
+        onStartupTraceEvent: onStartupTraceEvent,
       );
       proxy.register(route);
       final session = PlaybackSession._(
@@ -291,6 +295,7 @@ class PlaybackSession {
     required CacheEntry entry,
     required String manifestBaseUrl,
     void Function(PlaybackFallbackReason reason)? onCacheBypass,
+    ResourceTraceEventCallback? onStartupTraceEvent,
   }) async {
     final raw = await store.loadProxyManifest(
       entry.contentKeyHash,
@@ -338,6 +343,7 @@ class PlaybackSession {
       sessionHeaders: selection.playbackSource.headers,
       client: client,
       fetcher: fetcher,
+      onStartupTraceEvent: onStartupTraceEvent,
     );
     proxy.register(route);
     return PlaybackSession._(

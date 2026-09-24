@@ -103,6 +103,59 @@ void main() {
     },
   );
 
+  test('startup trace reports cache and upstream milestones', () async {
+    final events = <Map<String, Object?>>[];
+    final client = MockClient(
+      (request) async => http.Response('Gsegment-data-1234', 200),
+    );
+    final created = await manager.upsertEntry(entry('trace'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'cktrace',
+      revisionKeyHash: 'rktrace',
+    );
+
+    final result = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/start.ts'),
+      resourceId: 'sha256:${'f' * 64}',
+      ext: 'ts',
+      trace: events.add,
+    );
+    await _collect(result.body);
+
+    final names = events.map((event) => event['event']).toSet();
+    expect(
+      names,
+      containsAll({
+        'cacheLookup',
+        'upstreamHeaders',
+        'cacheReserve',
+        'fileSetup',
+        'upstreamFirstByte',
+        'downloadComplete',
+        'cacheCommit',
+      }),
+    );
+    expect(
+      events.singleWhere((event) => event['event'] == 'cacheLookup')['hit'],
+      isFalse,
+    );
+    expect(
+      events.singleWhere(
+        (event) => event['event'] == 'downloadComplete',
+      )['bytes'],
+      greaterThan(0),
+    );
+    expect(
+      events.singleWhere((event) => event['event'] == 'cacheCommit')['result'],
+      'success',
+    );
+  });
+
   test('cached resource serves a sub range with 206', () async {
     final client = MockClient(
       (request) async => http.Response('G123456789', 200),

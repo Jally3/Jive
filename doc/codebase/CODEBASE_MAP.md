@@ -123,13 +123,14 @@ lib/data/content/
 ```text
 lib/data/playback/
 ├── playback_session.dart              # 播放会话 PlaybackSession：解析 manifest、注册代理路由、挂缓存写穿与分片预取、产出降级状态
-├── local_proxy.dart                   # 本地回环代理 LocalProxyServer：按 token 路由转发 manifest 与分片资源
+├── local_proxy.dart                   # 本地回环代理 LocalProxyServer：按 token 路由转发 manifest/分片，并可采样前三个启动资源的下游耗时
 ├── playback_url_resolver.dart         # 未知格式播放地址解析 PlaybackUrlResolver：HTML/重定向解析，结果带 10 分钟缓存
 ├── hls_parser.dart                    # HLS manifest 解析与代理改写：HlsParser / HlsProxyPlan / HlsDecision 可缓存性判定
 ├── ad_filter.dart                     # 广告分片识别与剔除 AdFilter（adfilter-v3：夹心中插 + 节奏侏儒 + AdFilterReport）；TimelineMapping 负责源时间轴 ↔ 过滤后时间轴换算
 ├── content_type_sniffer.dart          # 播放格式嗅探：HEAD content-type 优先、魔数回退，带 TTL 缓存
 ├── prefetch_policy.dart               # 预取策略：Wi-Fi/蜂窝预取窗口时长，prefetchModeProvider 开关持久化
-└── skip_policy.dart                   # 按影片缓存跳过片头/片尾时长（默认关闭；30/60/90/自定义）
+├── skip_policy.dart                   # 按影片缓存跳过片头/片尾时长（默认关闭；30/60/90/自定义）
+└── trace/                             # JIVE_PLAYBACK_TRACE 编译期开关控制的播放启动分段计时与单次 JSON 汇总
 ```
 
 ## 缓存（`lib/data/cache/`）
@@ -140,7 +141,7 @@ lib/data/playback/
 lib/data/cache/
 ├── cache_manager.dart                 # 缓存核心 CacheManager：磁盘配额、下载保护的 LRU/TTL 淘汰、引用计数 CacheRef 与写租约 WriteLease
 ├── cache_index.dart                   # 磁盘索引格式与 CacheIndexStore：条目/资源记录、state.json 探测、目录常量
-├── cache_io.dart                      # 资源抓取器 ResourceFetcher：读穿/写穿缓存、SingleFlight 合并、响应头白名单与完整性校验
+├── cache_io.dart                      # 资源抓取器 ResourceFetcher：读穿/写穿缓存、SingleFlight、完整性校验及可选启动期 I/O 细分诊断
 ├── content_key.dart                   # ContentKey 构建：源+视频+线路+剧集身份编码后的 sha256 寻址
 ├── url_normalizer.dart                # URL 归一化：剔除时效签名参数，保证缓存寻址稳定
 ├── single_flight.dart                 # 并发原语：AsyncMutex 串行锁与 SingleFlight 在飞请求去重
@@ -220,8 +221,21 @@ lib/features/
 │   └── download_management_page.dart  # 下载管理页：响应式速度/进度摘要、任务分组筛选、批量操作、离线播放入口
 └── settings/
     ├── source_management_page.dart    # 源管理页：源列表、健康检查（延迟/可用性）与结果持久化展示
-    └── more_settings_page.dart        # 更多设置：缓存 TTL 选择、预加载开关、缓存管理入口
+    ├── more_settings_page.dart        # 更多设置：缓存 TTL 选择、预加载开关、缓存管理入口；诊断开关开启时显示耗时分析入口
+    └── playback_trace/                # 临时播放耗时分析页：导入 JSON/JSONL、阶段排行柱状图与原始日志查看
 ```
+
+## 开发工具（`tool/`）
+
+```text
+tool/
+├── check_flutter_sdk.sh               # 校验生成配置引用的 Flutter SDK 与 .fvmrc 一致
+├── playback_trace_report.html         # 离线静态报告：阶段排行/对比，并展示代理清单与前三个启动资源的缓存、TTFB、下载和下游耗时
+├── run_with_playback_trace.sh          # 开启启动耗时诊断运行 App，并把追踪行实时写入 logs/playback_trace.log
+└── run_top10_playback_trace.sh         # 集成测试自动播放首页前 10 个不同视频，汇总写入 playback_trace_top10.log
+```
+
+`logs/` 是本地诊断输出目录，已加入 `.gitignore`，不会提交播放信息。
 
 ## 测试（`test/`）
 

@@ -21,6 +21,8 @@ import '../../data/playback/playback_session.dart';
 import '../../data/playback/playback_url_resolver.dart';
 import '../../data/playback/prefetch_policy.dart';
 import '../../data/playback/skip_policy.dart';
+import '../../data/playback/trace/playback_startup_trace.dart';
+import '../../data/playback/trace/playback_trace_stage.dart';
 import '../../data/vod_source/adapters/age_adapter.dart';
 import '../../data/history_repository.dart';
 import '../../data/offline_progress_repository.dart';
@@ -59,6 +61,7 @@ class PlayerPage extends ConsumerStatefulWidget {
     this.episodeSelections = const {},
     this.episodeResumePositions = const {},
     this.offlineOnly = false,
+    this.startupTrace,
   });
   final Video video;
   final Episode episode;
@@ -67,6 +70,7 @@ class PlayerPage extends ConsumerStatefulWidget {
   final Map<String, PlaybackSelection> episodeSelections;
   final Map<String, Duration> episodeResumePositions;
   final bool offlineOnly;
+  final PlaybackStartupTrace? startupTrace;
   @override
   ConsumerState<PlayerPage> createState() => _PlayerPageState();
 }
@@ -83,6 +87,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   LocalProxyServer? _proxy;
   http.Client? _sessionClient;
   PlaybackUrlResolver? _urlResolver;
+  PlaybackStartupTrace? _startupTrace;
   Timer? saveTimer;
   Timer? controlsTimer;
   Timer? _lockButtonTimer;
@@ -225,12 +230,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     });
     WidgetsBinding.instance.addObserver(this);
     episode = widget.episode;
+    _startupTrace = widget.startupTrace;
     _selection = widget.selection ?? selectionFor(widget.video, widget.episode);
     unawaited(_loadInitialScreenBrightness());
     unawaited(_setup(widget.resumePosition));
   }
 
   Future<void> _setup(Duration resume) async {
+    if (_startupTrace == null || _startupTrace!.isFinished) {
+      _startupTrace = PlaybackStartupTrace.maybeStart(
+        videoTitle: widget.video.title,
+        sourceId: widget.video.sourceId,
+        sourceVideoId: widget.video.sourceVideoId,
+        episode: episode,
+        offlineOnly: widget.offlineOnly,
+      );
+    }
+    final startupTrace = _startupTrace;
+    startupTrace?.updateEpisode(episode);
     _lockButtonTimer?.cancel();
     _screenLocked = false;
     _lockButtonVisible = true;
@@ -241,7 +258,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     _resetSeekState();
     final generation = ++setupGeneration;
     _selection = _bindPlaybackHeaders(_selection);
+    final skipPolicyLoad = startupTrace?.startStage(
+      PlaybackTraceStage.skipPolicyLoad,
+    );
     await _loadSkipPolicy();
+    startupTrace?.finishStage(skipPolicyLoad);
     if (!mounted || generation != setupGeneration) return;
     if (mounted) {
       setState(() {
@@ -257,10 +278,19 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       if (target != null) {
         try {
           if (widget.offlineOnly) {
+            final sessionPrepare = startupTrace?.startStage(
+              PlaybackTraceStage.hlsSessionPrepare,
+              metadata: const {'kind': 'offlineOnly'},
+            );
             final preparation = await _prepareSession(
               target,
               generation,
               offlineOnly: true,
+            );
+            startupTrace?.finishStage(
+              sessionPrepare,
+              result: preparation.session == null ? 'miss' : 'success',
+              metadata: {'mode': preparation.status.mode.name},
             );
             if (preparation.session == null ||
                 preparation.status.mode != PlaybackMode.cachePlayback) {
@@ -271,6 +301,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                   errorMessage = '该集离线文件不完整，请重新下载';
                 });
               }
+              startupTrace?.fail(
+                StateError('offline cache is incomplete'),
+                failedStage: PlaybackTraceStage.hlsSessionPrepare,
+              );
               return;
             }
             session = preparation.session;
@@ -288,9 +322,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               target.playbackSource.format == PlaybackFormat.unknown &&
               target.hasStableIdentity &&
               !target.playbackSource.url.toString().contains('/m3u8/?url=')) {
+            final unknownPrecheck = startupTrace?.startStage(
+              PlaybackTraceStage.unknownCachePrecheck,
+            );
             final offlinePreparation = await _prepareSession(
               target,
               generation,
+            );
+            startupTrace?.finishStage(
+              unknownPrecheck,
+              result: offlinePreparation.status.mode.name,
+              metadata: {'sessionCreated': offlinePreparation.session != null},
             );
             if (offlinePreparation.status.mode == PlaybackMode.cachePlayback &&
                 offlinePreparation.session != null) {
@@ -304,10 +346,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             }
           }
           if (!widget.offlineOnly && session == null) {
+            final sourceResolve = startupTrace?.startStage(
+              PlaybackTraceStage.playbackSourceResolve,
+            );
             target = await _resolvePlaybackSource(target);
+            startupTrace?.finishStage(sourceResolve);
             if (!mounted || generation != setupGeneration) return;
             _selection = target;
             episode = target.episode;
+            startupTrace?.updateEpisode(episode);
           }
         } on PlaybackUrlResolutionException catch (error) {
           if (mounted && generation == setupGeneration) {
@@ -318,6 +365,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             });
             unawaited(WakelockPlus.disable());
           }
+          startupTrace?.fail(
+            error,
+            failedStage: PlaybackTraceStage.playbackSourceResolve,
+          );
           return;
         }
       }
@@ -335,9 +386,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         status = preparedStatus;
       } else if (target.playbackSource.format != PlaybackFormat.hls) {
         if (target.playbackSource.format == PlaybackFormat.unknown) {
+          final contentTypeSniff = startupTrace?.startStage(
+            PlaybackTraceStage.contentTypeSniff,
+          );
           final sniffed = await ContentTypeSniffer().sniff(
             target.playbackSource.url.toString(),
           );
+          startupTrace?.finishStage(contentTypeSniff, result: sniffed.name);
           if (sniffed == PlaybackFormat.hls) {
             _selection = target = PlaybackSelection(
               sourceId: target.sourceId,
@@ -348,7 +403,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               episode: target.episode,
               playbackSource: target.playbackSource.copyWith(format: sniffed),
             );
+            final sessionPrepare = startupTrace?.startStage(
+              PlaybackTraceStage.hlsSessionPrepare,
+            );
             final preparation = await _prepareSession(target, generation);
+            startupTrace?.finishStage(
+              sessionPrepare,
+              result: preparation.status.mode.name,
+            );
             session = preparation.session;
             status = preparation.status;
             if (!mounted || generation != setupGeneration) {
@@ -368,7 +430,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           );
         }
       } else {
+        final sessionPrepare = startupTrace?.startStage(
+          PlaybackTraceStage.hlsSessionPrepare,
+        );
         final preparation = await _prepareSession(target, generation);
+        startupTrace?.finishStage(
+          sessionPrepare,
+          result: preparation.status.mode.name,
+        );
         session = preparation.session;
         status = preparation.status;
       }
@@ -381,6 +450,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       final isHls = target?.playbackSource.format == PlaybackFormat.hls;
       final requestHeaders =
           target?.playbackSource.headers ?? const <String, String>{};
+      startupTrace?.updatePlayback(
+        format: target?.playbackSource.format.name,
+        mode: status.mode.name,
+        usedProxy: proxyUrl != null,
+      );
       var next = VideoPlayerController.networkUrl(
         Uri.parse(proxyUrl ?? directUrl),
         formatHint:
@@ -393,15 +467,27 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             ? filterSessionHeaders(requestHeaders)
             : const {},
       );
+      PlaybackTraceSpan? controllerInitialize = startupTrace?.startStage(
+        proxyUrl == null
+            ? PlaybackTraceStage.controllerInitializeDirect
+            : PlaybackTraceStage.controllerInitializeProxy,
+      );
       try {
         await next.initialize().timeout(const Duration(seconds: 20));
+        startupTrace?.finishStage(controllerInitialize);
+        controllerInitialize = null;
         if (!mounted || generation != setupGeneration) {
           await next.dispose();
           if (session != null) await _closeSession(session);
           return;
         }
         await _installController(next, session, resume, generation);
-      } catch (_) {
+      } catch (error) {
+        startupTrace?.finishStage(
+          controllerInitialize,
+          result: 'failed',
+          metadata: {'errorType': error.runtimeType.toString()},
+        );
         await next.dispose();
         if (!mounted || generation != setupGeneration) {
           if (session != null) await _closeSession(session);
@@ -430,14 +516,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                 : null,
             httpHeaders: filterSessionHeaders(requestHeaders),
           );
+          final directInitialize = startupTrace?.startStage(
+            PlaybackTraceStage.controllerInitializeDirect,
+          );
           try {
             await next.initialize().timeout(const Duration(seconds: 20));
+            startupTrace?.finishStage(directInitialize);
             if (!mounted || generation != setupGeneration) {
               await next.dispose();
               return;
             }
             await _installController(next, null, resume, generation);
-          } catch (_) {
+          } catch (directError) {
+            startupTrace?.finishStage(
+              directInitialize,
+              result: 'failed',
+              metadata: {'errorType': directError.runtimeType.toString()},
+            );
             await next.dispose();
             if (mounted && generation == setupGeneration) {
               setState(() {
@@ -447,6 +542,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
               });
               unawaited(WakelockPlus.disable());
             }
+            startupTrace?.fail(
+              directError,
+              failedStage: PlaybackTraceStage.controllerInitializeDirect,
+            );
           }
         } else if (mounted && generation == setupGeneration) {
           setState(() {
@@ -455,6 +554,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
           });
           unawaited(WakelockPlus.disable());
+          startupTrace?.fail(
+            error,
+            failedStage: proxyUrl == null
+                ? PlaybackTraceStage.controllerInitializeDirect
+                : PlaybackTraceStage.controllerInitializeProxy,
+          );
         }
       }
     } catch (error) {
@@ -468,6 +573,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         });
         unawaited(WakelockPlus.disable());
       }
+      startupTrace?.fail(error);
     }
   }
 
@@ -477,6 +583,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     Duration resume,
     int generation,
   ) async {
+    final startupTrace = _startupTrace;
+    final configure = startupTrace?.startStage(
+      PlaybackTraceStage.controllerConfigure,
+    );
     // 先完成所有准备（seek/倍速/播放），每次 await 后校验 generation，
     // 最后一次性提交，避免旧任务在提交后反向覆盖新任务。
     final mapping = session?.timelineMapping;
@@ -494,34 +604,57 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       _introSkipped = true;
     }
     if (target > Duration.zero && target < next.value.duration) {
+      final resumeSeek = startupTrace?.startStage(
+        PlaybackTraceStage.resumeSeek,
+      );
       try {
         await next.seekTo(target);
-      } catch (_) {}
+        startupTrace?.finishStage(resumeSeek);
+      } catch (error) {
+        startupTrace?.finishStage(
+          resumeSeek,
+          result: 'failed',
+          metadata: {'errorType': error.runtimeType.toString()},
+        );
+      }
     }
     if (!mounted || generation != setupGeneration) {
       await next.dispose();
       if (session != null) await _closeSession(session);
       return;
     }
+    final setSpeed = startupTrace?.startStage(
+      PlaybackTraceStage.controllerSetSpeed,
+    );
     await next.setPlaybackSpeed(playbackSpeed);
+    startupTrace?.finishStage(setSpeed);
     if (!mounted || generation != setupGeneration) {
       await next.dispose();
       if (session != null) await _closeSession(session);
       return;
     }
+    final setVolume = startupTrace?.startStage(
+      PlaybackTraceStage.controllerSetVolume,
+    );
     await next.setVolume(playbackVolume);
+    startupTrace?.finishStage(setVolume);
     if (!mounted || generation != setupGeneration) {
       await next.dispose();
       if (session != null) await _closeSession(session);
       return;
     }
+    startupTrace?.finishStage(configure);
+    final play = startupTrace?.startStage(PlaybackTraceStage.controllerPlay);
     if (_isAppForeground && _playbackDesired) {
       await next.play();
+      startupTrace?.finishStage(play);
       if (!mounted || generation != setupGeneration) {
         await next.dispose();
         if (session != null) await _closeSession(session);
         return;
       }
+    } else {
+      startupTrace?.finishStage(play, result: 'skipped');
     }
     _activeSession = session;
     controller = next;
@@ -530,6 +663,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     _completionHandled = false;
     next.addListener(_handlePlayerValueChanged);
     setState(() => initializing = false);
+    startupTrace?.complete();
     if (fullScreen) unawaited(_syncFullScreenOrientation());
     if (next.value.isPlaying) {
       _startPlaybackTimer();
@@ -590,6 +724,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             generation: generation,
           );
         },
+        onStartupTraceEvent: _startupTrace?.recordStartupIoEvent,
       );
     } catch (_) {
       return const PlaybackSessionPreparation(
@@ -1714,6 +1849,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   @override
   void dispose() {
+    _startupTrace?.cancel();
     setupGeneration++;
     _lifecycleGeneration++;
     _isAppForeground = false;

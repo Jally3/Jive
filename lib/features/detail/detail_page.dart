@@ -8,6 +8,8 @@ import '../../app/theme.dart';
 import '../../shared/app_states.dart';
 import '../../data/download/download_providers.dart';
 import '../../data/download/download_task_manager.dart';
+import '../../data/playback/trace/playback_startup_trace.dart';
+import '../../data/playback/trace/playback_trace_stage.dart';
 import '../../data/video_repository.dart';
 import '../../data/library_repository.dart';
 import '../../data/vod_source/vod_source_registry.dart';
@@ -212,8 +214,26 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       if (episodeIndex != null) selected = episodeIndex;
     });
     final overlay = Overlay.of(context);
+    final active = sc!.activeVideo;
+    final requestedEpisode = active.episodes.isEmpty
+        ? const Episode(id: '', name: '', url: '')
+        : active.episodes[selected.clamp(0, active.episodes.length - 1)];
+    final startupTrace = PlaybackStartupTrace.maybeStart(
+      videoTitle: active.title,
+      sourceId: active.sourceId,
+      sourceVideoId: active.sourceVideoId,
+      episode: requestedEpisode,
+      offlineOnly: false,
+    );
     try {
+      final downloadLookup = startupTrace?.startStage(
+        PlaybackTraceStage.downloadSelectionLookup,
+      );
       final cachedSelection = await _cachedSelectionForCurrentEpisode();
+      startupTrace?.finishStage(
+        downloadLookup,
+        result: cachedSelection == null ? 'miss' : 'hit',
+      );
       if (cachedSelection != null) {
         if (!mounted) return;
         final played = await Navigator.of(context).push<Episode>(
@@ -222,6 +242,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
               video: sc!.activeVideo,
               episode: cachedSelection.episode,
               selection: cachedSelection,
+              startupTrace: startupTrace,
             ),
           ),
         );
@@ -230,12 +251,20 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       }
       final source = _src(sc!.activeVideo.sourceId);
       if (source == null) throw VideoDataException('未知来源');
+      final detailResolve = startupTrace?.startStage(
+        PlaybackTraceStage.detailResolvePlayback,
+      );
       final fresh = await ref
           .read(videoRepositoryProvider)
           .resolvePlayback(source, sc!.activeVideo.ref);
+      startupTrace?.finishStage(detailResolve);
+      final favoriteRefresh = startupTrace?.startStage(
+        PlaybackTraceStage.favoriteSnapshotRefresh,
+      );
       await ref
           .read(favoriteControllerProvider.notifier)
           .refreshSnapshot(fresh);
+      startupTrace?.finishStage(favoriteRefresh);
       if (fresh.episodes.isEmpty) {
         throw VideoDataException('该视频暂时没有可用播放地址');
       }
@@ -251,11 +280,13 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       setState(() => detail = fresh);
       final played = await Navigator.of(context).push<Episode>(
         MaterialPageRoute(
-          builder: (_) => PlayerPage(video: fresh, episode: ep),
+          builder: (_) =>
+              PlayerPage(video: fresh, episode: ep, startupTrace: startupTrace),
         ),
       );
       if (mounted) _syncSelectedFromPlayer(played);
     } catch (e) {
+      startupTrace?.fail(e);
       if (mounted) {
         showAppToastVia(overlay, '$e（可尝试查找其他来源）');
       }
@@ -873,6 +904,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   Widget _playBtn(Video v) => SizedBox(
     height: 48,
     child: FilledButton.icon(
+      key: const ValueKey('detail-play-button'),
       focusNode: _playFocusNode,
       onPressed: v.episodes.isEmpty || resolving ? null : _play,
       icon: resolving
