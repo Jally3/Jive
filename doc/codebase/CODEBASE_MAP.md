@@ -166,6 +166,7 @@ lib/data/network/
 lib/data/download/
 ├── download_manager.dart              # 边下边播分片预取器 SegmentPrefetcher：并发抓取、指数退避、窗口随播放位置重锚定
 ├── download_network_policy.dart       # 离线下载网络策略：蜂窝网络开关持久化与当前网络准入判定
+├── download_task_store.dart           # 下载任务索引轻量读取：在缓存清理前恢复旧版离线条目保护集
 ├── download_task_manager.dart         # 显式下载引擎 DownloadTaskManager：任务持久化、网络闸门、单次蜂窝授权、暂停/恢复/断点续与进度发布
 ├── download_providers.dart            # 下载装配 downloadManagerProvider：注入缓存、剧集回解析与网络准入联动
 └── platform_disk_space.dart           # 磁盘空间通道 PlatformDiskSpaceProvider：MethodChannel(jive/cache) 读容量/可用空间

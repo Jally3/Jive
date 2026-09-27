@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -341,81 +342,390 @@ void main() {
     directory.deleteSync(recursive: true);
   });
 
-  test('paused task finalizes from saved manifest without network', () async {
-    final directory = Directory.systemTemp.createTempSync(
-      'jive_download_offline_resume_test',
-    );
+  test(
+    'paused task cancels its pending request and resumes after restart',
+    () async {
+      final directory = Directory.systemTemp.createTempSync(
+        'jive_download_offline_resume_test',
+      );
+      final store = CacheIndexStore(directory);
+      final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+      await cache.initialize();
+      final segmentStarted = Completer<void>();
+      final releaseSegment = Completer<void>();
+      final firstClient = MockClient((request) async {
+        if (request.url.path.endsWith('.m3u8')) {
+          return http.Response(
+            '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+            200,
+          );
+        }
+        if (!segmentStarted.isCompleted) segmentStarted.complete();
+        await releaseSegment.future;
+        return http.Response('Gsegment', 200);
+      });
+      final firstManager = DownloadTaskManager(
+        store: store,
+        cacheManager: cache,
+        client: firstClient,
+        resolveSelection: (_) async => null,
+      );
+      await firstManager.initialize();
+      final task = await firstManager.enqueue(_selection());
+      await segmentStarted.future;
+      var pauseCompleted = false;
+      final pauseFuture = firstManager
+          .pause(task.taskId, waitUntilPaused: true)
+          .whenComplete(() => pauseCompleted = true);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await pauseFuture;
+      expect(pauseCompleted, isTrue);
+      releaseSegment.complete();
+      for (var i = 0; i < 100; i++) {
+        if (firstManager.tasks.single.status == DownloadTaskStatus.paused) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(firstManager.tasks.single.status, DownloadTaskStatus.paused);
+      await firstManager.dispose();
+      await cache.flush();
+
+      final restoredCache = CacheManager(
+        store: store,
+        diskSpace: _FakeDiskSpace(),
+      );
+      await restoredCache.initialize();
+      var manifestHits = 0;
+      var segmentHits = 0;
+      final restoredManager = DownloadTaskManager(
+        store: store,
+        cacheManager: restoredCache,
+        client: MockClient((request) async {
+          if (request.url.path.endsWith('.m3u8')) {
+            manifestHits++;
+            return http.Response(
+              '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+              200,
+            );
+          }
+          segmentHits++;
+          return http.Response('Gsegment', 200);
+        }),
+        resolveSelection: (_) async => null,
+      );
+      await restoredManager.initialize();
+      await restoredManager.resume(task.taskId);
+      for (var i = 0; i < 100; i++) {
+        if (restoredManager.tasks.single.status ==
+            DownloadTaskStatus.completed) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(restoredManager.tasks.single.status, DownloadTaskStatus.completed);
+      expect(manifestHits, greaterThan(0));
+      expect(segmentHits, 1);
+      await restoredManager.dispose();
+      await restoredCache.flush();
+      directory.deleteSync(recursive: true);
+    },
+  );
+
+  test(
+    'pause releases a hung request and immediate resume starts anew',
+    () async {
+      final directory = Directory.systemTemp.createTempSync('jive_cancel_test');
+      final store = CacheIndexStore(directory);
+      final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+      await cache.initialize();
+      final firstSegment = Completer<http.Response>();
+      final started = Completer<void>();
+      var segmentRequests = 0;
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('.m3u8')) {
+          return http.Response(
+            '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+            200,
+          );
+        }
+        segmentRequests++;
+        if (segmentRequests == 1) {
+          started.complete();
+          return firstSegment.future;
+        }
+        return http.Response('Gsegment', 200);
+      });
+      final manager = DownloadTaskManager(
+        store: store,
+        cacheManager: cache,
+        client: client,
+        resolveSelection: (_) async => _selection(),
+        concurrency: 1,
+      );
+      await manager.initialize();
+      final task = await manager.enqueue(_selection());
+      await started.future;
+      await manager.pause(task.taskId, waitUntilPaused: true);
+      expect(manager.tasks.single.status, DownloadTaskStatus.paused);
+      await manager.resume(task.taskId);
+      for (var i = 0; i < 100; i++) {
+        if (manager.tasks.single.status == DownloadTaskStatus.completed) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(manager.tasks.single.status, DownloadTaskStatus.completed);
+      expect(segmentRequests, 2);
+      firstSegment.complete(http.Response('Gstale', 200));
+      await manager.dispose();
+      await cache.flush();
+      directory.deleteSync(recursive: true);
+    },
+  );
+
+  test('expired segment retries with fresh source and manifest', () async {
+    final directory = Directory.systemTemp.createTempSync('jive_refresh_test');
     final store = CacheIndexStore(directory);
     final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
     await cache.initialize();
-    final segmentStarted = Completer<void>();
-    final releaseSegment = Completer<void>();
-    final firstClient = MockClient((request) async {
+    final requested = <String>[];
+    final client = MockClient((request) async {
+      requested.add(request.url.toString());
+      if (request.url.path.endsWith('.m3u8')) {
+        final segment = request.url.path.contains('/fresh/')
+            ? 'fresh.ts'
+            : 'expired.ts';
+        return http.Response(
+          '#EXTM3U\n#EXTINF:4.0,\n$segment\n#EXT-X-ENDLIST\n',
+          200,
+        );
+      }
+      if (request.url.path.endsWith('expired.ts')) {
+        return http.Response('expired', 403);
+      }
+      return http.Response('Gsegment', 200);
+    });
+    final fresh = _selection().copyWith(
+      playbackSource: PlaybackSource(
+        url: Uri.parse('https://cdn.example.com/fresh/index.m3u8'),
+        format: PlaybackFormat.hls,
+      ),
+    );
+    var resolutions = 0;
+    final manager = DownloadTaskManager(
+      store: store,
+      cacheManager: cache,
+      client: client,
+      resolveSelection: (_) async {
+        resolutions++;
+        return fresh;
+      },
+    );
+    await manager.initialize();
+    await manager.enqueue(_selection());
+    for (var i = 0; i < 100; i++) {
+      if (manager.tasks.single.status == DownloadTaskStatus.completed) break;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(manager.tasks.single.status, DownloadTaskStatus.completed);
+    expect(
+      manager.tasks.single.playbackUrl,
+      fresh.playbackSource.url.toString(),
+    );
+    expect(resolutions, 1);
+    expect(requested.any((url) => url.endsWith('/fresh/fresh.ts')), isTrue);
+    await manager.dispose();
+    await cache.flush();
+    directory.deleteSync(recursive: true);
+  });
+
+  test('connection timeout releases a request before the watchdog', () async {
+    final directory = Directory.systemTemp.createTempSync('jive_connect_test');
+    final store = CacheIndexStore(directory);
+    final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+    await cache.initialize();
+    final pending = <Completer<http.Response>>[];
+    final client = MockClient((request) async {
       if (request.url.path.endsWith('.m3u8')) {
         return http.Response(
           '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
           200,
         );
       }
-      if (!segmentStarted.isCompleted) segmentStarted.complete();
-      await releaseSegment.future;
-      return http.Response('Gsegment', 200);
+      final response = Completer<http.Response>();
+      pending.add(response);
+      return response.future;
     });
-    final firstManager = DownloadTaskManager(
+    final manager = DownloadTaskManager(
       store: store,
       cacheManager: cache,
-      client: firstClient,
-      resolveSelection: (_) async => null,
+      client: client,
+      resolveSelection: (_) async => _selection(),
+      connectionTimeout: const Duration(milliseconds: 60),
+      stallTimeout: const Duration(seconds: 2),
     );
-    await firstManager.initialize();
-    final task = await firstManager.enqueue(_selection());
-    await segmentStarted.future;
-    var pauseCompleted = false;
-    final pauseFuture = firstManager
-        .pause(task.taskId, waitUntilPaused: true)
-        .whenComplete(() => pauseCompleted = true);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    expect(pauseCompleted, isFalse);
-    releaseSegment.complete();
-    await pauseFuture;
-    expect(pauseCompleted, isTrue);
+    await manager.initialize();
+    await manager.enqueue(_selection());
     for (var i = 0; i < 100; i++) {
-      if (firstManager.tasks.single.status == DownloadTaskStatus.paused) break;
+      if (manager.tasks.single.status == DownloadTaskStatus.failed) break;
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
-    expect(firstManager.tasks.single.status, DownloadTaskStatus.paused);
-    await firstManager.dispose();
+    expect(manager.tasks.single.status, DownloadTaskStatus.failed);
+    expect(manager.tasks.single.error, DownloadFailureReason.network);
+    expect(pending.length, 2);
+    for (final response in pending) {
+      response.complete(http.Response('Gstale', 200));
+    }
+    await manager.dispose();
     await cache.flush();
-
-    final restoredCache = CacheManager(
-      store: store,
-      diskSpace: _FakeDiskSpace(),
-    );
-    await restoredCache.initialize();
-    var networkHits = 0;
-    final restoredManager = DownloadTaskManager(
-      store: store,
-      cacheManager: restoredCache,
-      client: MockClient((_) async {
-        networkHits++;
-        throw StateError('offline');
-      }),
-      resolveSelection: (_) async => null,
-    );
-    await restoredManager.initialize();
-    await restoredManager.resume(task.taskId);
-    for (var i = 0; i < 100; i++) {
-      if (restoredManager.tasks.single.status == DownloadTaskStatus.completed) {
-        break;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
-    expect(restoredManager.tasks.single.status, DownloadTaskStatus.completed);
-    expect(networkHits, 0);
-    await restoredManager.dispose();
-    await restoredCache.flush();
     directory.deleteSync(recursive: true);
   });
+
+  test('zero-byte watchdog fails instead of staying downloading', () async {
+    final directory = Directory.systemTemp.createTempSync('jive_stall_test');
+    final store = CacheIndexStore(directory);
+    final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+    await cache.initialize();
+    final pending = <Completer<http.Response>>[];
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('.m3u8')) {
+        return http.Response(
+          '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+          200,
+        );
+      }
+      final response = Completer<http.Response>();
+      pending.add(response);
+      return response.future;
+    });
+    final manager = DownloadTaskManager(
+      store: store,
+      cacheManager: cache,
+      client: client,
+      resolveSelection: (_) async => _selection(),
+      connectionTimeout: const Duration(seconds: 2),
+      stallTimeout: const Duration(milliseconds: 80),
+    );
+    await manager.initialize();
+    await manager.enqueue(_selection());
+    for (var i = 0; i < 100; i++) {
+      if (manager.tasks.single.status == DownloadTaskStatus.failed) break;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(manager.tasks.single.status, DownloadTaskStatus.failed);
+    expect(manager.tasks.single.error, DownloadFailureReason.stalled);
+    expect(pending.length, 2);
+    for (final response in pending) {
+      response.complete(http.Response('Gstale', 200));
+    }
+    await manager.dispose();
+    await cache.flush();
+    directory.deleteSync(recursive: true);
+  });
+
+  test(
+    'a response body that stops sending bytes hits the idle timeout',
+    () async {
+      final directory = Directory.systemTemp.createTempSync('jive_idle_test');
+      final store = CacheIndexStore(directory);
+      final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+      await cache.initialize();
+      final hangingBodies = <StreamController<List<int>>>[];
+      final client = MockClient.streaming((request, _) async {
+        if (request.url.path.endsWith('.m3u8')) {
+          return http.StreamedResponse(
+            Stream.value(
+              utf8.encode(
+                '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+              ),
+            ),
+            200,
+          );
+        }
+        final body = StreamController<List<int>>();
+        hangingBodies.add(body);
+        return http.StreamedResponse(body.stream, 200);
+      });
+      final manager = DownloadTaskManager(
+        store: store,
+        cacheManager: cache,
+        client: client,
+        resolveSelection: (_) async => _selection(),
+        resourceIdleTimeout: const Duration(milliseconds: 60),
+        stallTimeout: const Duration(seconds: 2),
+      );
+      await manager.initialize();
+      await manager.enqueue(_selection());
+      for (var i = 0; i < 100; i++) {
+        if (manager.tasks.single.status == DownloadTaskStatus.failed) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(manager.tasks.single.status, DownloadTaskStatus.failed);
+      expect(manager.tasks.single.error, DownloadFailureReason.stalled);
+      expect(hangingBodies.length, 2);
+      for (final body in hangingBodies) {
+        await body.close();
+      }
+      await manager.dispose();
+      await cache.flush();
+      directory.deleteSync(recursive: true);
+    },
+  );
+
+  test(
+    'a continuous slow response hits the total timeout and cancels its stream',
+    () async {
+      final directory = Directory.systemTemp.createTempSync('jive_total_test');
+      final store = CacheIndexStore(directory);
+      final cache = CacheManager(store: store, diskSpace: _FakeDiskSpace());
+      await cache.initialize();
+      var cancelledStreams = 0;
+      final client = MockClient.streaming((request, _) async {
+        if (request.url.path.endsWith('.m3u8')) {
+          return http.StreamedResponse(
+            Stream.value(
+              utf8.encode(
+                '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+              ),
+            ),
+            200,
+          );
+        }
+        late Timer timer;
+        final body = StreamController<List<int>>(
+          onCancel: () {
+            timer.cancel();
+            cancelledStreams++;
+          },
+        );
+        timer = Timer.periodic(
+          const Duration(milliseconds: 10),
+          (_) => body.add([0x47]),
+        );
+        return http.StreamedResponse(body.stream, 200);
+      });
+      final manager = DownloadTaskManager(
+        store: store,
+        cacheManager: cache,
+        client: client,
+        resolveSelection: (_) async => _selection(),
+        resourceIdleTimeout: const Duration(seconds: 2),
+        resourceTotalTimeout: const Duration(milliseconds: 80),
+        stallTimeout: const Duration(seconds: 2),
+      );
+      await manager.initialize();
+      await manager.enqueue(_selection());
+      for (var i = 0; i < 100; i++) {
+        if (manager.tasks.single.status == DownloadTaskStatus.failed) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(manager.tasks.single.status, DownloadTaskStatus.failed);
+      expect(manager.tasks.single.error, DownloadFailureReason.network);
+      expect(cancelledStreams, 2);
+      await manager.dispose();
+      await cache.flush();
+      directory.deleteSync(recursive: true);
+    },
+  );
 
   test('download concurrency is bounded across tasks', () async {
     final directory = Directory.systemTemp.createTempSync(
