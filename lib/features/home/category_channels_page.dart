@@ -288,7 +288,11 @@ class _CategoryChannelsPageState extends State<CategoryChannelsPage> {
           color: context.appColors.secondary,
           size: _layout.isTablet ? 26 : 24,
         ),
-        onPressed: () => Navigator.of(context).pop(),
+        onPressed: () {
+          final navigator = Navigator.of(context);
+          final route = ModalRoute.of(context);
+          if (route != null) navigator.removeRoute(route);
+        },
       ),
     ],
   );

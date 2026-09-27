@@ -131,7 +131,9 @@ mixin PlayerProgressPersistence on PlayerStateBase {
         mounted &&
         _isAppForeground &&
         !failed &&
-        controller?.value.isPlaying == true;
+        _playbackDesired &&
+        controller?.value.isInitialized == true &&
+        controller?.value.isCompleted != true;
     try {
       await WakelockPlus.toggle(enable: shouldKeepAwake);
     } catch (_) {
@@ -143,7 +145,11 @@ mixin PlayerProgressPersistence on PlayerStateBase {
   void _startWakelockHeartbeat() {
     wakelockTimer?.cancel();
     wakelockTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (!mounted || failed || controller?.value.isPlaying != true) {
+      if (!mounted ||
+          failed ||
+          !_playbackDesired ||
+          controller?.value.isInitialized != true ||
+          controller?.value.isCompleted == true) {
         wakelockTimer?.cancel();
         wakelockTimer = null;
         unawaited(_syncWakelock());

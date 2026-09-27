@@ -29,9 +29,18 @@ class DownloadTaskManager {
     required this.cacheManager,
     required this.client,
     required this.resolveSelection,
+    this.taskClientFactory,
     this.concurrency = 5,
+    this.connectionTimeout = const Duration(seconds: 15),
+    this.resourceIdleTimeout = const Duration(seconds: 30),
+    this.resourceTotalTimeout = const Duration(minutes: 5),
+    this.stallTimeout = const Duration(seconds: 30),
     DownloadNetworkAccess initialNetworkAccess = DownloadNetworkAccess.allowed,
   }) : assert(concurrency > 0),
+       assert(connectionTimeout > Duration.zero),
+       assert(resourceIdleTimeout > Duration.zero),
+       assert(resourceTotalTimeout > Duration.zero),
+       assert(stallTimeout > Duration.zero),
        _networkAccess = initialNetworkAccess,
        _permits = DownloadPermitPool(concurrency),
        _urlResolver = PlaybackUrlResolver(client: client);
@@ -40,11 +49,24 @@ class DownloadTaskManager {
   final CacheManager cacheManager;
   final http.Client client;
   final DownloadSelectionResolver resolveSelection;
+
+  /// Production creates a separate client for each cancellable task attempt.
+  /// Tests may omit this to use their injected client.
+  final http.Client Function()? taskClientFactory;
   final int concurrency;
   final DownloadPermitPool _permits;
+  final Duration connectionTimeout;
+  final Duration resourceIdleTimeout;
+  final Duration resourceTotalTimeout;
+  final Duration stallTimeout;
   final PlaybackUrlResolver _urlResolver;
   final Map<String, DownloadTask> _tasks = {};
   final Map<String, Future<void>> _running = {};
+  final Map<String, _DownloadAttempt> _attempts = {};
+  final Map<String, Timer> _stallTimers = {};
+  final Map<String, int> _lastBytesAt = {};
+  final Set<String> _stalled = {};
+  final Set<String> _autoRefreshAttempted = {};
   final Map<String, PlaybackSelection?> _pendingSelections = {};
   final Set<String> _pauseRequested = {};
   final Set<String> _cancelRequested = {};
@@ -198,6 +220,7 @@ class DownloadTaskManager {
       _cellularOverrides.remove(taskId);
     }
     _pauseRequested.add(taskId);
+    _attempts[taskId]?.cancel();
     final task = _tasks[taskId];
     if (task != null && task.status == DownloadTaskStatus.queued) {
       await _set(
@@ -209,8 +232,7 @@ class DownloadTaskManager {
       await _set(task.copyWith(pauseReason: reason));
     }
     if (waitUntilPaused) {
-      // 正在写入的分片需要完整落盘后才能安全停止。允许交互层等待这个
-      // 边界，以便持续展示“暂停中”并阻止重复操作。
+      // 等待在途请求取消和分片临时文件清理完成。
       final running = _running[taskId];
       if (running != null) await running;
     }
@@ -229,13 +251,18 @@ class DownloadTaskManager {
       return DownloadResumeResult.blockedByCellular;
     }
     if (allowCellularOnce) _cellularOverrides.add(taskId);
+    final stopping = _pauseRequested.contains(taskId);
+    final running = _running[taskId];
+    if (running != null && !stopping) return DownloadResumeResult.started;
+    if (running != null) await running;
     _pauseRequested.remove(taskId);
     _cancelRequested.remove(taskId);
+    _stalled.remove(taskId);
+    _autoRefreshAttempted.remove(taskId);
     final task = _tasks[taskId];
     if (task == null || task.status == DownloadTaskStatus.completed) {
       return DownloadResumeResult.started;
     }
-    if (_running.containsKey(taskId)) return DownloadResumeResult.started;
     await _set(
       task.copyWith(
         status: DownloadTaskStatus.queued,
@@ -250,6 +277,7 @@ class DownloadTaskManager {
 
   Future<void> cancel(String taskId) async {
     _cancelRequested.add(taskId);
+    _attempts[taskId]?.cancel();
     _pauseRequested.remove(taskId);
     _cellularOverrides.remove(taskId);
     final task = _tasks[taskId];
@@ -275,7 +303,7 @@ class DownloadTaskManager {
     }
     final latest = _tasks[taskId] ?? task;
     if (latest.contentKeyHash != null && latest.revisionKeyHash != null) {
-      final result = await cacheManager.deleteEntry(
+      final result = await cacheManager.deleteDownloadEntry(
         '${latest.contentKeyHash}|${latest.revisionKeyHash}',
       );
       if (result == DeleteResult.blocked || result == DeleteResult.failed) {
@@ -445,22 +473,64 @@ class DownloadTaskManager {
   Future<void> _run(String taskId, PlaybackSelection? initial) async {
     var task = _tasks[taskId];
     if (task == null) return;
+    final attempt = _DownloadAttempt(
+      taskClientFactory?.call() ?? client,
+      ownsClient: taskClientFactory != null,
+    );
+    _attempts[taskId] = attempt;
+    _lastBytesAt[taskId] = DateTime.now().millisecondsSinceEpoch;
+    final watchdogInterval = Duration(
+      milliseconds: min(1000, max(1, stallTimeout.inMilliseconds ~/ 2)),
+    );
+    _stallTimers[taskId] = Timer.periodic(watchdogInterval, (_) {
+      final last = _lastBytesAt[taskId];
+      if (last == null || _shouldStop(taskId)) return;
+      if (DateTime.now().millisecondsSinceEpoch - last >=
+          stallTimeout.inMilliseconds) {
+        _stalled.add(taskId);
+        attempt.cancel();
+      }
+    });
     CacheRef? ref;
     try {
       if (_cancelRequested.contains(taskId)) return;
       task = await _set(task.copyWith(status: DownloadTaskStatus.downloading));
       _resourceLengths[taskId] = {};
-      var selection = initial ?? await selectionForTask(task);
+      PlaybackSelection? fresh;
+      if (initial == null) {
+        try {
+          fresh = await attempt.run(
+            resolveSelection(task),
+            const Duration(seconds: 20),
+          );
+        } on _DownloadInterrupted {
+          rethrow;
+        } catch (_) {
+          // The saved URL and manifest can still complete an offline task.
+        }
+      }
+      var selection =
+          initial ??
+          fresh ??
+          await attempt.run(
+            selectionForTask(task),
+            const Duration(seconds: 20),
+          );
       if (selection == null || !selection.hasStableIdentity) {
         throw const _DownloadException(DownloadFailureReason.invalidSelection);
       }
       if (selection.playbackSource.format == PlaybackFormat.unknown) {
-        selection = await _urlResolver.resolveSelection(selection);
+        selection = await attempt.run(
+          PlaybackUrlResolver(
+            client: attempt.client,
+          ).resolveSelection(selection),
+          const Duration(seconds: 25),
+        );
       }
       // 统一下载策略：解析时即过滤广告（与在线播放共用同一过滤逻辑和
       // revision），只下载正片分片；广告分片不下载、不占缓存。
       final parser = HlsParser(
-        client: client,
+        client: attempt.client,
         adFilter: const AdFilter(enabled: true),
       );
       HlsDecision decision;
@@ -472,13 +542,17 @@ class DownloadTaskManager {
               task.revisionKeyHash!,
             );
       final savedBase = Uri.tryParse(task.mediaPlaylistUrl);
-      if (savedManifest != null &&
+      decision = await attempt.run(
+        parser.resolve(selection.playbackSource),
+        const Duration(seconds: 45),
+      );
+      if (!decision.isCacheable &&
+          fresh == null &&
+          savedManifest != null &&
           savedManifest.isNotEmpty &&
           savedBase != null &&
           savedBase.isAbsolute) {
         decision = parser.decideMedia(savedManifest, savedBase);
-      } else {
-        decision = await parser.resolve(selection.playbackSource);
       }
       if (!decision.isCacheable || decision.mediaPlaylist == null) {
         throw _DownloadException(_reasonForManifest(decision.reason));
@@ -549,10 +623,11 @@ class DownloadTaskManager {
           expectedResourceCount: plan.expectedResourceCount,
           filterVersion: filterVersion,
           mediaPlaylistUrl: playlist.baseUri.toString(),
+          playbackUrl: selection.playbackSource.url.toString(),
         ),
       );
       final fetcher = ResourceFetcher(
-        client: client,
+        client: attempt.client,
         sessionHeaders: selection.playbackSource.headers,
         manager: cacheManager,
         store: store,
@@ -564,6 +639,7 @@ class DownloadTaskManager {
         },
         onBytesReceived: (bytes) => _recordBytes(taskId, bytes),
         failOnCacheUnavailable: true,
+        isCancelled: () => attempt.isCancelled,
         encryptedSegments: playlist.hasEncryption,
       );
       final resources = plan.resources.entries.toList();
@@ -578,27 +654,34 @@ class DownloadTaskManager {
           final ext = plan.extByResourceId[id] ?? 'bin';
           final existing = await cacheManager.resourceRecord(entry.key, id);
           if (existing?.complete == true) {
+            _lastBytesAt[taskId] = DateTime.now().millisecondsSinceEpoch;
             _resourceLengths[taskId]?[id] = existing!.size;
             await _updateProgress(taskId, entry.key, resources.length);
             continue;
           }
-          final release = await _permits.acquire();
+          final release = await _permits.acquire(cancelled: attempt.cancelled);
+          if (release == null) return;
           try {
             if (_shouldStop(taskId)) return;
-            final result = await fetcher.fetch(
-              origin: resource.value,
-              resourceId: id,
-              ext: ext,
+            final result = await attempt.run(
+              fetcher.fetch(origin: resource.value, resourceId: id, ext: ext),
+              connectionTimeout,
             );
             if (result.statusCode >= 400) {
-              await result.body.drain<void>();
               throw _DownloadException(switch (result.statusCode) {
                 401 || 403 => DownloadFailureReason.sourceAccessDenied,
                 404 || 410 => DownloadFailureReason.sourceMissing,
                 _ => DownloadFailureReason.network,
               });
             }
-            await result.body.drain<void>();
+            await attempt.drain(
+              result.body,
+              idleTimeout: resourceIdleTimeout,
+              totalTimeout: resourceTotalTimeout,
+            );
+          } catch (_) {
+            attempt.cancel();
+            rethrow;
           } finally {
             release();
           }
@@ -618,6 +701,7 @@ class DownloadTaskManager {
         await _set(_tasks[taskId]!.copyWith(status: DownloadTaskStatus.paused));
         return;
       }
+      if (attempt.isCancelled) throw const _DownloadInterrupted();
 
       // 过滤已在解析阶段完成，分片集合与在线播放一致，无需后置过滤步骤。
       final finalized = await cacheManager.finalizeEntry(entry.key);
@@ -675,7 +759,13 @@ class DownloadTaskManager {
     } on CacheEntryNotWritableException {
       await _fail(taskId, DownloadFailureReason.cacheWriteFailed);
     } on CacheUpstreamStreamException {
-      await _fail(taskId, DownloadFailureReason.network);
+      if (!await _queueFreshRetry(taskId, DownloadFailureReason.network)) {
+        await _fail(taskId, DownloadFailureReason.network);
+      }
+    } on CacheFetchCancelledException {
+      if (!await _queueFreshRetry(taskId, DownloadFailureReason.network)) {
+        await _fail(taskId, DownloadFailureReason.network);
+      }
     } on FileSystemException catch (error) {
       await _fail(
         taskId,
@@ -687,6 +777,7 @@ class DownloadTaskManager {
       if (_pauseRequested.contains(taskId)) {
         await _set(_tasks[taskId]!.copyWith(status: DownloadTaskStatus.paused));
       } else if (!_cancelRequested.contains(taskId)) {
+        if (await _queueFreshRetry(taskId, error.reason)) return;
         final current = _tasks[taskId];
         if (current != null) {
           await _set(
@@ -698,19 +789,60 @@ class DownloadTaskManager {
         }
       }
     } on SocketException {
-      await _fail(taskId, DownloadFailureReason.network);
+      if (!await _queueFreshRetry(taskId, DownloadFailureReason.network)) {
+        await _fail(taskId, DownloadFailureReason.network);
+      }
     } on http.ClientException {
-      await _fail(taskId, DownloadFailureReason.network);
+      if (!await _queueFreshRetry(taskId, DownloadFailureReason.network)) {
+        await _fail(taskId, DownloadFailureReason.network);
+      }
     } on HttpException {
-      await _fail(taskId, DownloadFailureReason.network);
+      if (!await _queueFreshRetry(taskId, DownloadFailureReason.network)) {
+        await _fail(taskId, DownloadFailureReason.network);
+      }
     } on TimeoutException {
-      await _fail(taskId, DownloadFailureReason.network);
+      if (!await _queueFreshRetry(taskId, DownloadFailureReason.network)) {
+        await _fail(taskId, DownloadFailureReason.network);
+      }
+    } on _DownloadInterrupted {
+      final reason = _stalled.contains(taskId)
+          ? DownloadFailureReason.stalled
+          : DownloadFailureReason.network;
+      if (!await _queueFreshRetry(taskId, reason)) await _fail(taskId, reason);
     } catch (_) {
       await _fail(taskId, DownloadFailureReason.unexpected);
     } finally {
+      _stallTimers.remove(taskId)?.cancel();
+      _lastBytesAt.remove(taskId);
+      _attempts.remove(taskId);
+      attempt.close();
       _stopSpeedTimer(taskId);
       await ref?.dispose();
     }
+  }
+
+  Future<bool> _queueFreshRetry(
+    String taskId,
+    DownloadFailureReason reason,
+  ) async {
+    if (_shouldStop(taskId) || _autoRefreshAttempted.contains(taskId)) {
+      return false;
+    }
+    if (reason != DownloadFailureReason.sourceAccessDenied &&
+        reason != DownloadFailureReason.sourceMissing &&
+        reason != DownloadFailureReason.manifestRequestFailed &&
+        reason != DownloadFailureReason.network &&
+        reason != DownloadFailureReason.stalled) {
+      return false;
+    }
+    final task = _tasks[taskId];
+    if (task == null) return false;
+    _autoRefreshAttempted.add(taskId);
+    _pendingSelections[taskId] = null;
+    await _set(
+      task.copyWith(status: DownloadTaskStatus.queued, speedBytesPerSecond: 0),
+    );
+    return true;
   }
 
   Future<void> _fail(String taskId, DownloadFailureReason reason) async {
@@ -757,6 +889,7 @@ class DownloadTaskManager {
 
   void _recordBytes(String taskId, int bytes) {
     final now = DateTime.now().millisecondsSinceEpoch;
+    _lastBytesAt[taskId] = now;
     final samples = _speedSamples.putIfAbsent(taskId, () => []);
     samples.add((atMs: now, bytes: bytes));
     samples.removeWhere((sample) => now - sample.atMs > 3000);
@@ -905,4 +1038,72 @@ class DownloadTaskManager {
 class _DownloadException implements Exception {
   const _DownloadException(this.reason);
   final DownloadFailureReason reason;
+}
+
+class _DownloadInterrupted implements Exception {
+  const _DownloadInterrupted();
+}
+
+class _DownloadAttempt {
+  _DownloadAttempt(this.client, {required this.ownsClient});
+
+  final http.Client client;
+  final bool ownsClient;
+  final Completer<void> _cancelled = Completer<void>();
+  bool get isCancelled => _cancelled.isCompleted;
+  Future<void> get cancelled => _cancelled.future;
+
+  Future<T> run<T>(Future<T> work, Duration timeout) =>
+      Future.any<T>([
+        work,
+        _cancelled.future.then<T>((_) => throw const _DownloadInterrupted()),
+      ]).timeout(
+        timeout,
+        onTimeout: () {
+          cancel();
+          throw TimeoutException('下载请求超时', timeout);
+        },
+      );
+
+  Future<void> drain(
+    Stream<List<int>> body, {
+    required Duration idleTimeout,
+    required Duration totalTimeout,
+  }) async {
+    final completed = Completer<void>();
+    final subscription = body
+        .timeout(
+          idleTimeout,
+          onTimeout: (sink) => sink.addError(
+            const _DownloadException(DownloadFailureReason.stalled),
+          ),
+        )
+        .listen(
+          (_) {},
+          onError: (Object error, StackTrace stackTrace) {
+            if (!completed.isCompleted) {
+              completed.completeError(error, stackTrace);
+            }
+          },
+          onDone: () {
+            if (!completed.isCompleted) completed.complete();
+          },
+          cancelOnError: true,
+        );
+    try {
+      await run(completed.future, totalTimeout);
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  void cancel() {
+    if (_cancelled.isCompleted) return;
+    _cancelled.complete();
+    if (ownsClient) client.close();
+  }
+
+  void close() {
+    if (ownsClient) client.close();
+  }
 }

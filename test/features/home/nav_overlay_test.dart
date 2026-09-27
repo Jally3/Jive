@@ -468,6 +468,39 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('category trailing slot swaps without reserving a blank button', (
+    tester,
+  ) async {
+    await _pumpHome(tester);
+
+    expect(
+      find.byKey(const ValueKey('home-category-expand-button')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+      findsNothing,
+    );
+
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(
+      find.byKey(const ValueKey('home-category-expand-button')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('home exposes all native and curated feeds in a fixed row', (
@@ -753,6 +786,96 @@ void main() {
           .selected,
       isTrue,
     );
+  });
+
+  testWidgets('scrolling keeps only the leaf row pinned', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(tester, repository: _ManyNestedCategoryRepository());
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '电影'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump();
+
+    final leafTop = tester
+        .getTopLeft(find.widgetWithText(ChoiceChip, '子分类0'))
+        .dy;
+    final feedBottom = tester
+        .getBottomLeft(find.widgetWithText(ChoiceChip, '综合'))
+        .dy;
+    expect(leafTop, greaterThanOrEqualTo(0));
+    expect(feedBottom, lessThanOrEqualTo(leafTop));
+    final parentContext = find.byKey(
+      const ValueKey('home-category-parent-context'),
+    );
+    expect(parentContext, findsOneWidget);
+    expect(
+      find.descendant(of: parentContext, matching: find.byType(TextButton)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: parentContext,
+        matching: find.byIcon(Icons.arrow_drop_down_rounded),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('pinned category row expands as an overlay without moving grid', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(tester, repository: _ManyNestedCategoryRepository());
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '电影'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    final offset = scrollState.position.pixels;
+
+    await tester.tap(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(
+      find.byKey(const ValueKey('home-category-expanded-panel')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-barrier')),
+      findsOneWidget,
+    );
+    expect(scrollState.position.pixels, closeTo(offset, 0.01));
+
+    await tester.tap(find.byKey(const ValueKey('home-category-panel-barrier')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(
+      find.byKey(const ValueKey('home-category-expanded-panel')),
+      findsNothing,
+    );
+    expect(scrollState.position.pixels, closeTo(offset, 0.01));
   });
 
   testWidgets('expand button opens the all-channels page', (tester) async {

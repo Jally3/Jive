@@ -23,10 +23,15 @@ mixin PlayerControlsState on PlayerStateBase {
   @override
   void _scheduleControlsHide() {
     controlsTimer?.cancel();
+    final value = controller?.value;
     if (_screenLocked ||
-        controller?.value.isPlaying != true ||
+        value == null ||
+        !value.isInitialized ||
+        value.isCompleted ||
+        failed ||
         isSeeking ||
-        _popupMenuOpen) {
+        _popupMenuOpen ||
+        (_isTv && !value.isPlaying)) {
       return;
     }
     controlsTimer = Timer(const Duration(seconds: 3), () {

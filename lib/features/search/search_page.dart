@@ -211,6 +211,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         TextField(
           controller: input,
           focusNode: widget.focusNode,
+          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
           onChanged: _onInputChanged,
           onSubmitted: _submit,
           textInputAction: TextInputAction.search,

@@ -29,6 +29,7 @@ import 'package:video_player/video_player.dart';
 // These interfaces are transitive test fixtures of the production plugins.
 // ignore: depend_on_referenced_packages
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 // ignore: depend_on_referenced_packages
 import 'package:wakelock_plus_platform_interface/wakelock_plus_platform_interface.dart';
 
@@ -95,6 +96,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   }
 
   void emitBuffering(int playerId, {required bool buffering}) {
+    playing[playerId] = !buffering;
     _streams[playerId]!.add(
       VideoEvent(
         eventType: buffering
@@ -393,20 +395,26 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late VideoPlayerPlatform originalVideoPlatform;
   late WakelockPlusPlatformInterface originalWakelockPlatform;
+  late WakelockPlusPlatformInterface originalWakelockPlusPlatformInstance;
   late _FakeVideoPlayerPlatform videoPlatform;
+  late _FakeWakelockPlatform wakelockPlatform;
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     originalVideoPlatform = VideoPlayerPlatform.instance;
     originalWakelockPlatform = WakelockPlusPlatformInterface.instance;
+    originalWakelockPlusPlatformInstance = wakelockPlusPlatformInstance;
     videoPlatform = _FakeVideoPlayerPlatform();
+    wakelockPlatform = _FakeWakelockPlatform();
     VideoPlayerPlatform.instance = videoPlatform;
-    WakelockPlusPlatformInterface.instance = _FakeWakelockPlatform();
+    WakelockPlusPlatformInterface.instance = wakelockPlatform;
+    wakelockPlusPlatformInstance = wakelockPlatform;
   });
 
   tearDown(() {
     VideoPlayerPlatform.instance = originalVideoPlatform;
     WakelockPlusPlatformInterface.instance = originalWakelockPlatform;
+    wakelockPlusPlatformInstance = originalWakelockPlusPlatformInstance;
   });
 
   testWidgets(
@@ -958,8 +966,10 @@ void main() {
     (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(844, 390);
+      tester.view.padding = const FakeViewPadding(left: 59);
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetPadding);
       final video = _playableVideo('https://example.com/1.mp4');
 
       await _pumpPlayerPage(
@@ -976,6 +986,12 @@ void main() {
                 .isNotEmpty &&
             videoPlatform.playing[videoPlatform.lastPlayerId] == true,
         reason: 'landscape player did not finish initialization',
+      );
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('player-screen-lock-button')))
+            .left,
+        83,
       );
 
       await tester.tap(find.byKey(const ValueKey('playback-speed-menu')));
@@ -1292,6 +1308,44 @@ void main() {
     await _unmountPlayerPage(tester);
   });
 
+  testWidgets('buffering keeps the screen awake until playback is paused', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+    expect(videoPlatform.playing[videoPlatform.lastPlayerId], isTrue);
+    await tester.pump(const Duration(seconds: 11));
+    expect(wakelockPlatform.isEnabled, isTrue);
+
+    final playerId = videoPlatform.lastPlayerId;
+    videoPlatform.emitBuffering(playerId, buffering: true);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 11));
+    expect(videoPlatform.playing[playerId], isFalse);
+    expect(wakelockPlatform.isEnabled, isTrue);
+
+    videoPlatform.emitBuffering(playerId, buffering: false);
+    await tester.pump();
+    expect(wakelockPlatform.isEnabled, isTrue);
+
+    await tester.tapAt(tester.getCenter(find.byType(PlayerGestureLayer)));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byTooltip('暂停').hitTestable());
+    await _pumpUntil(tester, () => !wakelockPlatform.isEnabled);
+    await _unmountPlayerPage(tester);
+  });
+
   testWidgets(
     'landscape player hides episode navigation for a single episode',
     (tester) async {
@@ -1543,6 +1597,41 @@ void main() {
     expect(videoPlatform.playing[videoPlatform.lastPlayerId], isTrue);
     await _unmountPlayerPage(tester);
   });
+
+  testWidgets(
+    'pause has no center feedback and only the controls bar resumes playback',
+    (tester) async {
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+
+      await tester.tap(find.byTooltip('暂停'));
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == false);
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('player-pause-feedback')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('player-center-play-button')),
+        findsNothing,
+      );
+
+      await tester.pump(const Duration(milliseconds: 3100));
+      expect(_controlsBarOpacity(tester), 0);
+
+      await tester.tapAt(tester.getCenter(find.byType(PlayerGestureLayer)));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(videoPlatform.playing[0], isFalse);
+      expect(_controlsBarOpacity(tester), 1);
+
+      await tester.tap(find.byTooltip('播放'));
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+      await _unmountPlayerPage(tester);
+    },
+  );
 
   testWidgets('last episode still exposes replay when playback completes', (
     tester,

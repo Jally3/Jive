@@ -329,6 +329,7 @@ void main() {
     expect(find.text('跟随系统'), findsOneWidget);
     expect(find.text('播放'), findsOneWidget);
     expect(find.text('预加载'), findsOneWidget);
+    expect(find.text('播放时提前缓存后续内容（Wi-Fi 10 分钟 / 蜂窝 2 分钟）'), findsOneWidget);
     expect(find.text('下载'), findsOneWidget);
     expect(find.text('允许蜂窝网络下载'), findsOneWidget);
     expect(find.text('存储'), findsOneWidget);

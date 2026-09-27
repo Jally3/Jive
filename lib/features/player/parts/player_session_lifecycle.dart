@@ -311,15 +311,20 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
     }
     unawaited(_save());
     await _syncWakelock();
-    if (next.value.isPlaying) _startWakelockHeartbeat();
+    if (_isAppForeground && _playbackDesired && !next.value.isCompleted) {
+      _startWakelockHeartbeat();
+    }
     if (session != null) {
       try {
         final prefetcher = session.buildPrefetcher(
           windowSize: () => _prefetchAhead,
         );
         if (prefetcher != null) {
-          if (!_isAppForeground) prefetcher.pause();
-          unawaited(prefetcher.prefetch(fromPosition: target));
+          if (!_isAppForeground || next.value.isBuffering) {
+            prefetcher.pause();
+          } else {
+            unawaited(prefetcher.prefetch(fromPosition: target));
+          }
         }
       } catch (_) {}
     }
@@ -428,7 +433,8 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
     final current = controller;
     if (current == null || !mounted) return;
     final value = current.value;
-    if (kDebugMode && _lastBuffering != value.isBuffering) {
+    final wasBuffering = _lastBuffering;
+    if (kDebugMode && wasBuffering != value.isBuffering) {
       debugPrint(
         'Player buffering=${value.isBuffering} playing=${value.isPlaying} '
         'desired=$_playbackDesired speed=${value.playbackSpeed} '
@@ -437,6 +443,18 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       );
     }
     _lastBuffering = value.isBuffering;
+    if (wasBuffering != value.isBuffering) {
+      final prefetcher = _activeSession?.prefetcher;
+      if (value.isBuffering) {
+        // 播放请求优先：缓冲期间不再启动新的后台分片批次。
+        prefetcher?.pause();
+      } else if (_playbackDesired && _isAppForeground && !failed) {
+        prefetcher?.resume();
+        unawaited(prefetcher?.updatePosition(value.position));
+      }
+      // 缓冲是播放过程的一部分，不应让瞬时 isPlaying=false 释放常亮锁。
+      unawaited(_syncWakelock());
+    }
     _handleSpeedBoostBuffering(current);
     if (value.isInitialized) _notePlaybackDuration(value.duration);
     if (value.hasError && !failed) {

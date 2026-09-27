@@ -109,6 +109,7 @@ class CacheManager {
   final Map<String, CacheEntry> _entries = {};
   final Map<String, Map<String, CacheResourceRecord>> _resources = {};
   final Map<String, int> _refs = {};
+  final Set<String> _downloadProtectedKeys = {};
   final Map<int, int> _pending = {};
   int _nextLeaseId = 1;
   int _quotaBytes = 0;
@@ -128,18 +129,32 @@ class CacheManager {
     maxAge = value;
   }
 
-  Future<void> initialize() async {
+  Future<void> initialize({
+    Set<String> protectedDownloadEntryKeys = const <String>{},
+  }) async {
     final loaded = await store.loadIndex();
     final states = await store.rebuildFromStates();
     await _lock.synchronize(() async {
       _entries.clear();
       _resources.clear();
+      _downloadProtectedKeys
+        ..clear()
+        ..addAll(protectedDownloadEntryKeys);
       for (final entry in loaded) {
         _entries[entry.key] = entry;
       }
       for (final state in states) {
         _entries[state.key] = state;
         _resources[state.key] = Map.of(state.resources);
+      }
+      // Old releases could lose downloadOrigin while restoring state.json.
+      // Repair it before reconcile/TTL/LRU gets any opportunity to delete the
+      // user's explicit downloads.
+      for (final key in _downloadProtectedKeys) {
+        final entry = _entries[key];
+        if (entry != null && !entry.downloadOrigin) {
+          _entries[key] = entry.copyWith(downloadOrigin: true);
+        }
       }
     });
     await store.cleanupTempFiles();
@@ -430,6 +445,7 @@ class CacheManager {
           createdAtMs: nowMs,
         );
     final entry = base.copyWith(downloadOrigin: true, updatedAtMs: nowMs);
+    _downloadProtectedKeys.add(entry.key);
     _entries[entry.key] = entry;
     await _persistState(entry.key);
     _refs[entry.key] = (_refs[entry.key] ?? 0) + 1;
@@ -510,7 +526,9 @@ class CacheManager {
   Future<void> markDownloadOrigin(String entryKey) =>
       _lock.synchronize(() async {
         final entry = _entries[entryKey];
-        if (entry == null || entry.downloadOrigin) return;
+        if (entry == null) return;
+        _downloadProtectedKeys.add(entryKey);
+        if (entry.downloadOrigin) return;
         _entries[entryKey] = entry.copyWith(
           downloadOrigin: true,
           updatedAtMs: _now(),
@@ -534,7 +552,7 @@ class CacheManager {
     final cutoff =
         (now ?? DateTime.now()).millisecondsSinceEpoch - limit.inMilliseconds;
     for (final entry in _entries.values.toList()) {
-      if (entry.downloadOrigin) continue;
+      if (_isDownloadProtected(entry)) continue;
       if ((_refs[entry.key] ?? 0) > 0) continue;
       if (entry.status == CacheEntryStatus.deleting) continue;
       if (entry.lastAccessMs >= cutoff) continue;
@@ -730,7 +748,20 @@ class CacheManager {
     }
   });
 
+  /// Deletes a playback-cache entry. Explicit downloads are never removable
+  /// through cache management, even if their legacy downloadOrigin flag was
+  /// lost.
   Future<DeleteResult> deleteEntry(String entryKey) =>
+      _lock.synchronize(() async {
+        final entry = _entries[entryKey];
+        if (entry == null) return DeleteResult.notFound;
+        if (_isDownloadProtected(entry)) return DeleteResult.blocked;
+        if ((_refs[entryKey] ?? 0) > 0) return DeleteResult.blocked;
+        return _removeEntry(entry);
+      });
+
+  /// Explicit deletion path used only by download-task removal.
+  Future<DeleteResult> deleteDownloadEntry(String entryKey) =>
       _lock.synchronize(() async {
         final entry = _entries[entryKey];
         if (entry == null) return DeleteResult.notFound;
@@ -744,7 +775,7 @@ class CacheManager {
       _lock.synchronize(() async {
         final entry = _entries[entryKey];
         if (entry == null) return DeleteResult.notFound;
-        if (entry.downloadOrigin) return DeleteResult.blocked;
+        if (_isDownloadProtected(entry)) return DeleteResult.blocked;
         if ((_refs[entryKey] ?? 0) > 0) return DeleteResult.blocked;
         return _removeEntry(entry);
       });
@@ -753,7 +784,7 @@ class CacheManager {
   Future<ClearAllResult> clearPlaybackCache() => _lock.synchronize(() async {
     final result = ClearAllResult();
     for (final entry in _entries.values.toList()) {
-      if (entry.downloadOrigin) {
+      if (_isDownloadProtected(entry)) {
         result.skippedDownloads++;
         continue;
       }
@@ -844,7 +875,7 @@ class CacheManager {
     final complete = <CacheEntry>[];
     for (final entry in _entries.values) {
       if (entry.key == excludeKey) continue;
-      if (entry.downloadOrigin) continue;
+      if (_isDownloadProtected(entry)) continue;
       if ((_refs[entry.key] ?? 0) > 0) continue;
       if (entry.status == CacheEntryStatus.deleting) continue;
       if (entry.status == CacheEntryStatus.complete) {
@@ -874,10 +905,14 @@ class CacheManager {
     final size = entry.completeBytes + entry.partialBytes;
     _entries.remove(entry.key);
     _resources.remove(entry.key);
+    _downloadProtectedKeys.remove(entry.key);
     _usedByDisk -= size;
     await _flushIndex();
     return DeleteResult.deleted;
   }
+
+  bool _isDownloadProtected(CacheEntry entry) =>
+      entry.downloadOrigin || _downloadProtectedKeys.contains(entry.key);
 
   int _pendingBytes() => _pending.values.fold(0, (sum, bytes) => sum + bytes);
 

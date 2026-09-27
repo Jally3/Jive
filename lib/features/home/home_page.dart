@@ -83,10 +83,15 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// Feed/榜单分类分别保留滚动位置；切换 VOD 分类或来源时仍回到顶部。
   final _scrollMemory = FeedScrollMemory();
+  final _categoryHeaderCollapsed = ValueNotifier<bool>(false);
+  bool _categoryPanelExpanded = false;
+  bool _channelsPageOpen = false;
+  VodSource? _currentSource;
   final Map<VideoFeed, GlobalKey> _feedTabKeys = {
     for (final feed in VideoFeed.values)
       feed: GlobalKey(debugLabel: 'home-feed-${feed.name}'),
   };
+  final Map<int, GlobalKey> _leafTabKeys = {};
   final Set<String> _crossSourceSearchingIds = {};
   final CuratedVodSearchPool _curatedSearchPool = CuratedVodSearchPool();
 
@@ -113,7 +118,56 @@ class _HomePageState extends ConsumerState<HomePage> {
     recommendedController?.dispose();
     _curatedSearchPool.close();
     _scrollMemory.dispose();
+    _categoryHeaderCollapsed.dispose();
     super.dispose();
+  }
+
+  void _setCategoryHeaderCollapsed(bool collapsed) {
+    if (!mounted || _categoryHeaderCollapsed.value == collapsed) return;
+    _categoryHeaderCollapsed.value = collapsed;
+    if (!collapsed) _closeCategoryPanel();
+  }
+
+  Future<void> _expandCategoryPanel() async {
+    final source = _currentSource;
+    if (!_categoryHeaderCollapsed.value ||
+        _categoryPanelExpanded ||
+        source == null) {
+      return;
+    }
+    _categoryPanelExpanded = true;
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '收起分类',
+      barrierColor: Colors.black.withValues(alpha: 0.16),
+      transitionDuration: const Duration(milliseconds: 200),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.05),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (dialogContext, _, _) => _categoryPanelOverlayView(source),
+    );
+    _categoryPanelExpanded = false;
+  }
+
+  void _closeCategoryPanel() {
+    if (!_categoryPanelExpanded || !mounted) return;
+    _categoryPanelExpanded = false;
+    Navigator.of(context, rootNavigator: true).pop();
   }
 
   void _changed() {
@@ -143,6 +197,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         _activeSourceFingerprint != sourceFingerprint) {
       _curatedSearchPool.evictSource(_activeSourceFingerprint!);
     }
+    _closeCategoryPanel();
     _scrollMemory.resetAfterBuild();
     _scrollMemory.clear();
     controller?.removeListener(_changed);
@@ -191,6 +246,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _selectedRootId = null;
     selectedCategoryId = null;
     _lastSelectedLeafByRoot.clear();
+    _leafTabKeys.clear();
     categoryError = null;
     _myChannelIds = null;
     if (_selectedFeed == VideoFeed.updated) {
@@ -282,12 +338,14 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 直接选中子分类：同步所属主分类高亮并按子分类查询。
   Future<void> _selectRootLeaf(int rootId, int leafId) async {
+    _closeCategoryPanel();
     _scrollMemory.reset();
     setState(() {
       _selectedRootId = rootId;
       selectedCategoryId = leafId;
       _lastSelectedLeafByRoot[rootId] = leafId;
     });
+    _revealLeafTab(leafId);
     await controller?.loadInitial(
       category: leafId,
       selectedFeed: controller?.feed,
@@ -343,6 +401,20 @@ class _HomePageState extends ConsumerState<HomePage> {
     });
   }
 
+  void _revealLeafTab(int leafId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final tabContext = _leafTabKeys[leafId]?.currentContext;
+      if (tabContext == null) return;
+      Scrollable.ensureVisible(
+        tabContext,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
   List<VideoFeed> _visibleFeeds(VodSource source) {
     return [
       for (final feed in _productEnabledFeeds)
@@ -378,10 +450,12 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   /// 打开「全部频道」全屏页面：选择分类、管理我的频道（增删/拖拽排序）。
-  void _openChannelsPage(VodSource source) {
+  Future<void> _openChannelsPage(VodSource source) async {
     final roots = _roots;
-    if (roots == null || roots.isEmpty) return;
-    Navigator.of(context).push(
+    if (roots == null || roots.isEmpty || _channelsPageOpen) return;
+    _closeCategoryPanel();
+    _channelsPageOpen = true;
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => CategoryChannelsPage(
           roots: roots,
@@ -398,6 +472,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
       ),
     );
+    _channelsPageOpen = false;
   }
 
   /// 当前生效的「我的频道」id 列表（未定制时为全部根分类）。
@@ -715,6 +790,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           onRetry: () => ref.invalidate(selectedVodSourceProvider),
         ),
         data: (source) {
+          _currentSource = source;
           _ensureController(source);
           return _buildContent(source);
         },
@@ -741,44 +817,100 @@ class _HomePageState extends ConsumerState<HomePage> {
     ],
   );
 
+  Widget _categoryPanelOverlayView(VodSource source) {
+    final metrics = HomeCategoryHeader.metricsOf(
+      context: context,
+      selectedFeed: _selectedFeed,
+      selectedRootId: _selectedRootId,
+      children: _children,
+      visibleFeeds: _visibleFeeds(source),
+    );
+    return Material(
+      color: Colors.transparent,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          key: const ValueKey('home-category-panel-overlay'),
+          children: [
+            Material(
+              elevation: 8,
+              shadowColor: Colors.black.withValues(alpha: 0.32),
+              child: SizedBox(
+                height: metrics.expandedHeight,
+                child: _categoryHeader(
+                  source,
+                  metrics: metrics,
+                  expandedOverlay: true,
+                ),
+              ),
+            ),
+            Expanded(
+              child: GestureDetector(
+                key: const ValueKey('home-category-panel-barrier'),
+                behavior: HitTestBehavior.opaque,
+                onTap: _closeCategoryPanel,
+                onVerticalDragStart: (_) => _closeCategoryPanel(),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   List<Widget> _homeHeaderSlivers(VodSource source) {
     final visibleFeeds = _visibleFeeds(source);
+    final metrics = HomeCategoryHeader.metricsOf(
+      context: context,
+      selectedFeed: _selectedFeed,
+      selectedRootId: _selectedRootId,
+      children: _children,
+      visibleFeeds: visibleFeeds,
+    );
     return [
       SliverToBoxAdapter(child: _introHeader()),
       SliverToBoxAdapter(child: ContinueWatchingSection()),
       SliverPersistentHeader(
         pinned: true,
         delegate: HomePinnedHeaderDelegate(
-          height: HomeCategoryHeader.pinnedHeightOf(
-            context: context,
-            selectedFeed: _selectedFeed,
-            selectedRootId: _selectedRootId,
-            children: _children,
-            visibleFeeds: visibleFeeds,
-          ),
-          child: HomeCategoryHeader(
-            source: source,
-            visibleFeeds: visibleFeeds,
-            selectedFeed: _selectedFeed,
-            catalogScope: _catalogScope,
-            selectedRootId: _selectedRootId,
-            selectedCategoryId: selectedCategoryId,
-            children: _children,
-            visibleRoots: _visibleRoots,
-            categoryError: categoryError,
-            feedTabKeys: _feedTabKeys,
-            onSelectFeed: (feed) => _selectFeed(source, feed),
-            onSelectCatalogScope: (scope) => _selectCatalogScope(source, scope),
-            onSelectRoot: (rootId) => _selectRoot(source, rootId),
-            onSelectRootLeaf: (rootId, leafId) =>
-                _selectRootLeaf(rootId, leafId),
-            onLoadCategories: () => _loadCategories(source),
-            onOpenChannelsPage: () => _openChannelsPage(source),
-          ),
+          minHeight: metrics.collapsedHeight,
+          maxHeight: metrics.expandedHeight,
+          onCollapsedChanged: _setCategoryHeaderCollapsed,
+          child: _categoryHeader(source, metrics: metrics),
         ),
       ),
     ];
   }
+
+  Widget _categoryHeader(
+    VodSource source, {
+    required HomeCategoryHeaderMetrics metrics,
+    bool expandedOverlay = false,
+  }) => HomeCategoryHeader(
+    source: source,
+    metrics: metrics,
+    expandedOverlay: expandedOverlay,
+    collapsed: _categoryHeaderCollapsed,
+    leafTabKeys: _leafTabKeys,
+    visibleFeeds: metrics.visibleFeeds,
+    selectedFeed: _selectedFeed,
+    catalogScope: _catalogScope,
+    selectedRootId: _selectedRootId,
+    selectedCategoryId: selectedCategoryId,
+    children: _children,
+    visibleRoots: _visibleRoots,
+    categoryError: categoryError,
+    feedTabKeys: _feedTabKeys,
+    onSelectFeed: (feed) => _selectFeed(source, feed),
+    onSelectCatalogScope: (scope) => _selectCatalogScope(source, scope),
+    onSelectRoot: (rootId) => _selectRoot(source, rootId),
+    onSelectRootLeaf: (rootId, leafId) => _selectRootLeaf(rootId, leafId),
+    onLoadCategories: () => _loadCategories(source),
+    onOpenChannelsPage: () => _openChannelsPage(source),
+    onExpandPanel: _expandCategoryPanel,
+    onCollapsePanel: _closeCategoryPanel,
+  );
 
   Widget _introHeader() => Container(
     key: ValueKey('home-intro-header'),

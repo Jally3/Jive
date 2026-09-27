@@ -363,6 +363,12 @@ class _PlayerPageState extends PlayerStateBase
               ),
             ),
           ),
+        if (!showStandaloneBack && !_isTv)
+          PlayerScreenLockButton(
+            locked: _screenLocked,
+            visible: _screenLocked ? _lockButtonVisible : controlsVisible,
+            onPressed: _toggleScreenLock,
+          ),
       ],
     );
   }
@@ -572,15 +578,11 @@ class _PlayerPageState extends PlayerStateBase
           onSeekEnd: _seekEnd,
           onSeekCancel: _seekCancel,
         ),
-        // Paint the paused-state button after the bottom controls so it
-        // remains visible in the non-fullscreen player.
         if (!lockActive)
-          PlayerCenterPlayButton(
+          PlayerCenterReplayButton(
             controller: current,
-            screenSeeking: screenSeeking,
             controlsVisible: controlsVisible,
-            playbackDesired: _playbackDesired,
-            onResume: _resumePlayback,
+            onReplay: _resumePlayback,
           ),
         if (!lockActive &&
             !compactControls &&
@@ -595,12 +597,6 @@ class _PlayerPageState extends PlayerStateBase
               if (value > 0) volumeBeforeMute = value;
               _showControls();
             },
-          ),
-        if (overlayLayout && !_isTv)
-          PlayerScreenLockButton(
-            locked: lockActive,
-            visible: lockActive ? _lockButtonVisible : controlsVisible,
-            onPressed: _toggleScreenLock,
           ),
       ],
     );

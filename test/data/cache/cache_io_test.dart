@@ -562,6 +562,52 @@ void main() {
     expect(cached.fromCache, isTrue);
     expect(originHits, 2);
   });
+
+  test('player fetch completes without waiting for a slow prefetch', () async {
+    final prefetchGate = Completer<void>();
+    var originHits = 0;
+    final client = MockClient((request) async {
+      originHits++;
+      if (originHits == 1) {
+        await prefetchGate.future;
+        return http.Response('Gbackground', 200);
+      }
+      return http.Response('Gplayer', 200);
+    });
+    final created = await manager.upsertEntry(entry('1'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+    );
+    const id =
+        'sha256:${'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'}';
+
+    final background = fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/c.bin'),
+      resourceId: id,
+      ext: 'bin',
+      background: true,
+    );
+    await _until(() => originHits == 1);
+
+    final player = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/c.bin'),
+      resourceId: id,
+      ext: 'bin',
+    );
+    expect(await _collect(player.body), 'Gplayer');
+    expect(originHits, 2);
+
+    prefetchGate.complete();
+    final backgroundResult = await background;
+    await backgroundResult.body.drain<void>();
+    fetcher.endBackground(id);
+  });
 }
 
 Future<void> _until(bool Function() condition) async {

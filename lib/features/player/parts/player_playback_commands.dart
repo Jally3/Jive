@@ -77,10 +77,15 @@ mixin PlayerPlaybackCommands on PlayerStateBase {
       controlsTimer?.cancel();
       _activeSession?.prefetcher?.pause();
       unawaited(_save());
-      if (mounted) setState(() => controlsVisible = true);
+      if (mounted) {
+        setState(() => controlsVisible = true);
+        _scheduleControlsHide();
+      }
     } catch (_) {
       _playbackDesired = true;
-      if (mounted) showAppToast(context, '暂停失败，请稍后重试');
+      if (mounted) {
+        showAppToast(context, '暂停失败，请稍后重试');
+      }
     } finally {
       playbackToggleInFlight = false;
     }
