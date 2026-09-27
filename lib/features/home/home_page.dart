@@ -83,10 +83,14 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// Feed/榜单分类分别保留内存位置；切换 VOD 分类或来源时仍回到顶部。
   final _scrollController = ScrollController(keepScrollOffset: false);
   final _showBackToTop = ValueNotifier<bool>(false);
+  final _categoryHeaderCollapsed = ValueNotifier<bool>(false);
+  bool _categoryPanelExpanded = false;
+  VodSource? _currentSource;
   final Map<VideoFeed, GlobalKey> _feedTabKeys = {
     for (final feed in VideoFeed.values)
       feed: GlobalKey(debugLabel: 'home-feed-${feed.name}'),
   };
+  final Map<int, GlobalKey> _leafTabKeys = {};
   final Map<String, double> _feedScrollOffsets = {};
   int _scrollTransitionEpoch = 0;
   int? _activeScrollTransition;
@@ -118,7 +122,56 @@ class _HomePageState extends ConsumerState<HomePage> {
     _curatedSearchPool.close();
     _scrollController.dispose();
     _showBackToTop.dispose();
+    _categoryHeaderCollapsed.dispose();
     super.dispose();
+  }
+
+  void _setCategoryHeaderCollapsed(bool collapsed) {
+    if (!mounted || _categoryHeaderCollapsed.value == collapsed) return;
+    _categoryHeaderCollapsed.value = collapsed;
+    if (!collapsed) _closeCategoryPanel();
+  }
+
+  Future<void> _expandCategoryPanel() async {
+    final source = _currentSource;
+    if (!_categoryHeaderCollapsed.value ||
+        _categoryPanelExpanded ||
+        source == null) {
+      return;
+    }
+    _categoryPanelExpanded = true;
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '收起分类',
+      barrierColor: Colors.black.withValues(alpha: 0.16),
+      transitionDuration: const Duration(milliseconds: 200),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.05),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (dialogContext, _, _) => _categoryPanelOverlayView(source),
+    );
+    _categoryPanelExpanded = false;
+  }
+
+  void _closeCategoryPanel() {
+    if (!_categoryPanelExpanded || !mounted) return;
+    _categoryPanelExpanded = false;
+    Navigator.of(context, rootNavigator: true).pop();
   }
 
   void _changed() {
@@ -133,6 +186,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _resetScrollPosition() {
     _showBackToTop.value = false;
+    _closeCategoryPanel();
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
   }
 
@@ -225,6 +279,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         _activeSourceFingerprint != sourceFingerprint) {
       _curatedSearchPool.evictSource(_activeSourceFingerprint!);
     }
+    _closeCategoryPanel();
     _resetScrollPositionAfterBuild();
     _feedScrollOffsets.clear();
     controller?.removeListener(_changed);
@@ -273,6 +328,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _selectedRootId = null;
     selectedCategoryId = null;
     _lastSelectedLeafByRoot.clear();
+    _leafTabKeys.clear();
     categoryError = null;
     _myChannelIds = null;
     if (_selectedFeed == VideoFeed.updated) {
@@ -370,6 +426,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       selectedCategoryId = leafId;
       _lastSelectedLeafByRoot[rootId] = leafId;
     });
+    _revealLeafTab(leafId);
     await controller?.loadInitial(
       category: leafId,
       selectedFeed: controller?.feed,
@@ -422,6 +479,20 @@ class _HomePageState extends ConsumerState<HomePage> {
     });
   }
 
+  void _revealLeafTab(int leafId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final tabContext = _leafTabKeys[leafId]?.currentContext;
+      if (tabContext == null) return;
+      Scrollable.ensureVisible(
+        tabContext,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
   List<VideoFeed> _visibleFeeds(VodSource source) {
     return [
       for (final feed in _productEnabledFeeds)
@@ -457,6 +528,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   void _openChannelsPage(VodSource source) {
     final roots = _roots;
     if (roots == null || roots.isEmpty) return;
+    _closeCategoryPanel();
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => CategoryChannelsPage(
@@ -867,6 +939,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           onRetry: () => ref.invalidate(selectedVodSourceProvider),
         ),
         data: (source) {
+          _currentSource = source;
           _ensureController(source);
           return _buildContent(source);
         },
@@ -885,6 +958,42 @@ class _HomePageState extends ConsumerState<HomePage> {
       Positioned(right: 16, bottom: 88, child: _backToTopButton()),
     ],
   );
+
+  Widget _categoryPanelOverlayView(VodSource source) {
+    final metrics = _categoryHeaderMetrics(source);
+    return Material(
+      color: Colors.transparent,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          key: const ValueKey('home-category-panel-overlay'),
+          children: [
+            Material(
+              elevation: 8,
+              shadowColor: Colors.black.withValues(alpha: 0.32),
+              child: SizedBox(
+                height: metrics.expandedHeight,
+                child: _categoryHeader(
+                  source,
+                  metrics: metrics,
+                  expandedOverlay: true,
+                ),
+              ),
+            ),
+            Expanded(
+              child: GestureDetector(
+                key: const ValueKey('home-category-panel-barrier'),
+                behavior: HitTestBehavior.opaque,
+                onTap: _closeCategoryPanel,
+                onVerticalDragStart: (_) => _closeCategoryPanel(),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   /// 返回顶部悬浮按钮：与底栏同款毛玻璃质感，滚动超阈值后淡入。
   Widget _backToTopButton() => ValueListenableBuilder<bool>(
@@ -932,7 +1041,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   double _leafCategoryRowHeight(BuildContext context) =>
       math.max(42, MediaQuery.textScalerOf(context).scale(12) + 22);
 
-  List<Widget> _homeHeaderSlivers(VodSource source) {
+  _CategoryHeaderMetrics _categoryHeaderMetrics(VodSource source) {
     final mainRowHeight = _mainCategoryRowHeight(context);
     final subRowHeight = _subCategoryRowHeight(context);
     final leafRowHeight = _leafCategoryRowHeight(context);
@@ -943,25 +1052,45 @@ class _HomePageState extends ConsumerState<HomePage> {
         _selectedFeed == VideoFeed.updated &&
         _selectedRootId != null &&
         (_children[_selectedRootId]?.isNotEmpty ?? false);
-    final pinnedHeight =
+    final expandedHeight =
         (showSecondaryRow ? subRowHeight : 0.0) +
         (showFeedRow ? mainRowHeight : 0.0) +
         (showLeafRow ? leafRowHeight : 0.0) +
         1.0;
+    final collapsedHeight =
+        (showLeafRow
+            ? leafRowHeight
+            : showSecondaryRow
+            ? subRowHeight
+            : showFeedRow
+            ? mainRowHeight
+            : 0.0) +
+        1.0;
+    return _CategoryHeaderMetrics(
+      mainRowHeight: mainRowHeight,
+      subRowHeight: subRowHeight,
+      leafRowHeight: leafRowHeight,
+      visibleFeeds: visibleFeeds,
+      showFeedRow: showFeedRow,
+      showSecondaryRow: showSecondaryRow,
+      showLeafRow: showLeafRow,
+      expandedHeight: expandedHeight,
+      collapsedHeight: collapsedHeight,
+    );
+  }
+
+  List<Widget> _homeHeaderSlivers(VodSource source) {
+    final metrics = _categoryHeaderMetrics(source);
     return [
       SliverToBoxAdapter(child: _introHeader()),
       SliverToBoxAdapter(child: ContinueWatchingSection()),
       SliverPersistentHeader(
         pinned: true,
         delegate: _PinnedHeaderDelegate(
-          height: pinnedHeight,
-          child: _categoryHeader(
-            source,
-            mainRowHeight: mainRowHeight,
-            subRowHeight: subRowHeight,
-            leafRowHeight: leafRowHeight,
-            visibleFeeds: visibleFeeds,
-          ),
+          minHeight: metrics.collapsedHeight,
+          maxHeight: metrics.expandedHeight,
+          onCollapsedChanged: _setCategoryHeaderCollapsed,
+          child: _categoryHeader(source, metrics: metrics),
         ),
       ),
     ];
@@ -1032,16 +1161,22 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 分类栏由 Sliver 系统与网格共享同一滚动位置，不再单独动画或填充顶部间距。
   Widget _categoryHeader(
     VodSource source, {
-    required double mainRowHeight,
-    required double subRowHeight,
-    required double leafRowHeight,
-    required List<VideoFeed> visibleFeeds,
+    required _CategoryHeaderMetrics metrics,
+    bool expandedOverlay = false,
   }) {
+    final mainRowHeight = metrics.mainRowHeight;
+    final subRowHeight = metrics.subRowHeight;
+    final leafRowHeight = metrics.leafRowHeight;
+    final visibleFeeds = metrics.visibleFeeds;
     final selectedChildren = _selectedFeed == VideoFeed.updated
         ? (_children[_selectedRootId] ?? const <VideoCategory>[])
         : const <VideoCategory>[];
     return ClipRect(
-      key: ValueKey('home-category-header'),
+      key: ValueKey(
+        expandedOverlay
+            ? 'home-category-expanded-panel'
+            : 'home-category-header',
+      ),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: ColoredBox(
@@ -1049,9 +1184,11 @@ class _HomePageState extends ConsumerState<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (visibleFeeds.length > 1)
-                SizedBox(
+              if (metrics.showFeedRow)
+                _categoryRow(
                   height: mainRowHeight,
+                  isLast: !metrics.showSecondaryRow,
+                  expandedOverlay: expandedOverlay,
                   child: ChipTheme(
                     data: categoryChipTheme(context).copyWith(
                       padding: EdgeInsets.symmetric(
@@ -1075,7 +1212,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                           index++
                         )
                           Padding(
-                            key: _feedTabKeys[visibleFeeds[index]],
+                            key: expandedOverlay
+                                ? null
+                                : _feedTabKeys[visibleFeeds[index]],
                             padding: EdgeInsets.only(
                               right: index == visibleFeeds.length - 1 ? 0 : 8,
                             ),
@@ -1101,8 +1240,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                 ),
               if (_selectedFeed != VideoFeed.updated &&
                   _selectedFeed != VideoFeed.recommended)
-                SizedBox(
+                _categoryRow(
                   height: subRowHeight,
+                  isLast: !metrics.showLeafRow,
+                  expandedOverlay: expandedOverlay,
+                  collapsedContextLabel: _selectedFeed.label,
                   child: ChipTheme(
                     data: _secondaryCategoryChipTheme(context),
                     child: ListView(
@@ -1133,6 +1275,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                   height: subRowHeight,
                   child: Row(
                     children: [
+                      if (!metrics.showLeafRow)
+                        _collapsedCategoryContext(
+                          _selectedFeed.label,
+                          expandedOverlay: expandedOverlay,
+                        ),
                       Expanded(
                         child: ChipTheme(
                           data: _secondaryCategoryChipTheme(context),
@@ -1174,26 +1321,22 @@ class _HomePageState extends ConsumerState<HomePage> {
                         ),
                       ),
                       if (_visibleRoots?.isNotEmpty ?? false)
-                        Padding(
-                          padding: EdgeInsets.only(right: 8),
-                          child: IconButton(
-                            key: ValueKey('home-category-expand-button'),
-                            tooltip: '全部频道',
-                            visualDensity: VisualDensity.compact,
-                            icon: Icon(
-                              Icons.grid_view_rounded,
-                              size: 20,
-                              color: context.appColors.secondary,
-                            ),
-                            onPressed: () => _openChannelsPage(source),
-                          ),
+                        _channelsManagementButton(
+                          source,
+                          hideWhenCollapsed: !metrics.showLeafRow,
+                          expandedOverlay: expandedOverlay,
                         ),
+                      if (!metrics.showLeafRow)
+                        _categoryToggleButton(expandedOverlay: expandedOverlay),
                     ],
                   ),
                 ),
               if (selectedChildren.isNotEmpty)
-                SizedBox(
+                _categoryRow(
                   height: leafRowHeight,
+                  isLast: true,
+                  expandedOverlay: expandedOverlay,
+                  collapsedContextLabel: _selectedRootLabel,
                   child: ChipTheme(
                     data: categoryChipTheme(context).copyWith(
                       backgroundColor: Colors.transparent,
@@ -1229,6 +1372,15 @@ class _HomePageState extends ConsumerState<HomePage> {
                       children: [
                         for (final child in selectedChildren)
                           Padding(
+                            key: expandedOverlay
+                                ? null
+                                : _leafTabKeys.putIfAbsent(
+                                    child.id,
+                                    () => GlobalKey(
+                                      debugLabel:
+                                          'home-child-category-${child.id}',
+                                    ),
+                                  ),
                             padding: EdgeInsets.only(right: 8),
                             child: ChoiceChip(
                               key: ValueKey('home-child-category-${child.id}'),
@@ -1250,6 +1402,164 @@ class _HomePageState extends ConsumerState<HomePage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  String? get _selectedRootLabel {
+    final selectedRootId = _selectedRootId;
+    if (selectedRootId == null) return null;
+    for (final root in _roots ?? const <VideoCategory>[]) {
+      if (root.id == selectedRootId) return root.name;
+    }
+    return null;
+  }
+
+  Widget _categoryRow({
+    required double height,
+    required Widget child,
+    required bool isLast,
+    required bool expandedOverlay,
+    String? collapsedContextLabel,
+  }) {
+    if (!isLast) return SizedBox(height: height, child: child);
+    return SizedBox(
+      height: height,
+      child: Row(
+        children: [
+          if (collapsedContextLabel != null)
+            _collapsedCategoryContext(
+              collapsedContextLabel,
+              expandedOverlay: expandedOverlay,
+            ),
+          Expanded(child: child),
+          _categoryToggleButton(expandedOverlay: expandedOverlay),
+        ],
+      ),
+    );
+  }
+
+  Widget _collapsedCategoryContext(
+    String label, {
+    required bool expandedOverlay,
+  }) {
+    if (expandedOverlay) return const SizedBox.shrink();
+    return ValueListenableBuilder<bool>(
+      valueListenable: _categoryHeaderCollapsed,
+      builder: (context, collapsed, _) {
+        if (!collapsed) return const SizedBox.shrink();
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              key: const ValueKey('home-category-parent-context'),
+              padding: const EdgeInsets.only(left: 12, right: 8),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 64),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: context.appColors.accentForeground,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            Container(width: 1, height: 22, color: context.appColors.divider),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _categoryToggleButton({required bool expandedOverlay}) {
+    Widget button() => SizedBox(
+      width: 48,
+      height: 48,
+      child: IconButton(
+        key: ValueKey(
+          expandedOverlay
+              ? 'home-category-panel-collapse-button'
+              : 'home-category-panel-expand-button',
+        ),
+        tooltip: expandedOverlay ? '收起分类' : '展开完整分类',
+        onPressed: expandedOverlay ? _closeCategoryPanel : _expandCategoryPanel,
+        icon: AnimatedRotation(
+          turns: expandedOverlay ? 0.5 : 0,
+          duration: const Duration(milliseconds: 180),
+          child: Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: context.appColors.secondary,
+          ),
+        ),
+      ),
+    );
+
+    if (expandedOverlay) return button();
+    return ValueListenableBuilder<bool>(
+      valueListenable: _categoryHeaderCollapsed,
+      builder: (context, collapsed, _) => AnimatedSize(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.centerRight,
+        child: collapsed
+            ? DecoratedBox(
+                key: const ValueKey('home-category-toggle-visible'),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [
+                      context.appColors.background.withValues(alpha: 0),
+                      context.appColors.background.withValues(alpha: 0.92),
+                    ],
+                  ),
+                ),
+                child: button(),
+              )
+            : const SizedBox.shrink(
+                key: ValueKey('home-category-toggle-hidden'),
+              ),
+      ),
+    );
+  }
+
+  Widget _channelsManagementButton(
+    VodSource source, {
+    required bool hideWhenCollapsed,
+    required bool expandedOverlay,
+  }) {
+    Widget button() => Padding(
+      key: const ValueKey('home-category-channels-slot'),
+      padding: const EdgeInsets.only(right: 8),
+      child: IconButton(
+        key: const ValueKey('home-category-expand-button'),
+        tooltip: '全部频道与频道管理',
+        visualDensity: VisualDensity.compact,
+        icon: Icon(
+          Icons.grid_view_rounded,
+          size: 20,
+          color: context.appColors.secondary,
+        ),
+        onPressed: () => _openChannelsPage(source),
+      ),
+    );
+
+    if (expandedOverlay || !hideWhenCollapsed) return button();
+    return ValueListenableBuilder<bool>(
+      valueListenable: _categoryHeaderCollapsed,
+      builder: (context, collapsed, _) => AnimatedSize(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.centerRight,
+        child: collapsed
+            ? const SizedBox.shrink(
+                key: ValueKey('home-category-channels-hidden'),
+              )
+            : button(),
       ),
     );
   }
@@ -1750,25 +2060,73 @@ class _HomePageState extends ConsumerState<HomePage> {
 }
 
 class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
-  _PinnedHeaderDelegate({required this.height, required this.child});
+  _PinnedHeaderDelegate({
+    required this.minHeight,
+    required this.maxHeight,
+    required this.child,
+    required this.onCollapsedChanged,
+  });
 
-  final double height;
+  final double minHeight;
+  final double maxHeight;
   final Widget child;
+  final ValueChanged<bool> onCollapsedChanged;
 
   @override
-  double get minExtent => height;
+  double get minExtent => minHeight;
 
   @override
-  double get maxExtent => height;
+  double get maxExtent => math.max(minHeight, maxHeight);
 
   @override
   Widget build(
     BuildContext context,
     double shrinkOffset,
     bool overlapsContent,
-  ) => SizedBox.expand(child: child);
+  ) {
+    final collapseDistance = maxExtent - minExtent;
+    final collapsed =
+        collapseDistance > 0.5 && shrinkOffset >= collapseDistance - 0.5;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      onCollapsedChanged(collapsed);
+    });
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.bottomCenter,
+        minHeight: maxExtent,
+        maxHeight: maxExtent,
+        child: SizedBox(height: maxExtent, child: child),
+      ),
+    );
+  }
 
   @override
   bool shouldRebuild(_PinnedHeaderDelegate oldDelegate) =>
-      height != oldDelegate.height || child != oldDelegate.child;
+      minHeight != oldDelegate.minHeight ||
+      maxHeight != oldDelegate.maxHeight ||
+      child != oldDelegate.child;
+}
+
+class _CategoryHeaderMetrics {
+  const _CategoryHeaderMetrics({
+    required this.mainRowHeight,
+    required this.subRowHeight,
+    required this.leafRowHeight,
+    required this.visibleFeeds,
+    required this.showFeedRow,
+    required this.showSecondaryRow,
+    required this.showLeafRow,
+    required this.expandedHeight,
+    required this.collapsedHeight,
+  });
+
+  final double mainRowHeight;
+  final double subRowHeight;
+  final double leafRowHeight;
+  final List<VideoFeed> visibleFeeds;
+  final bool showFeedRow;
+  final bool showSecondaryRow;
+  final bool showLeafRow;
+  final double expandedHeight;
+  final double collapsedHeight;
 }
