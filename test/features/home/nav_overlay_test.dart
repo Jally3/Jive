@@ -503,6 +503,106 @@ void main() {
     );
   });
 
+  testWidgets('collapsed root row shows a transparent primary feed label', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final parentContext = find.byKey(
+      const ValueKey('home-category-parent-context'),
+    );
+    expect(parentContext, findsOneWidget);
+    final primaryFeedLabel = find.descendant(
+      of: parentContext,
+      matching: find.text('综合'),
+    );
+    expect(primaryFeedLabel, findsOneWidget);
+    final parentContainer = tester.widget<Container>(parentContext);
+    expect(parentContainer.color, isNull);
+    expect(parentContainer.decoration, isNull);
+    expect(parentContainer.padding, const EdgeInsets.symmetric(horizontal: 8));
+    expect(
+      tester.getSize(parentContext).width,
+      closeTo(tester.getSize(primaryFeedLabel).width + 16, 0.01),
+    );
+
+    final expandButton = find.byKey(
+      const ValueKey('home-category-panel-expand-button'),
+    );
+    final toggleSlot = find.byKey(
+      const ValueKey('home-category-toggle-visible'),
+    );
+    expect(tester.widget(toggleSlot), isA<SizedBox>());
+    expect(tester.getSize(toggleSlot).width, 44);
+    final allChip = find.widgetWithText(ChoiceChip, '全部');
+    expect(
+      tester.getRect(allChip).left,
+      greaterThanOrEqualTo(tester.getRect(parentContext).right),
+    );
+    expect(
+      tester.getRect(allChip).right,
+      lessThanOrEqualTo(tester.getRect(expandButton).left),
+    );
+
+    final rootTabs = find.byKey(
+      const PageStorageKey<String>('home-root-category-tabs-storm'),
+    );
+    final rootTabsState = _rootTabScrollState(tester);
+    rootTabsState.position.jumpTo(rootTabsState.position.maxScrollExtent);
+    await tester.pump();
+    expect(
+      tester.getRect(rootTabs).right,
+      lessThanOrEqualTo(tester.getRect(expandButton).left),
+    );
+  });
+
+  testWidgets('expanded panel separates channel and collapse buttons', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    final panel = find.byKey(const ValueKey('home-category-expanded-panel'));
+    final channelsButton = find.descendant(
+      of: panel,
+      matching: find.byKey(const ValueKey('home-category-expand-button')),
+    );
+    final collapseButton = find.descendant(
+      of: panel,
+      matching: find.byKey(
+        const ValueKey('home-category-panel-collapse-button'),
+      ),
+    );
+    expect(channelsButton, findsOneWidget);
+    expect(collapseButton, findsOneWidget);
+    expect(
+      tester.getRect(channelsButton).overlaps(tester.getRect(collapseButton)),
+      isFalse,
+    );
+  });
+
   testWidgets('home exposes all native and curated feeds in a fixed row', (
     tester,
   ) async {
@@ -816,6 +916,10 @@ void main() {
       const ValueKey('home-category-parent-context'),
     );
     expect(parentContext, findsOneWidget);
+    expect(
+      find.descendant(of: parentContext, matching: find.text('电影')),
+      findsOneWidget,
+    );
     expect(
       find.descendant(of: parentContext, matching: find.byType(TextButton)),
       findsNothing,

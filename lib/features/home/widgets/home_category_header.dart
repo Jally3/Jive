@@ -40,6 +40,8 @@ class HomeCategoryHeader extends StatelessWidget {
     required this.onCollapsePanel,
   });
 
+  static const double _categoryToggleWidth = 44;
+
   final VodSource source;
   final HomeCategoryHeaderMetrics metrics;
   final bool expandedOverlay;
@@ -141,54 +143,60 @@ class HomeCategoryHeader extends StatelessWidget {
                   if (visibleFeeds.length > 1)
                     SizedBox(
                       height: mainRowHeight,
-                      child: ChipTheme(
-                        data: categoryChipTheme(context).copyWith(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 7,
+                      child: _pinnedRowChrome(
+                        context,
+                        active:
+                            !metrics.showSecondaryRow && !metrics.showLeafRow,
+                        child: ChipTheme(
+                          data: categoryChipTheme(context).copyWith(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 7,
+                            ),
                           ),
-                        ),
-                        child: ListView(
-                          key: PageStorageKey<String>(
-                            'home-feed-tabs-${source.id}',
-                          ),
-                          padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
-                          scrollDirection: Axis.horizontal,
-                          physics: const BouncingScrollPhysics(
-                            parent: AlwaysScrollableScrollPhysics(),
-                          ),
-                          children: [
-                            for (
-                              var index = 0;
-                              index < visibleFeeds.length;
-                              index++
-                            )
-                              Padding(
-                                key: expandedOverlay
-                                    ? null
-                                    : feedTabKeys[visibleFeeds[index]],
-                                padding: EdgeInsets.only(
-                                  right: index == visibleFeeds.length - 1
-                                      ? 0
-                                      : 8,
-                                ),
-                                child: ChoiceChip(
-                                  key: ValueKey(
-                                    'home-feed-${visibleFeeds[index].name}',
+                          child: ListView(
+                            key: PageStorageKey<String>(
+                              'home-feed-tabs-${source.id}',
+                            ),
+                            padding: EdgeInsets.fromLTRB(8, 4, 8, 4),
+                            scrollDirection: Axis.horizontal,
+                            physics: const BouncingScrollPhysics(
+                              parent: AlwaysScrollableScrollPhysics(),
+                            ),
+                            children: [
+                              for (
+                                var index = 0;
+                                index < visibleFeeds.length;
+                                index++
+                              )
+                                Padding(
+                                  key: expandedOverlay
+                                      ? null
+                                      : feedTabKeys[visibleFeeds[index]],
+                                  padding: EdgeInsets.only(
+                                    right: index == visibleFeeds.length - 1
+                                        ? 0
+                                        : 8,
                                   ),
-                                  label: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
+                                  child: ChoiceChip(
+                                    key: ValueKey(
+                                      'home-feed-${visibleFeeds[index].name}',
                                     ),
-                                    child: Text(visibleFeeds[index].label),
+                                    label: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                      ),
+                                      child: Text(visibleFeeds[index].label),
+                                    ),
+                                    selected:
+                                        selectedFeed == visibleFeeds[index],
+                                    showCheckmark: false,
+                                    onSelected: (_) =>
+                                        onSelectFeed(visibleFeeds[index]),
                                   ),
-                                  selected: selectedFeed == visibleFeeds[index],
-                                  showCheckmark: false,
-                                  onSelected: (_) =>
-                                      onSelectFeed(visibleFeeds[index]),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -196,170 +204,185 @@ class HomeCategoryHeader extends StatelessWidget {
                       selectedFeed != VideoFeed.recommended)
                     SizedBox(
                       height: subRowHeight,
-                      child: ChipTheme(
-                        data: _secondaryCategoryChipTheme(context),
-                        child: ListView(
-                          key: PageStorageKey<String>(
-                            'home-tmdb-scope-tabs-${source.id}',
-                          ),
-                          padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            for (final scope in TmdbCatalogScope.values)
-                              Padding(
-                                padding: EdgeInsets.only(right: 8),
-                                child: ChoiceChip(
-                                  key: ValueKey(
-                                    'home-tmdb-scope-${scope.name}',
+                      child: _pinnedRowChrome(
+                        context,
+                        active: !metrics.showLeafRow,
+                        parentContextLabel: selectedFeed.label,
+                        child: ChipTheme(
+                          data: _secondaryCategoryChipTheme(context),
+                          child: ListView(
+                            key: PageStorageKey<String>(
+                              'home-tmdb-scope-tabs-${source.id}',
+                            ),
+                            padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
+                            scrollDirection: Axis.horizontal,
+                            children: [
+                              for (final scope in TmdbCatalogScope.values)
+                                Padding(
+                                  padding: EdgeInsets.only(right: 8),
+                                  child: ChoiceChip(
+                                    key: ValueKey(
+                                      'home-tmdb-scope-${scope.name}',
+                                    ),
+                                    label: Text(scope.label),
+                                    selected: catalogScope == scope,
+                                    showCheckmark: false,
+                                    onSelected: (_) =>
+                                        onSelectCatalogScope(scope),
                                   ),
-                                  label: Text(scope.label),
-                                  selected: catalogScope == scope,
-                                  showCheckmark: false,
-                                  onSelected: (_) =>
-                                      onSelectCatalogScope(scope),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     )
                   else if (selectedFeed == VideoFeed.updated)
                     SizedBox(
                       height: subRowHeight,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: ChipTheme(
-                              data: _secondaryCategoryChipTheme(context),
-                              child: ListView(
-                                key: PageStorageKey<String>(
-                                  'home-root-category-tabs-${source.id}',
-                                ),
-                                padding: EdgeInsets.fromLTRB(16, 2, 8, 2),
-                                scrollDirection: Axis.horizontal,
-                                children: [
-                                  Padding(
-                                    padding: EdgeInsets.only(right: 8),
-                                    child: ChoiceChip(
-                                      label: Text('全部'),
-                                      selected: selectedRootId == null,
-                                      showCheckmark: false,
-                                      onSelected: (_) => onSelectRoot(null),
-                                    ),
+                      child: _pinnedRowChrome(
+                        context,
+                        active: !metrics.showLeafRow,
+                        parentContextLabel: selectedFeed.label,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: ChipTheme(
+                                data: _secondaryCategoryChipTheme(context),
+                                child: ListView(
+                                  key: PageStorageKey<String>(
+                                    'home-root-category-tabs-${source.id}',
                                   ),
-                                  ...?visibleRoots?.map(
-                                    (item) => Padding(
+                                  padding: EdgeInsets.fromLTRB(16, 2, 8, 2),
+                                  scrollDirection: Axis.horizontal,
+                                  children: [
+                                    Padding(
                                       padding: EdgeInsets.only(right: 8),
                                       child: ChoiceChip(
-                                        label: Text(item.name),
-                                        selected: selectedRootId == item.id,
+                                        label: Text('全部'),
+                                        selected: selectedRootId == null,
                                         showCheckmark: false,
-                                        onSelected: (_) =>
-                                            onSelectRoot(item.id),
+                                        onSelected: (_) => onSelectRoot(null),
                                       ),
                                     ),
-                                  ),
-                                  if (categoryError != null)
-                                    ActionChip(
-                                      label: Text('重试'),
-                                      onPressed: onLoadCategories,
+                                    ...?visibleRoots?.map(
+                                      (item) => Padding(
+                                        padding: EdgeInsets.only(right: 8),
+                                        child: ChoiceChip(
+                                          label: Text(item.name),
+                                          selected: selectedRootId == item.id,
+                                          showCheckmark: false,
+                                          onSelected: (_) =>
+                                              onSelectRoot(item.id),
+                                        ),
+                                      ),
                                     ),
-                                ],
+                                    if (categoryError != null)
+                                      ActionChip(
+                                        label: Text('重试'),
+                                        onPressed: onLoadCategories,
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                          if (visibleRoots?.isNotEmpty ?? false)
-                            ValueListenableBuilder<bool>(
-                              valueListenable: collapsed,
-                              builder: (context, isCollapsed, _) =>
-                                  expandedOverlay || !isCollapsed
-                                  ? Padding(
-                                      padding: EdgeInsets.only(right: 8),
-                                      child: IconButton(
+                            if (visibleRoots?.isNotEmpty ?? false)
+                              ValueListenableBuilder<bool>(
+                                valueListenable: collapsed,
+                                builder: (context, isCollapsed, _) =>
+                                    expandedOverlay || !isCollapsed
+                                    ? Padding(
+                                        padding: EdgeInsets.only(right: 8),
+                                        child: IconButton(
+                                          key: ValueKey(
+                                            'home-category-expand-button',
+                                          ),
+                                          tooltip: '全部频道与频道管理',
+                                          visualDensity: VisualDensity.compact,
+                                          icon: Icon(
+                                            Icons.grid_view_rounded,
+                                            size: 20,
+                                            color: context.appColors.secondary,
+                                          ),
+                                          onPressed: onOpenChannelsPage,
+                                        ),
+                                      )
+                                    : const SizedBox.shrink(
                                         key: ValueKey(
-                                          'home-category-expand-button',
+                                          'home-category-channels-hidden',
                                         ),
-                                        tooltip: '全部频道与频道管理',
-                                        visualDensity: VisualDensity.compact,
-                                        icon: Icon(
-                                          Icons.grid_view_rounded,
-                                          size: 20,
-                                          color: context.appColors.secondary,
-                                        ),
-                                        onPressed: onOpenChannelsPage,
                                       ),
-                                    )
-                                  : const SizedBox.shrink(
-                                      key: ValueKey(
-                                        'home-category-channels-hidden',
-                                      ),
-                                    ),
-                            ),
-                        ],
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   if (selectedChildren.isNotEmpty)
                     SizedBox(
                       height: leafRowHeight,
-                      child: ChipTheme(
-                        data: categoryChipTheme(context).copyWith(
-                          backgroundColor: Colors.transparent,
-                          side: BorderSide(color: context.appColors.divider),
-                          labelStyle: TextStyle(
-                            color: context.appColors.secondary,
-                            fontSize: 12,
+                      child: _pinnedRowChrome(
+                        context,
+                        active: true,
+                        parentContextLabel: _selectedRootLabel,
+                        child: ChipTheme(
+                          data: categoryChipTheme(context).copyWith(
+                            backgroundColor: Colors.transparent,
+                            side: BorderSide(color: context.appColors.divider),
+                            labelStyle: TextStyle(
+                              color: context.appColors.secondary,
+                              fontSize: 12,
+                            ),
+                            secondaryLabelStyle: TextStyle(
+                              color: context.appColors.accentForeground,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            color: WidgetStateProperty.resolveWith((states) {
+                              if (states.contains(WidgetState.selected)) {
+                                return context.appColors.accent.withValues(
+                                  alpha: 0.18,
+                                );
+                              }
+                              return Colors.transparent;
+                            }),
                           ),
-                          secondaryLabelStyle: TextStyle(
-                            color: context.appColors.accentForeground,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          color: WidgetStateProperty.resolveWith((states) {
-                            if (states.contains(WidgetState.selected)) {
-                              return context.appColors.accent.withValues(
-                                alpha: 0.18,
-                              );
-                            }
-                            return Colors.transparent;
-                          }),
-                        ),
-                        child: ListView(
-                          key: PageStorageKey<String>(
-                            'home-child-category-tabs-${source.id}-$selectedRootId',
-                          ),
-                          padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            for (final child in selectedChildren)
-                              Padding(
-                                key: expandedOverlay
-                                    ? null
-                                    : leafTabKeys.putIfAbsent(
-                                        child.id,
-                                        () => GlobalKey(
-                                          debugLabel:
-                                              'home-child-category-${child.id}',
+                          child: ListView(
+                            key: PageStorageKey<String>(
+                              'home-child-category-tabs-${source.id}-$selectedRootId',
+                            ),
+                            padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
+                            scrollDirection: Axis.horizontal,
+                            children: [
+                              for (final child in selectedChildren)
+                                Padding(
+                                  key: expandedOverlay
+                                      ? null
+                                      : leafTabKeys.putIfAbsent(
+                                          child.id,
+                                          () => GlobalKey(
+                                            debugLabel:
+                                                'home-child-category-${child.id}',
+                                          ),
                                         ),
-                                      ),
-                                padding: EdgeInsets.only(right: 8),
-                                child: ChoiceChip(
-                                  key: ValueKey(
-                                    'home-child-category-${child.id}',
-                                  ),
-                                  label: Text(child.name),
-                                  selected: selectedCategoryId == child.id,
-                                  showCheckmark: false,
-                                  onSelected: (_) => onSelectRootLeaf(
-                                    selectedRootId!,
-                                    child.id,
+                                  padding: EdgeInsets.only(right: 8),
+                                  child: ChoiceChip(
+                                    key: ValueKey(
+                                      'home-child-category-${child.id}',
+                                    ),
+                                    label: Text(child.name),
+                                    selected: selectedCategoryId == child.id,
+                                    showCheckmark: false,
+                                    onSelected: (_) => onSelectRootLeaf(
+                                      selectedRootId!,
+                                      child.id,
+                                    ),
                                   ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -369,57 +392,6 @@ class HomeCategoryHeader extends StatelessWidget {
                   ),
                 ],
               ),
-              Positioned(
-                right: 0,
-                bottom: 1,
-                child: expandedOverlay
-                    ? _categoryToggleButton(context)
-                    : ValueListenableBuilder<bool>(
-                        valueListenable: collapsed,
-                        builder: (context, isCollapsed, _) => isCollapsed
-                            ? _categoryToggleButton(context)
-                            : const SizedBox.shrink(
-                                key: ValueKey('home-category-toggle-hidden'),
-                              ),
-                      ),
-              ),
-              if (!expandedOverlay)
-                Positioned(
-                  left: 0,
-                  bottom: 1,
-                  child: ValueListenableBuilder<bool>(
-                    valueListenable: collapsed,
-                    builder: (context, isCollapsed, _) {
-                      if (!isCollapsed) return const SizedBox.shrink();
-                      final root = visibleRoots?.where(
-                        (item) => item.id == selectedRootId,
-                      );
-                      final label = root == null || root.isEmpty
-                          ? selectedFeed.label
-                          : root.first.name;
-                      return Container(
-                        key: const ValueKey('home-category-parent-context'),
-                        constraints: const BoxConstraints(maxWidth: 84),
-                        padding: const EdgeInsets.only(left: 12, right: 8),
-                        alignment: Alignment.center,
-                        height: metrics.collapsedHeight - 1,
-                        color: context.appColors.background.withValues(
-                          alpha: 0.94,
-                        ),
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: context.appColors.accentForeground,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
             ],
           ),
         ),
@@ -427,36 +399,74 @@ class HomeCategoryHeader extends StatelessWidget {
     );
   }
 
-  Widget _categoryToggleButton(BuildContext context) => DecoratedBox(
-    key: const ValueKey('home-category-toggle-visible'),
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.centerLeft,
-        end: Alignment.centerRight,
-        colors: [
-          context.appColors.background.withValues(alpha: 0),
-          context.appColors.background.withValues(alpha: 0.94),
-        ],
-      ),
-    ),
-    child: SizedBox(
-      width: 48,
-      height: metrics.collapsedHeight - 1,
-      child: IconButton(
-        key: ValueKey(
-          expandedOverlay
-              ? 'home-category-panel-collapse-button'
-              : 'home-category-panel-expand-button',
+  Widget _pinnedRowChrome(
+    BuildContext context, {
+    required bool active,
+    required Widget child,
+    String? parentContextLabel,
+  }) {
+    if (!active) return child;
+
+    Widget buildRow({required String? leadingLabel}) => Row(
+      children: [
+        if (leadingLabel != null) _parentContext(context, leadingLabel),
+        Expanded(child: child),
+        _categoryToggleButton(context),
+      ],
+    );
+
+    if (expandedOverlay) return buildRow(leadingLabel: null);
+    return ValueListenableBuilder<bool>(
+      valueListenable: collapsed,
+      child: child,
+      builder: (context, isCollapsed, uncollapsedChild) {
+        if (!isCollapsed) return uncollapsedChild!;
+        return buildRow(leadingLabel: parentContextLabel);
+      },
+    );
+  }
+
+  String get _selectedRootLabel {
+    final root = visibleRoots?.where((item) => item.id == selectedRootId);
+    return root == null || root.isEmpty ? '全部' : root.first.name;
+  }
+
+  Widget _parentContext(BuildContext context, String label) {
+    return Container(
+      key: const ValueKey('home-category-parent-context'),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      margin: const EdgeInsets.only(left: 12),
+      alignment: Alignment.center,
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: context.appColors.accentForeground,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
         ),
-        tooltip: expandedOverlay ? '收起分类' : '展开完整分类',
-        onPressed: expandedOverlay ? onCollapsePanel : onExpandPanel,
-        icon: AnimatedRotation(
-          turns: expandedOverlay ? 0.5 : 0,
-          duration: const Duration(milliseconds: 180),
-          child: Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: context.appColors.secondary,
-          ),
+      ),
+    );
+  }
+
+  Widget _categoryToggleButton(BuildContext context) => SizedBox(
+    key: const ValueKey('home-category-toggle-visible'),
+    width: _categoryToggleWidth,
+    child: IconButton(
+      key: ValueKey(
+        expandedOverlay
+            ? 'home-category-panel-collapse-button'
+            : 'home-category-panel-expand-button',
+      ),
+      tooltip: expandedOverlay ? '收起分类' : '展开完整分类',
+      onPressed: expandedOverlay ? onCollapsePanel : onExpandPanel,
+      icon: AnimatedRotation(
+        turns: expandedOverlay ? 0.5 : 0,
+        duration: const Duration(milliseconds: 180),
+        child: Icon(
+          Icons.keyboard_arrow_down_rounded,
+          color: context.appColors.secondary,
         ),
       ),
     ),
