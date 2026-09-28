@@ -18,6 +18,7 @@ import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
 import 'package:jive/features/home/home_page.dart';
+import 'package:jive/features/home/widgets/home_back_to_top_button.dart';
 import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/shared/video_card.dart';
 import 'package:jive/shared/video_grid.dart';
@@ -363,6 +364,25 @@ void main() {
     expect(grid.bottom, scaffold.bottom);
   });
 
+  testWidgets('back-to-top button stays above the bottom navigation', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.padding = const FakeViewPadding(bottom: 34);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetPadding);
+    await _pumpHome(tester);
+
+    final button = tester.getRect(find.byType(HomeBackToTopButton));
+    final navigation = tester.getRect(
+      find.byKey(const ValueKey('floating-nav-bar')),
+    );
+
+    expect(button.bottom, lessThanOrEqualTo(navigation.top - 16));
+  });
+
   testWidgets(
     'recommendation stream shows matching progress before the first VOD match',
     (tester) async {
@@ -651,6 +671,18 @@ void main() {
       expect(after, greaterThan(before));
     },
   );
+
+  testWidgets('category tab rows share the same left edge', (tester) async {
+    await _pumpHome(tester);
+
+    final feedTab = find.widgetWithText(ChoiceChip, '综合');
+    final categoryTab = find.widgetWithText(ChoiceChip, '全部');
+
+    expect(
+      tester.getRect(feedTab).left,
+      closeTo(tester.getRect(categoryTab).left, 0.01),
+    );
+  });
 
   testWidgets('curated scope survives feed and VOD source switches', (
     tester,

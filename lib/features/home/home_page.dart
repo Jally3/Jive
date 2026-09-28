@@ -808,7 +808,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       ),
       Positioned(
         right: 16,
-        bottom: 88,
+        bottom: MediaQuery.paddingOf(context).bottom + 16,
         child: HomeBackToTopButton(
           showBackToTop: _scrollMemory.showBackToTop,
           onTap: _scrollMemory.scrollToTop,

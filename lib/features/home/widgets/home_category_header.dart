@@ -158,7 +158,7 @@ class HomeCategoryHeader extends StatelessWidget {
                             key: PageStorageKey<String>(
                               'home-feed-tabs-${source.id}',
                             ),
-                            padding: EdgeInsets.fromLTRB(8, 4, 8, 4),
+                            padding: EdgeInsets.fromLTRB(16, 4, 8, 4),
                             scrollDirection: Axis.horizontal,
                             physics: const BouncingScrollPhysics(
                               parent: AlwaysScrollableScrollPhysics(),
