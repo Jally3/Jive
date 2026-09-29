@@ -358,13 +358,34 @@ void main() {
       ),
       matching: find.byType(Switch),
     );
-    await tester.ensureVisible(prefetchSwitch);
+    await Scrollable.ensureVisible(
+      tester.element(prefetchSwitch),
+      alignment: 0.5,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(prefetchSwitch);
     await tester.pump();
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('prefetch_mode'), 'off');
     expect(prefs.getString('cache_ttl_option'), 'never');
     expect(prefs.getString('app_theme_mode'), 'light');
+  });
+
+  testWidgets('more settings shows installed app version', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          cacheControllerProvider.overrideWith(_FakeCacheController.new),
+          appVersionProvider.overrideWith((ref) async => '1.1.2 (5)'),
+        ],
+        child: const MaterialApp(home: MoreSettingsPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('版本号'), 300);
+
+    expect(find.text('关于'), findsOneWidget);
+    expect(find.text('1.1.2 (5)'), findsOneWidget);
   });
 
   testWidgets('cellular download setting confirms before persisting', (

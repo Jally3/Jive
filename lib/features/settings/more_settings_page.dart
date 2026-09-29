@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../app/theme.dart';
 import '../../data/cache/cache_controller.dart';
 import '../../data/cache/cache_ttl_policy.dart';
@@ -8,6 +9,11 @@ import '../../data/download/download_screen_awake_preferences.dart';
 import '../../data/playback/prefetch_policy.dart';
 import '../../data/theme_mode_preferences.dart';
 import '../cache/cache_management_page.dart';
+
+final appVersionProvider = FutureProvider<String>((ref) async {
+  final info = await PackageInfo.fromPlatform();
+  return '${info.version} (${info.buildNumber})';
+});
 
 String _formatBytes(int bytes) {
   if (bytes <= 0) return '0 B';
@@ -296,6 +302,29 @@ class _MoreSettingsPageState extends ConsumerState<MoreSettingsPage> {
                   ),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => CacheManagementPage()),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+        SizedBox(height: 16),
+        _SettingsSection(
+          title: '关于',
+          children: [
+            Consumer(
+              builder: (context, ref, _) {
+                final version = ref.watch(appVersionProvider);
+                return ListTile(
+                  leading: Icon(Icons.info_outline),
+                  title: Text('版本号'),
+                  subtitle: Text(
+                    version.when(
+                      data: (value) => value,
+                      loading: () => '获取中…',
+                      error: (_, _) => '暂不可用',
+                    ),
+                    style: TextStyle(fontSize: 13),
                   ),
                 );
               },
