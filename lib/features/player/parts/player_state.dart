@@ -17,7 +17,6 @@ abstract class PlayerStateBase extends ConsumerState<PlayerPage>
   // ── 持久化/生命周期（player_persistence.dart）────────────────────
   Future<void> _save();
   void _startPlaybackTimer();
-  void _startWakelockHeartbeat();
   Future<void> _syncWakelock();
 
   // ── 控制栏/锁屏/遥控器/全屏（player_controls_state.dart）─────────
@@ -55,6 +54,8 @@ abstract class PlayerStateBase extends ConsumerState<PlayerPage>
 
   late final HistoryRepository historyRepository;
   late final OfflineProgressRepository offlineProgressRepository;
+  late final ScreenAwakeController screenAwakeController;
+  final Object screenAwakeOwner = Object();
   VideoPlayerController? controller;
   late Episode episode;
   PlaybackSelection? _selection;
@@ -66,7 +67,6 @@ abstract class PlayerStateBase extends ConsumerState<PlayerPage>
   Timer? saveTimer;
   Timer? controlsTimer;
   Timer? _lockButtonTimer;
-  Timer? wakelockTimer;
   bool failed = false, fullScreen = false, initializing = true;
   bool fillScreen = false;
   bool controlsVisible = true;

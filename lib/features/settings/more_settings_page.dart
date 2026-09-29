@@ -4,6 +4,7 @@ import '../../app/theme.dart';
 import '../../data/cache/cache_controller.dart';
 import '../../data/cache/cache_ttl_policy.dart';
 import '../../data/download/download_network_policy.dart';
+import '../../data/download/download_screen_awake_preferences.dart';
 import '../../data/playback/prefetch_policy.dart';
 import '../../data/theme_mode_preferences.dart';
 import '../cache/cache_management_page.dart';
@@ -202,6 +203,26 @@ class _MoreSettingsPageState extends ConsumerState<MoreSettingsPage> {
         _SettingsSection(
           title: '下载',
           children: [
+            Consumer(
+              builder: (context, ref, _) {
+                final preference = ref.watch(downloadKeepScreenAwakeProvider);
+                return SwitchListTile(
+                  secondary: Icon(Icons.light_mode_outlined),
+                  title: Text('下载时保持屏幕常亮'),
+                  subtitle: Text(
+                    '仅下载管理页在前台且有任务进行时生效；锁屏或切后台仍会暂停下载',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  value: preference.value ?? false,
+                  onChanged: preference.isLoading
+                      ? null
+                      : (value) => ref
+                            .read(downloadKeepScreenAwakeProvider.notifier)
+                            .setEnabled(value),
+                );
+              },
+            ),
+            Divider(height: 1, color: context.appColors.divider),
             Consumer(
               builder: (context, ref, _) {
                 final preference = ref.watch(allowCellularDownloadsProvider);

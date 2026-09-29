@@ -394,4 +394,28 @@ void main() {
     expect(preferences.getBool('download_allow_cellular'), isTrue);
     expect(find.textContaining('已允许使用移动数据'), findsOneWidget);
   });
+
+  testWidgets('download screen-awake setting starts off and persists changes', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          cacheControllerProvider.overrideWith(_FakeCacheController.new),
+        ],
+        child: const MaterialApp(home: MoreSettingsPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final setting = find.widgetWithText(SwitchListTile, '下载时保持屏幕常亮');
+    expect(tester.widget<SwitchListTile>(setting).value, isFalse);
+    await tester.ensureVisible(setting);
+    await tester.tap(setting);
+    await tester.pumpAndSettle();
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getBool('download_keep_screen_awake'), isTrue);
+    expect(tester.widget<SwitchListTile>(setting).value, isTrue);
+  });
 }

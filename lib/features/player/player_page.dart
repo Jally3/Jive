@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:video_player/video_player.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../app/theme.dart';
 import '../../data/playback/ad_filter.dart';
 import '../../data/cache/cache_manager.dart';
@@ -36,6 +35,7 @@ import '../../domain/watch_record.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/is_tv.dart';
 import '../../shared/playback_scrubber.dart';
+import '../../shared/screen_awake_controller.dart';
 import 'widgets/playback_status_indicator.dart';
 import 'widgets/player_controls_bar.dart';
 import 'widgets/player_error_view.dart';
@@ -99,6 +99,7 @@ class _PlayerPageState extends PlayerStateBase
     // dispose() must not access ref because its BuildContext is deactivated.
     historyRepository = ref.read(historyRepositoryProvider);
     offlineProgressRepository = ref.read(offlineProgressRepositoryProvider);
+    screenAwakeController = ref.read(screenAwakeControllerProvider);
     _updateDownloadedEpisodeKeys(
       ref.read(downloadTasksProvider).value ?? const [],
     );
@@ -157,7 +158,6 @@ class _PlayerPageState extends PlayerStateBase
     controlsTimer?.cancel();
     _speedBoostRetryTimer?.cancel();
     _lockButtonTimer?.cancel();
-    wakelockTimer?.cancel();
     final save = _save();
     final detached = _detachPlayback();
     final proxy = _proxy;
@@ -194,7 +194,7 @@ class _PlayerPageState extends PlayerStateBase
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }());
     unawaited(_resetScreenBrightness());
-    unawaited(WakelockPlus.disable());
+    unawaited(screenAwakeController.release(screenAwakeOwner));
     super.dispose();
   }
 

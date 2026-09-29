@@ -104,7 +104,6 @@ mixin PlayerSeekCoordinator on PlayerStateBase {
       unawaited(_activeSession?.prefetcher?.updatePosition(finalTarget));
       if (seekController.value.isPlaying) {
         _startPlaybackTimer();
-        _startWakelockHeartbeat();
       }
       unawaited(_syncWakelock());
       _scheduleControlsHide();

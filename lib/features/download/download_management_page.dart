@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import '../../app/theme.dart';
 import '../../shared/app_states.dart';
 import '../../data/download/download_providers.dart';
 import '../../data/download/download_network_policy.dart';
+import '../../data/download/download_screen_awake_preferences.dart';
 import '../../data/download/download_task_manager.dart';
 import '../../data/offline_progress_repository.dart';
 import '../../data/history_repository.dart';
@@ -13,6 +15,7 @@ import '../../domain/video.dart';
 import '../../domain/playback_selection.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/format_utils.dart';
+import '../../shared/screen_awake_controller.dart';
 import '../cache/cache_management_page.dart';
 import '../player/player_page.dart';
 import 'widgets/download_summary_header.dart';
@@ -28,16 +31,89 @@ class DownloadManagementPage extends ConsumerStatefulWidget {
       _DownloadManagementPageState();
 }
 
-class _DownloadManagementPageState
-    extends ConsumerState<DownloadManagementPage> {
+class _DownloadManagementPageState extends ConsumerState<DownloadManagementPage>
+    with RouteAware {
+  final Object _screenAwakeOwner = Object();
+  late final ScreenAwakeController _screenAwakeController;
+  late final RouteObserver<PageRoute<dynamic>> _routeObserver;
+  PageRoute<dynamic>? _observedRoute;
+  bool _routeVisible = false;
   _DownloadFilter? filter;
   bool _initialFilterScheduled = false;
   final Set<String> busyTaskIds = {};
   final Set<String> selectedTaskIds = {};
-  final Set<String> expandedGroups = {};
-  final Set<String> manuallyCollapsedGroups = {};
+  final Set<VideoRef> expandedGroups = {};
+  final Set<VideoRef> manuallyCollapsedGroups = {};
   bool batchBusy = false;
   bool editing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _screenAwakeController = ref.read(screenAwakeControllerProvider);
+    _routeObserver = ref.read(screenAwakeRouteObserverProvider);
+    ref.listenManual(downloadTasksProvider, (_, _) => _syncScreenAwake());
+    ref.listenManual(
+      downloadKeepScreenAwakeProvider,
+      (_, _) => _syncScreenAwake(),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<dynamic> && route != _observedRoute) {
+      if (_observedRoute != null) _routeObserver.unsubscribe(this);
+      _observedRoute = route;
+      _routeObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPush() => _setRouteVisible(true);
+
+  @override
+  void didPopNext() => _setRouteVisible(true);
+
+  @override
+  void didPushNext() => _setRouteVisible(false);
+
+  @override
+  void didPop() => _setRouteVisible(false);
+
+  void _setRouteVisible(bool visible) {
+    _routeVisible = visible;
+    _syncScreenAwake();
+  }
+
+  void _syncScreenAwake() {
+    if (!mounted) return;
+    final enabled = ref.read(downloadKeepScreenAwakeProvider).value ?? false;
+    final active = ref
+        .read(downloadTasksProvider)
+        .maybeWhen(
+          data: (tasks) => tasks.any(
+            (task) =>
+                task.status == DownloadTaskStatus.queued ||
+                task.status == DownloadTaskStatus.downloading,
+          ),
+          orElse: () => false,
+        );
+    unawaited(
+      _screenAwakeController.setRequested(
+        _screenAwakeOwner,
+        enabled && _routeVisible && active,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _routeObserver.unsubscribe(this);
+    unawaited(_screenAwakeController.release(_screenAwakeOwner));
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,7 +175,14 @@ class _DownloadManagementPageState
           final visible = items
               .where((task) => _matchesFilter(task, activeFilter))
               .toList();
-          final groups = _groupTasks(visible);
+          final allGroups = _groupTasks(items);
+          final groups = {
+            for (final group in allGroups.entries)
+              if (group.value.any((task) => _matchesFilter(task, activeFilter)))
+                group.key: group.value
+                    .where((task) => _matchesFilter(task, activeFilter))
+                    .toList(),
+          };
           // 下载中的分组自动展开。在帧后写入状态，避免在 build 期间改状态。
           final autoExpand = groups.entries
               .where(
@@ -142,7 +225,12 @@ class _DownloadManagementPageState
                 )
               else
                 for (final group in groups.entries)
-                  _videoGroup(context, group.key, group.value),
+                  _videoGroup(
+                    context,
+                    group.key,
+                    group.value,
+                    title: _groupTitle(allGroups[group.key]!),
+                  ),
             ],
           );
         },
@@ -229,23 +317,52 @@ class _DownloadManagementPageState
     );
   }
 
-  Map<String, List<DownloadTask>> _groupTasks(List<DownloadTask> tasks) {
-    final groups = <String, List<DownloadTask>>{};
+  Map<VideoRef, List<DownloadTask>> _groupTasks(List<DownloadTask> tasks) {
+    final groups = <VideoRef, List<DownloadTask>>{};
+    final createdAtByGroup = <VideoRef, int>{};
     for (final task in tasks) {
-      final key = '${task.sourceId}|${task.sourceVideoId}|${task.title}';
+      final key = VideoRef(
+        sourceId: task.sourceId,
+        sourceVideoId: task.sourceVideoId,
+      );
       groups.putIfAbsent(key, () => []).add(task);
+      createdAtByGroup.update(
+        key,
+        (createdAt) => min(createdAt, task.createdAtMs),
+        ifAbsent: () => task.createdAtMs,
+      );
     }
-    // 组内按集数排序（从剧集名提取数字，如「第10集」），无数字时按名称/创建时间。
+    // 组内按集数排序；所有比较相同时仍按任务 ID 固定顺序。
     for (final list in groups.values) {
       list.sort((a, b) {
         final byRank = _episodeRank(a).compareTo(_episodeRank(b));
         if (byRank != 0) return byRank;
         final byName = a.episodeName.compareTo(b.episodeName);
         if (byName != 0) return byName;
-        return a.createdAtMs.compareTo(b.createdAtMs);
+        final byCreated = a.createdAtMs.compareTo(b.createdAtMs);
+        if (byCreated != 0) return byCreated;
+        return a.taskId.compareTo(b.taskId);
       });
     }
-    return groups;
+    // 下载进度会持续刷新 updatedAtMs，分组顺序只使用创建时间。
+    final orderedKeys = groups.keys.toList()
+      ..sort((a, b) {
+        final byCreated = createdAtByGroup[b]!.compareTo(createdAtByGroup[a]!);
+        if (byCreated != 0) return byCreated;
+        final bySource = a.sourceId.compareTo(b.sourceId);
+        if (bySource != 0) return bySource;
+        return a.sourceVideoId.compareTo(b.sourceVideoId);
+      });
+    return {for (final key in orderedKeys) key: groups[key]!};
+  }
+
+  static String _groupTitle(List<DownloadTask> tasks) {
+    final firstCreated = tasks.reduce((a, b) {
+      final byCreated = a.createdAtMs.compareTo(b.createdAtMs);
+      if (byCreated != 0) return byCreated < 0 ? a : b;
+      return a.taskId.compareTo(b.taskId) <= 0 ? a : b;
+    });
+    return firstCreated.title;
   }
 
   static int _episodeRank(DownloadTask task) {
@@ -255,13 +372,21 @@ class _DownloadManagementPageState
 
   Widget _videoGroup(
     BuildContext context,
-    String groupKey,
-    List<DownloadTask> tasks,
-  ) {
+    VideoRef groupKey,
+    List<DownloadTask> tasks, {
+    required String title,
+  }) {
     return DownloadVideoGroup(
-      title: tasks.first.title,
+      key: ValueKey(groupKey),
+      title: title,
       tasks: tasks,
       expanded: expandedGroups.contains(groupKey),
+      editing: editing,
+      selectedTaskCount: tasks
+          .where((task) => selectedTaskIds.contains(task.taskId))
+          .length,
+      onToggleSelection: () => _toggleGroupSelection(tasks),
+      onLongPress: () => _enterEditingWithTasks(tasks),
       onToggle: () => setState(() {
         if (expandedGroups.contains(groupKey)) {
           expandedGroups.remove(groupKey);
@@ -280,6 +405,13 @@ class _DownloadManagementPageState
     selectedTaskIds.clear();
   });
 
+  void _enterEditingWithTasks(Iterable<DownloadTask> tasks) => setState(() {
+    editing = true;
+    selectedTaskIds
+      ..clear()
+      ..addAll(tasks.map((task) => task.taskId));
+  });
+
   void _exitEditing() => setState(() {
     editing = false;
     selectedTaskIds.clear();
@@ -289,6 +421,18 @@ class _DownloadManagementPageState
     setState(() {
       if (!selectedTaskIds.add(task.taskId)) {
         selectedTaskIds.remove(task.taskId);
+      }
+    });
+  }
+
+  void _toggleGroupSelection(List<DownloadTask> tasks) {
+    final taskIds = tasks.map((task) => task.taskId).toList();
+    final allSelected = taskIds.every(selectedTaskIds.contains);
+    setState(() {
+      if (allSelected) {
+        selectedTaskIds.removeAll(taskIds);
+      } else {
+        selectedTaskIds.addAll(taskIds);
       }
     });
   }
@@ -633,12 +777,14 @@ class _DownloadManagementPageState
   );
 
   Widget _taskCard(DownloadTask task) => DownloadTaskCard(
+    key: ValueKey(task.taskId),
     task: task,
     nested: true,
     editing: editing,
     selected: selectedTaskIds.contains(task.taskId),
     busy: busyTaskIds.contains(task.taskId),
     onToggleSelection: () => _toggleTaskSelection(task),
+    onLongPress: () => _enterEditingWithTasks([task]),
     onPause: () => _runTaskAction(
       task,
       (manager) => manager.pause(task.taskId, waitUntilPaused: true),

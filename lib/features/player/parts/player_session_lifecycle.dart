@@ -90,7 +90,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
               initializing = false;
               errorMessage = error.message;
             });
-            unawaited(WakelockPlus.disable());
+            unawaited(screenAwakeController.release(screenAwakeOwner));
           }
           return;
         }
@@ -219,7 +219,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
                 initializing = false;
                 errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
               });
-              unawaited(WakelockPlus.disable());
+              unawaited(screenAwakeController.release(screenAwakeOwner));
             }
           }
         } else if (mounted && generation == setupGeneration) {
@@ -228,7 +228,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
             initializing = false;
             errorMessage = '无法播放当前视频，请重试或返回选择其他剧集';
           });
-          unawaited(WakelockPlus.disable());
+          unawaited(screenAwakeController.release(screenAwakeOwner));
         }
       }
     } catch (error) {
@@ -240,7 +240,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
               ? error.message
               : '视频加载失败，请检查网络后重试';
         });
-        unawaited(WakelockPlus.disable());
+        unawaited(screenAwakeController.release(screenAwakeOwner));
       }
     }
   }
@@ -311,9 +311,6 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
     }
     unawaited(_save());
     await _syncWakelock();
-    if (_isAppForeground && _playbackDesired && !next.value.isCompleted) {
-      _startWakelockHeartbeat();
-    }
     if (session != null) {
       try {
         final prefetcher = session.buildPrefetcher(
@@ -393,8 +390,6 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
   _detachPlayback() {
     saveTimer?.cancel();
     saveTimer = null;
-    wakelockTimer?.cancel();
-    wakelockTimer = null;
     final current = controller;
     final session = _activeSession;
     _stopSpeedBoost(current);
@@ -461,8 +456,6 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       saveTimer?.cancel();
       saveTimer = null;
       controlsTimer?.cancel();
-      wakelockTimer?.cancel();
-      wakelockTimer = null;
       _activeSession?.prefetcher?.pause();
       setState(() {
         failed = true;
@@ -511,8 +504,6 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       saveTimer?.cancel();
       saveTimer = null;
       controlsTimer?.cancel();
-      wakelockTimer?.cancel();
-      wakelockTimer = null;
       _activeSession?.prefetcher?.pause();
       setState(() {
         controlsVisible = true;
@@ -594,7 +585,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
           );
           errorMessage = e.toString();
         });
-        unawaited(WakelockPlus.disable());
+        unawaited(screenAwakeController.release(screenAwakeOwner));
       }
     }
   }

@@ -23,6 +23,7 @@ lib/shared/
 ├── double_back_exit_scope.dart        # Android 根页面返回拦截：2 秒内连续返回两次才退出应用
 ├── is_tv.dart                         # isTvProvider：经 jive/device 通道判断是否 Android TV（iOS/失败恒 false）
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
+├── screen_awake_controller.dart        # 屏幕常亮请求协调：播放器与下载页共享持有、前后台同步及平台开关串行化
 ├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
 ├── skip_settings.dart                 # 同行收起的片头/片尾状态按钮与锚点下拉菜单：详情页和非全屏播放器共用
 ├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、TMDB 排名/评分徽标、观看进度条、TV 焦点描边
@@ -163,6 +164,7 @@ lib/data/network/
 lib/data/download/
 ├── download_manager.dart              # 边下边播分片预取器 SegmentPrefetcher：并发抓取、指数退避、窗口随播放位置重锚定
 ├── download_network_policy.dart       # 离线下载网络策略：蜂窝网络开关持久化与当前网络准入判定
+├── download_screen_awake_preferences.dart # 下载页常亮偏好：默认关闭、SharedPreferences 持久化
 ├── download_task.dart                 # 下载任务模型：DownloadTask、状态/失败原因枚举、失败文案与 JSON 解析
 ├── download_permit_pool.dart          # 分片并发许可池 DownloadPermitPool：限制同时抓取的网络分片数
 ├── download_task_store.dart           # 下载任务索引轻量读取：在缓存清理前恢复旧版离线条目保护集
@@ -219,7 +221,7 @@ lib/features/
 │   ├── player_page.dart               # 播放器主页壳 PlayerPage：页面参数、生命周期装配与 UI 组装；状态基类与职责 mixin 见下方 part 文件
 │   ├── parts/player_state.dart              # 播放页共享状态基类 PlayerStateBase：全部可变字段与跨职责接缝的抽象声明
 │   ├── parts/player_session_lifecycle.dart  # 会话建立与降级 mixin：缓存优先→代理 HLS→直链回退、控制器安装、切集/重试释放、状态总泵
-│   ├── parts/player_persistence.dart        # 进度与生命周期 mixin：定时保存观看/离线进度、前后台暂停恢复、wakelock 同步与心跳
+│   ├── parts/player_persistence.dart        # 进度与生命周期 mixin：定时保存观看/离线进度、前后台暂停恢复、播放器常亮请求同步
 │   ├── parts/player_controls_state.dart     # 控制栏与全屏 mixin：控制条显隐、屏幕锁、TV 遥控器按键映射、全屏方向与系统 UI
 │   ├── parts/player_episodes.dart           # 剧集切换 mixin：选集/上下集、线路降级重解析、AGE 会话头绑定、下载键同步
 │   ├── parts/player_playback_commands.dart  # 播放命令 mixin：播放/暂停/静音/倍速、当前集下载、片头片尾跳过策略执行
@@ -242,13 +244,13 @@ lib/features/
 ├── cache/
 │   └── cache_management_page.dart     # 缓存管理页：用量统计、配额展示、单条删除与清空确认
 ├── download/
-│   ├── download_management_page.dart  # 下载管理页壳：编辑/批量状态、分组展开与筛选、蜂窝继续确认、离线播放入口
+│   ├── download_management_page.dart  # 下载管理页壳：编辑/批量状态、分组展开与筛选、蜂窝继续确认、离线播放入口及常亮请求
 │   └── widgets/
 │       ├── download_task_card.dart      # 视频分组卡片与单任务卡片：进度、离线观看进度状态文案、主操作按钮
 │       └── download_summary_header.dart # 顶部汇总卡片：当前速度/已下载统计与全部暂停/继续快捷操作
 └── settings/
     ├── source_management_page.dart    # 源管理页：源列表、健康检查（延迟/可用性）与结果持久化展示
-    └── more_settings_page.dart        # 更多设置：缓存 TTL 选择、预加载开关、缓存管理入口
+    └── more_settings_page.dart        # 更多设置：缓存 TTL 选择、预加载/下载常亮开关、缓存管理入口
 ```
 
 ## 测试（`test/`）

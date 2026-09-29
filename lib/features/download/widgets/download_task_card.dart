@@ -16,6 +16,10 @@ class DownloadVideoGroup extends StatelessWidget {
     required this.tasks,
     required this.expanded,
     required this.onToggle,
+    required this.onLongPress,
+    required this.editing,
+    required this.selectedTaskCount,
+    required this.onToggleSelection,
     required this.taskCardBuilder,
   });
 
@@ -23,6 +27,10 @@ class DownloadVideoGroup extends StatelessWidget {
   final List<DownloadTask> tasks;
   final bool expanded;
   final VoidCallback onToggle;
+  final VoidCallback onLongPress;
+  final bool editing;
+  final int selectedTaskCount;
+  final VoidCallback onToggleSelection;
   final Widget Function(DownloadTask task) taskCardBuilder;
 
   @override
@@ -56,8 +64,30 @@ class DownloadVideoGroup extends StatelessWidget {
                 ),
               ),
             ),
-            trailing: Icon(expanded ? Icons.expand_less : Icons.expand_more),
+            trailing: editing
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Tooltip(
+                        message: selectedTaskCount == tasks.length
+                            ? '取消全选 $title'
+                            : '全选 $title',
+                        child: Checkbox(
+                          tristate: true,
+                          value: selectedTaskCount == 0
+                              ? false
+                              : selectedTaskCount == tasks.length
+                              ? true
+                              : null,
+                          onChanged: (_) => onToggleSelection(),
+                        ),
+                      ),
+                      Icon(expanded ? Icons.expand_less : Icons.expand_more),
+                    ],
+                  )
+                : Icon(expanded ? Icons.expand_less : Icons.expand_more),
             onTap: onToggle,
+            onLongPress: editing ? null : onLongPress,
           ),
           if (expanded) ...[
             for (var i = 0; i < tasks.length; i++) ...[
@@ -87,6 +117,7 @@ class DownloadTaskCard extends ConsumerWidget {
     required this.selected,
     required this.busy,
     required this.onToggleSelection,
+    required this.onLongPress,
     required this.onPause,
     required this.onResume,
     required this.onPlay,
@@ -101,6 +132,7 @@ class DownloadTaskCard extends ConsumerWidget {
   final bool busy;
 
   final VoidCallback onToggleSelection;
+  final VoidCallback onLongPress;
   final VoidCallback onPause;
   final VoidCallback onResume;
   final VoidCallback onPlay;
@@ -264,6 +296,7 @@ class DownloadTaskCard extends ConsumerWidget {
       child: InkWell(
         key: ValueKey('download-task-row-${task.taskId}'),
         onTap: editing ? onToggleSelection : primaryAction,
+        onLongPress: editing ? null : onLongPress,
         child: Padding(
           padding: EdgeInsets.fromLTRB(
             nested ? 24 : 16,

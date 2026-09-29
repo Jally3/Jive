@@ -96,8 +96,6 @@ mixin PlayerProgressPersistence on PlayerStateBase {
       } else {
         unawaited(_syncWakelock());
       }
-      wakelockTimer?.cancel();
-      wakelockTimer = null;
       unawaited(_save());
     } else if (state == AppLifecycleState.resumed) {
       _isAppForeground = true;
@@ -134,28 +132,6 @@ mixin PlayerProgressPersistence on PlayerStateBase {
         _playbackDesired &&
         controller?.value.isInitialized == true &&
         controller?.value.isCompleted != true;
-    try {
-      await WakelockPlus.toggle(enable: shouldKeepAwake);
-    } catch (_) {
-      // A wakelock failure must not interrupt video playback.
-    }
-  }
-
-  @override
-  void _startWakelockHeartbeat() {
-    wakelockTimer?.cancel();
-    wakelockTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (!mounted ||
-          failed ||
-          !_playbackDesired ||
-          controller?.value.isInitialized != true ||
-          controller?.value.isCompleted == true) {
-        wakelockTimer?.cancel();
-        wakelockTimer = null;
-        unawaited(_syncWakelock());
-        return;
-      }
-      unawaited(_syncWakelock());
-    });
+    await screenAwakeController.setRequested(screenAwakeOwner, shouldKeepAwake);
   }
 }

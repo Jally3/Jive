@@ -70,8 +70,6 @@ mixin PlayerPlaybackCommands on PlayerStateBase {
       await current.pause();
       if (!mounted || !identical(controller, current)) return;
       await _syncWakelock();
-      wakelockTimer?.cancel();
-      wakelockTimer = null;
       saveTimer?.cancel();
       saveTimer = null;
       controlsTimer?.cancel();
@@ -112,7 +110,6 @@ mixin PlayerPlaybackCommands on PlayerStateBase {
       );
       _startPlaybackTimer();
       await _syncWakelock();
-      _startWakelockHeartbeat();
       _scheduleControlsHide();
       if (mounted) setState(() => controlsVisible = true);
     } catch (_) {
