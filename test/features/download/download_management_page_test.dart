@@ -442,6 +442,54 @@ void main() {
     },
   );
 
+  testWidgets('delete stays visible after long pressing a scrolled group', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final tasks = [
+      for (var i = 1; i <= 10; i++)
+        _task(
+          '$i',
+          DownloadTaskStatus.paused,
+          title: '影片 $i',
+          sourceVideoId: 'v$i',
+          createdAtMs: 11 - i,
+        ),
+    ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          downloadTasksProvider.overrideWith((ref) => Stream.value(tasks)),
+        ],
+        child: const MaterialApp(home: DownloadManagementPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('影片 10'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.longPress(find.text('影片 10'));
+    await tester.pumpAndSettle();
+
+    final delete = find.widgetWithText(TextButton, '删除');
+    expect(find.text('已选 1 项'), findsOneWidget);
+    expect(
+      find.ancestor(of: delete, matching: find.byType(BottomAppBar)),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    expect(find.text('批量删除下载？'), findsOneWidget);
+    expect(find.textContaining('将删除 1 个下载任务'), findsOneWidget);
+  });
+
   testWidgets('video group selection follows the current filter', (
     tester,
   ) async {

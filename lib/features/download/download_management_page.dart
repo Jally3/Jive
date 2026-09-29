@@ -156,6 +156,7 @@ class _DownloadManagementPageState extends ConsumerState<DownloadManagementPage>
             ),
         ],
       ),
+      bottomNavigationBar: editing ? _batchActionBar() : null,
       body: tasks.when(
         loading: () => AppLoadingView(label: '正在加载下载任务…'),
         error: (_, _) => AppErrorView(
@@ -213,11 +214,10 @@ class _DownloadManagementPageState extends ConsumerState<DownloadManagementPage>
             children: [
               _summary(items),
               SizedBox(height: 12),
-              if (editing)
-                _batchActionBar()
-              else
+              if (!editing) ...[
                 _filterBar(items, activeFilter),
-              SizedBox(height: 12),
+                SizedBox(height: 12),
+              ],
               if (visible.isEmpty)
                 Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
@@ -273,45 +273,27 @@ class _DownloadManagementPageState extends ConsumerState<DownloadManagementPage>
       required IconData icon,
     }) {
       final enabled = !batchBusy && _batchActionEnabled(action);
-      return TextButton.icon(
-        onPressed: enabled ? () => _handleBatchAction(action) : null,
-        icon: Icon(icon, size: 18),
-        label: Text(name),
-        style: action == 'delete'
-            ? TextButton.styleFrom(foregroundColor: context.appColors.error)
-            : null,
+      return Expanded(
+        child: TextButton.icon(
+          onPressed: enabled ? () => _handleBatchAction(action) : null,
+          icon: Icon(icon, size: 18),
+          label: Text(name),
+          style: action == 'delete'
+              ? TextButton.styleFrom(foregroundColor: context.appColors.error)
+              : null,
+        ),
       );
     }
 
     return BottomAppBar(
       child: SafeArea(
         top: false,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 4),
-                child: Text(
-                  selectedTaskIds.isEmpty
-                      ? '请选择'
-                      : '${selectedTaskIds.length} 项',
-                  style: TextStyle(
-                    color: context.appColors.secondary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              action(name: '暂停', action: 'pause', icon: Icons.pause),
-              action(name: '继续', action: 'resume', icon: Icons.play_arrow),
-              action(name: '删除', action: 'delete', icon: Icons.delete_outline),
-              TextButton(
-                onPressed: batchBusy ? null : _exitEditing,
-                child: Text('取消'),
-              ),
-            ],
-          ),
+        child: Row(
+          children: [
+            action(name: '暂停', action: 'pause', icon: Icons.pause),
+            action(name: '继续', action: 'resume', icon: Icons.play_arrow),
+            action(name: '删除', action: 'delete', icon: Icons.delete_outline),
+          ],
         ),
       ),
     );
