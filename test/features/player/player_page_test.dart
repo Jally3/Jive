@@ -9,6 +9,8 @@ import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/playback/prefetch_policy.dart';
 import 'package:jive/data/playback/skip_policy.dart';
+import 'package:jive/data/playback/trace/playback_startup_trace.dart';
+import 'package:jive/data/playback/trace/playback_trace_config.dart';
 import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
@@ -290,6 +292,7 @@ Future<ProviderContainer> _pumpPlayerPage(
   bool isTv = false,
   ThemeData? theme,
   Map<String, Duration> episodeResumePositions = const {},
+  PlaybackStartupTrace? startupTrace,
 }) async {
   final container = ProviderContainer(
     overrides: [
@@ -323,6 +326,7 @@ Future<ProviderContainer> _pumpPlayerPage(
           episode: episode ?? video.episodes.first,
           resumePosition: resumePosition,
           episodeResumePositions: episodeResumePositions,
+          startupTrace: startupTrace,
         ),
       ),
     ),
@@ -416,6 +420,70 @@ void main() {
     WakelockPlusPlatformInterface.instance = originalWakelockPlatform;
     wakelockPlusPlatformInstance = originalWakelockPlusPlatformInstance;
   });
+
+  for (final result in [
+    _InitializationResult.success,
+    _InitializationResult.pending,
+  ]) {
+    testWidgets(
+      'startup trace survives refactoring for ${result.name} initialization',
+      (tester) async {
+        final video = _playableVideo('https://example.com/trace.mp4');
+        final trace = PlaybackStartupTrace.maybeStart(
+          videoTitle: video.title,
+          sourceId: video.sourceId,
+          sourceVideoId: video.sourceVideoId,
+          episode: video.episodes.first,
+          offlineOnly: false,
+        )!;
+        final messages = <String>[];
+        final originalDebugPrint = debugPrint;
+        debugPrint = (message, {wrapWidth}) {
+          if (message != null) messages.add(message);
+        };
+        try {
+          videoPlatform.initializationPlan = [result];
+          await _pumpPlayerPage(
+            tester,
+            video: video,
+            repository: _FakeVideoRepository(video),
+            startupTrace: trace,
+            resumePosition: const Duration(seconds: 15),
+          );
+          if (result == _InitializationResult.pending) {
+            await _pumpUntil(
+              tester,
+              () => videoPlatform.dataSources.isNotEmpty,
+            );
+            expect(trace.isFinished, isFalse);
+          } else {
+            await _pumpUntil(tester, () => trace.isFinished);
+          }
+          await _unmountPlayerPage(tester);
+          if (result == _InitializationResult.pending) {
+            videoPlatform.emitInitialized(videoPlatform.lastPlayerId);
+            await tester.pump();
+          }
+          expect(trace.isFinished, isTrue);
+          final expectedResult = switch (result) {
+            _InitializationResult.success => 'success',
+            _InitializationResult.failure => 'failed',
+            _InitializationResult.pending => 'cancelled',
+          };
+          expect(
+            messages.where(
+              (message) => message.startsWith('JIVE_PLAYBACK_TRACE_SUMMARY '),
+            ),
+            [contains('result=$expectedResult ')],
+          );
+          expect(tester.takeException(), isNull);
+        } finally {
+          debugPrint = originalDebugPrint;
+        }
+      },
+      skip: !PlaybackTraceConfig.enabled,
+    );
+  }
 
   testWidgets(
     'PlaybackStatusIndicator shows a colored dot and handles long press',

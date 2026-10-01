@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -6,14 +7,19 @@ import '../../app/theme.dart';
 import '../../shared/app_states.dart';
 import '../../data/download/download_providers.dart';
 import '../../data/download/download_network_policy.dart';
+import '../../data/download/download_screen_awake_preferences.dart';
 import '../../data/download/download_task_manager.dart';
 import '../../data/offline_progress_repository.dart';
 import '../../data/history_repository.dart';
 import '../../domain/video.dart';
 import '../../domain/playback_selection.dart';
 import '../../shared/app_toast.dart';
+import '../../shared/format_utils.dart';
+import '../../shared/screen_awake_controller.dart';
 import '../cache/cache_management_page.dart';
 import '../player/player_page.dart';
+import 'widgets/download_summary_header.dart';
+import 'widgets/download_task_card.dart';
 
 enum _DownloadFilter { all, active, completed, failed }
 
@@ -25,16 +31,89 @@ class DownloadManagementPage extends ConsumerStatefulWidget {
       _DownloadManagementPageState();
 }
 
-class _DownloadManagementPageState
-    extends ConsumerState<DownloadManagementPage> {
+class _DownloadManagementPageState extends ConsumerState<DownloadManagementPage>
+    with RouteAware {
+  final Object _screenAwakeOwner = Object();
+  late final ScreenAwakeController _screenAwakeController;
+  late final RouteObserver<PageRoute<dynamic>> _routeObserver;
+  PageRoute<dynamic>? _observedRoute;
+  bool _routeVisible = false;
   _DownloadFilter? filter;
   bool _initialFilterScheduled = false;
   final Set<String> busyTaskIds = {};
   final Set<String> selectedTaskIds = {};
-  final Set<String> expandedGroups = {};
-  final Set<String> manuallyCollapsedGroups = {};
+  final Set<VideoRef> expandedGroups = {};
+  final Set<VideoRef> manuallyCollapsedGroups = {};
   bool batchBusy = false;
   bool editing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _screenAwakeController = ref.read(screenAwakeControllerProvider);
+    _routeObserver = ref.read(screenAwakeRouteObserverProvider);
+    ref.listenManual(downloadTasksProvider, (_, _) => _syncScreenAwake());
+    ref.listenManual(
+      downloadKeepScreenAwakeProvider,
+      (_, _) => _syncScreenAwake(),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<dynamic> && route != _observedRoute) {
+      if (_observedRoute != null) _routeObserver.unsubscribe(this);
+      _observedRoute = route;
+      _routeObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPush() => _setRouteVisible(true);
+
+  @override
+  void didPopNext() => _setRouteVisible(true);
+
+  @override
+  void didPushNext() => _setRouteVisible(false);
+
+  @override
+  void didPop() => _setRouteVisible(false);
+
+  void _setRouteVisible(bool visible) {
+    _routeVisible = visible;
+    _syncScreenAwake();
+  }
+
+  void _syncScreenAwake() {
+    if (!mounted) return;
+    final enabled = ref.read(downloadKeepScreenAwakeProvider).value ?? false;
+    final active = ref
+        .read(downloadTasksProvider)
+        .maybeWhen(
+          data: (tasks) => tasks.any(
+            (task) =>
+                task.status == DownloadTaskStatus.queued ||
+                task.status == DownloadTaskStatus.downloading,
+          ),
+          orElse: () => false,
+        );
+    unawaited(
+      _screenAwakeController.setRequested(
+        _screenAwakeOwner,
+        enabled && _routeVisible && active,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _routeObserver.unsubscribe(this);
+    unawaited(_screenAwakeController.release(_screenAwakeOwner));
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +156,7 @@ class _DownloadManagementPageState
             ),
         ],
       ),
+      bottomNavigationBar: editing ? _batchActionBar() : null,
       body: tasks.when(
         loading: () => AppLoadingView(label: '正在加载下载任务…'),
         error: (_, _) => AppErrorView(
@@ -96,7 +176,14 @@ class _DownloadManagementPageState
           final visible = items
               .where((task) => _matchesFilter(task, activeFilter))
               .toList();
-          final groups = _groupTasks(visible);
+          final allGroups = _groupTasks(items);
+          final groups = {
+            for (final group in allGroups.entries)
+              if (group.value.any((task) => _matchesFilter(task, activeFilter)))
+                group.key: group.value
+                    .where((task) => _matchesFilter(task, activeFilter))
+                    .toList(),
+          };
           // 下载中的分组自动展开。在帧后写入状态，避免在 build 期间改状态。
           final autoExpand = groups.entries
               .where(
@@ -127,11 +214,10 @@ class _DownloadManagementPageState
             children: [
               _summary(items),
               SizedBox(height: 12),
-              if (editing)
-                _batchActionBar()
-              else
+              if (!editing) ...[
                 _filterBar(items, activeFilter),
-              SizedBox(height: 12),
+                SizedBox(height: 12),
+              ],
               if (visible.isEmpty)
                 Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
@@ -139,7 +225,12 @@ class _DownloadManagementPageState
                 )
               else
                 for (final group in groups.entries)
-                  _videoGroup(context, group.key, group.value),
+                  _videoGroup(
+                    context,
+                    group.key,
+                    group.value,
+                    title: _groupTitle(allGroups[group.key]!),
+                  ),
             ],
           );
         },
@@ -182,67 +273,78 @@ class _DownloadManagementPageState
       required IconData icon,
     }) {
       final enabled = !batchBusy && _batchActionEnabled(action);
-      return TextButton.icon(
-        onPressed: enabled ? () => _handleBatchAction(action) : null,
-        icon: Icon(icon, size: 18),
-        label: Text(name),
-        style: action == 'delete'
-            ? TextButton.styleFrom(foregroundColor: context.appColors.error)
-            : null,
+      return Expanded(
+        child: TextButton.icon(
+          onPressed: enabled ? () => _handleBatchAction(action) : null,
+          icon: Icon(icon, size: 18),
+          label: Text(name),
+          style: action == 'delete'
+              ? TextButton.styleFrom(foregroundColor: context.appColors.error)
+              : null,
+        ),
       );
     }
 
     return BottomAppBar(
       child: SafeArea(
         top: false,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 4),
-                child: Text(
-                  selectedTaskIds.isEmpty
-                      ? '请选择'
-                      : '${selectedTaskIds.length} 项',
-                  style: TextStyle(
-                    color: context.appColors.secondary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              action(name: '暂停', action: 'pause', icon: Icons.pause),
-              action(name: '继续', action: 'resume', icon: Icons.play_arrow),
-              action(name: '删除', action: 'delete', icon: Icons.delete_outline),
-              TextButton(
-                onPressed: batchBusy ? null : _exitEditing,
-                child: Text('取消'),
-              ),
-            ],
-          ),
+        child: Row(
+          children: [
+            action(name: '暂停', action: 'pause', icon: Icons.pause),
+            action(name: '继续', action: 'resume', icon: Icons.play_arrow),
+            action(name: '删除', action: 'delete', icon: Icons.delete_outline),
+          ],
         ),
       ),
     );
   }
 
-  Map<String, List<DownloadTask>> _groupTasks(List<DownloadTask> tasks) {
-    final groups = <String, List<DownloadTask>>{};
+  Map<VideoRef, List<DownloadTask>> _groupTasks(List<DownloadTask> tasks) {
+    final groups = <VideoRef, List<DownloadTask>>{};
+    final createdAtByGroup = <VideoRef, int>{};
     for (final task in tasks) {
-      final key = '${task.sourceId}|${task.sourceVideoId}|${task.title}';
+      final key = VideoRef(
+        sourceId: task.sourceId,
+        sourceVideoId: task.sourceVideoId,
+      );
       groups.putIfAbsent(key, () => []).add(task);
+      createdAtByGroup.update(
+        key,
+        (createdAt) => min(createdAt, task.createdAtMs),
+        ifAbsent: () => task.createdAtMs,
+      );
     }
-    // 组内按集数排序（从剧集名提取数字，如「第10集」），无数字时按名称/创建时间。
+    // 组内按集数排序；所有比较相同时仍按任务 ID 固定顺序。
     for (final list in groups.values) {
       list.sort((a, b) {
         final byRank = _episodeRank(a).compareTo(_episodeRank(b));
         if (byRank != 0) return byRank;
         final byName = a.episodeName.compareTo(b.episodeName);
         if (byName != 0) return byName;
-        return a.createdAtMs.compareTo(b.createdAtMs);
+        final byCreated = a.createdAtMs.compareTo(b.createdAtMs);
+        if (byCreated != 0) return byCreated;
+        return a.taskId.compareTo(b.taskId);
       });
     }
-    return groups;
+    // 下载进度会持续刷新 updatedAtMs，分组顺序只使用创建时间。
+    final orderedKeys = groups.keys.toList()
+      ..sort((a, b) {
+        final byCreated = createdAtByGroup[b]!.compareTo(createdAtByGroup[a]!);
+        if (byCreated != 0) return byCreated;
+        final bySource = a.sourceId.compareTo(b.sourceId);
+        if (bySource != 0) return bySource;
+        return a.sourceVideoId.compareTo(b.sourceVideoId);
+      });
+    return {for (final key in orderedKeys) key: groups[key]!};
+  }
+
+  static String _groupTitle(List<DownloadTask> tasks) {
+    final firstCreated = tasks.reduce((a, b) {
+      final byCreated = a.createdAtMs.compareTo(b.createdAtMs);
+      if (byCreated != 0) return byCreated < 0 ? a : b;
+      return a.taskId.compareTo(b.taskId) <= 0 ? a : b;
+    });
+    return firstCreated.title;
   }
 
   static int _episodeRank(DownloadTask task) {
@@ -252,71 +354,44 @@ class _DownloadManagementPageState
 
   Widget _videoGroup(
     BuildContext context,
-    String groupKey,
-    List<DownloadTask> tasks,
-  ) {
-    final title = tasks.first.title;
-    final completed = tasks
-        .where((task) => task.status == DownloadTaskStatus.completed)
-        .length;
-    final expanded = expandedGroups.contains(groupKey);
-    return Card(
-      color: context.appColors.surface,
-      margin: EdgeInsets.only(bottom: 12),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          ListTile(
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            contentPadding: EdgeInsets.fromLTRB(20, 4, 16, 4),
-            title: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            subtitle: Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: Text(
-                '${tasks.length} 集 · 完成 $completed 集',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: context.appColors.secondary,
-                ),
-              ),
-            ),
-            trailing: Icon(expanded ? Icons.expand_less : Icons.expand_more),
-            onTap: () => setState(() {
-              if (expanded) {
-                expandedGroups.remove(groupKey);
-                manuallyCollapsedGroups.add(groupKey);
-              } else {
-                expandedGroups.add(groupKey);
-                manuallyCollapsedGroups.remove(groupKey);
-              }
-            }),
-          ),
-          if (expanded) ...[
-            for (var i = 0; i < tasks.length; i++) ...[
-              _taskCard(context, tasks[i], nested: true),
-              if (i < tasks.length - 1)
-                Divider(
-                  height: 1,
-                  indent: 32,
-                  endIndent: 24,
-                  color: context.appColors.divider.withValues(alpha: 0.55),
-                ),
-            ],
-          ],
-        ],
-      ),
+    VideoRef groupKey,
+    List<DownloadTask> tasks, {
+    required String title,
+  }) {
+    return DownloadVideoGroup(
+      key: ValueKey(groupKey),
+      title: title,
+      tasks: tasks,
+      expanded: expandedGroups.contains(groupKey),
+      editing: editing,
+      selectedTaskCount: tasks
+          .where((task) => selectedTaskIds.contains(task.taskId))
+          .length,
+      onToggleSelection: () => _toggleGroupSelection(tasks),
+      onLongPress: () => _enterEditingWithTasks(tasks),
+      onToggle: () => setState(() {
+        if (expandedGroups.contains(groupKey)) {
+          expandedGroups.remove(groupKey);
+          manuallyCollapsedGroups.add(groupKey);
+        } else {
+          expandedGroups.add(groupKey);
+          manuallyCollapsedGroups.remove(groupKey);
+        }
+      }),
+      taskCardBuilder: (task) => _taskCard(task),
     );
   }
 
   void _enterEditing() => setState(() {
     editing = true;
     selectedTaskIds.clear();
+  });
+
+  void _enterEditingWithTasks(Iterable<DownloadTask> tasks) => setState(() {
+    editing = true;
+    selectedTaskIds
+      ..clear()
+      ..addAll(tasks.map((task) => task.taskId));
   });
 
   void _exitEditing() => setState(() {
@@ -328,6 +403,18 @@ class _DownloadManagementPageState
     setState(() {
       if (!selectedTaskIds.add(task.taskId)) {
         selectedTaskIds.remove(task.taskId);
+      }
+    });
+  }
+
+  void _toggleGroupSelection(List<DownloadTask> tasks) {
+    final taskIds = tasks.map((task) => task.taskId).toList();
+    final allSelected = taskIds.every(selectedTaskIds.contains);
+    setState(() {
+      if (allSelected) {
+        selectedTaskIds.removeAll(taskIds);
+      } else {
+        selectedTaskIds.addAll(taskIds);
       }
     });
   }
@@ -625,7 +712,7 @@ class _DownloadManagementPageState
         ? '《${tasks.single.title}》${tasks.single.episodeName}'
         : '${tasks.length} 个任务';
     final estimate = knownRemaining
-        ? '，预计还需 ${_formatBytes(remainingBytes)}'
+        ? '，预计还需 ${formatBytes(remainingBytes)}'
         : '';
     return showDialog<bool>(
       context: context,
@@ -664,435 +751,29 @@ class _DownloadManagementPageState
     );
   }
 
-  Widget _summary(List<DownloadTask> tasks) {
-    final transferring = tasks
-        .where(
-          (task) =>
-              task.status == DownloadTaskStatus.downloading ||
-              task.status == DownloadTaskStatus.queued,
-        )
-        .toList();
-    final speed = transferring.fold<int>(
-      0,
-      (sum, task) => sum + task.speedBytesPerSecond,
-    );
-    final resumable = tasks
-        .where(
-          (task) =>
-              task.status == DownloadTaskStatus.paused ||
-              task.status == DownloadTaskStatus.failed,
-        )
-        .length;
-    final waitingForNetwork = tasks
-        .where(
-          (task) =>
-              task.status == DownloadTaskStatus.paused &&
-              task.pauseReason == DownloadPauseReason.network,
-        )
-        .length;
-    final downloadedBytes = tasks.fold<int>(
-      0,
-      (sum, task) => sum + task.downloadedBytes,
-    );
-    return Card(
-      color: context.appColors.elevated,
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final speedView = transferring.isEmpty
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '当前状态',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: context.appColors.secondary,
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            waitingForNetwork > 0
-                                ? '$waitingForNetwork 个任务等待网络'
-                                : '暂无进行中的下载',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '当前速度',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: context.appColors.secondary,
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            _formatSpeed(speed),
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w700,
-                              color: context.appColors.accentForeground,
-                            ),
-                          ),
-                        ],
-                      );
-                final downloadedView = Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '已下载',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: context.appColors.secondary,
-                      ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      _formatBytes(downloadedBytes),
-                      maxLines: 1,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                );
-                final batchActionStyle = OutlinedButton.styleFrom(
-                  foregroundColor: context.appColors.text,
-                  disabledForegroundColor: context.appColors.secondary,
-                  backgroundColor: context.appColors.accent.withValues(
-                    alpha: 0.10,
-                  ),
-                  side: BorderSide(
-                    color: context.appColors.accentForeground.withValues(
-                      alpha: 0.45,
-                    ),
-                  ),
-                  textStyle: TextStyle(fontWeight: FontWeight.w600),
-                );
-                final actions = Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (resumable > 0)
-                      OutlinedButton.icon(
-                        onPressed: batchBusy ? null : _resumeAll,
-                        icon: Icon(Icons.play_arrow, size: 18),
-                        label: Text('全部继续'),
-                        style: batchActionStyle,
-                      ),
-                    if (transferring.isNotEmpty)
-                      OutlinedButton.icon(
-                        onPressed: batchBusy ? null : _pauseAll,
-                        icon: Icon(Icons.pause, size: 18),
-                        label: Text('全部暂停'),
-                        style: batchActionStyle,
-                      ),
-                  ],
-                );
-                if (constraints.maxWidth < 520) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Expanded(child: speedView),
-                          SizedBox(width: 16),
-                          downloadedView,
-                        ],
-                      ),
-                      if (transferring.isNotEmpty || resumable > 0) ...[
-                        SizedBox(height: 12),
-                        actions,
-                      ],
-                    ],
-                  );
-                }
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(child: speedView),
-                    downloadedView,
-                    if (transferring.isNotEmpty || resumable > 0) ...[
-                      SizedBox(width: 16),
-                      actions,
-                    ],
-                  ],
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _summary(List<DownloadTask> tasks) => DownloadSummaryHeader(
+    tasks: tasks,
+    batchBusy: batchBusy,
+    onResumeAll: _resumeAll,
+    onPauseAll: _pauseAll,
+  );
 
-  Widget _taskCard(
-    BuildContext context,
-    DownloadTask task, {
-    bool nested = false,
-  }) {
-    final taskBusy = busyTaskIds.contains(task.taskId);
-    final pausing =
-        taskBusy &&
-        (task.status == DownloadTaskStatus.downloading ||
-            task.status == DownloadTaskStatus.queued);
-    final hasKnownProgress =
-        task.totalBytes > 0 || task.expectedResourceCount > 0;
-    final networkPaused =
-        task.status == DownloadTaskStatus.paused &&
-        task.pauseReason == DownloadPauseReason.network;
-    final networkAccess = ref.watch(downloadNetworkAccessProvider);
-    final networkWaitText =
-        networkAccess == DownloadNetworkAccess.cellularBlocked
-        ? '等待 Wi-Fi'
-        : '等待网络';
-    final progress = task.status == DownloadTaskStatus.completed
-        ? 1.0
-        : task.totalBytes > 0
-        ? (task.downloadedBytes / task.totalBytes).clamp(0.0, 1.0)
-        : task.expectedResourceCount > 0
-        ? (task.completedResourceCount / task.expectedResourceCount).clamp(
-            0.0,
-            1.0,
-          )
-        : task.status == DownloadTaskStatus.downloading
-        ? null
-        : 0.0;
-    final isCompleted = task.status == DownloadTaskStatus.completed;
-    var watched = ref
-        .watch(offlineProgressProvider)
-        .value?[offlineProgressKeyForTask(task)];
-    if (watched == null) {
-      final latest = (ref.watch(watchHistoryProvider).value ?? const [])
-          .where(
-            (record) =>
-                record.video.sourceId == task.sourceId &&
-                record.video.sourceVideoId == task.sourceVideoId &&
-                record.playbackLineIdentity == task.playbackLineIdentity &&
-                record.episodeIdentity == task.episodeIdentity,
-          )
-          .firstOrNull;
-      if (latest != null) {
-        watched = OfflineEpisodeProgress(
-          key: offlineProgressKeyForTask(task),
-          positionMs: latest.positionMs,
-          durationMs: latest.durationMs,
-          updatedAt: latest.updatedAt,
-          completed: latest.completed,
-        );
-      }
-    }
-    final watchedEnough = watched != null && watched.progress >= 2 / 3;
-    final showProgress =
-        hasKnownProgress &&
-        switch (task.status) {
-          DownloadTaskStatus.downloading ||
-          DownloadTaskStatus.queued ||
-          DownloadTaskStatus.paused => true,
-          DownloadTaskStatus.completed => watched != null,
-          _ => false,
-        };
-    final displayedBytes = isCompleted && task.totalBytes > 0
-        ? task.totalBytes
-        : task.downloadedBytes;
-    final sizeText = _formatBytes(displayedBytes);
-    final progressText = progress == null
-        ? null
-        : '${(progress * 100).round()}%';
-    final statusText = switch (task.status) {
-      DownloadTaskStatus.completed when watched?.completed == true => '已看完',
-      DownloadTaskStatus.completed when watched != null =>
-        '看到 ${_formatDuration(watched.positionMs)} / ${_formatDuration(watched.durationMs)}',
-      DownloadTaskStatus.completed => '已下载',
-      DownloadTaskStatus.failed => downloadFailureText(task.error),
-      DownloadTaskStatus.cancelled => '已取消',
-      DownloadTaskStatus.downloading when _isFinalizing(task) => '整理中',
-      DownloadTaskStatus.downloading when !hasKnownProgress => '正在解析',
-      DownloadTaskStatus.queued when !hasKnownProgress => '等待开始',
-      DownloadTaskStatus.paused when networkPaused =>
-        '$networkWaitText${progressText == null ? '' : ' · $progressText'}',
-      DownloadTaskStatus.paused when !hasKnownProgress => '等待继续',
-      _ => progressText ?? '',
-    };
-    final showSpeed = switch (task.status) {
-      DownloadTaskStatus.downloading || DownloadTaskStatus.queued => true,
-      _ => false,
-    };
-    final VoidCallback? primaryAction = editing || taskBusy
-        ? null
-        : switch (task.status) {
-            DownloadTaskStatus.downloading ||
-            DownloadTaskStatus.queued => () => _runTaskAction(
-              task,
-              (manager) => manager.pause(task.taskId, waitUntilPaused: true),
-            ),
-            DownloadTaskStatus.paused ||
-            DownloadTaskStatus.failed => () => _resumeTask(task),
-            DownloadTaskStatus.completed => () => _playTask(context, ref, task),
-            DownloadTaskStatus.cancelled => null,
-          };
-    Widget? action;
-    if (!editing) {
-      action = switch (task.status) {
-        DownloadTaskStatus.downloading ||
-        DownloadTaskStatus.queued => IconButton(
-          key: ValueKey('download-pause-${task.taskId}'),
-          visualDensity: VisualDensity.compact,
-          constraints: BoxConstraints.tightFor(width: 36, height: 32),
-          padding: EdgeInsets.zero,
-          tooltip: pausing ? '暂停中' : '暂停',
-          onPressed: primaryAction,
-          icon: pausing
-              ? SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.2,
-                    color: context.appColors.secondary,
-                  ),
-                )
-              : Icon(Icons.pause, size: 22),
-        ),
-        DownloadTaskStatus.paused || DownloadTaskStatus.failed => IconButton(
-          key: ValueKey('download-resume-${task.taskId}'),
-          visualDensity: VisualDensity.compact,
-          constraints: BoxConstraints.tightFor(width: 36, height: 32),
-          padding: EdgeInsets.zero,
-          tooltip: task.status == DownloadTaskStatus.failed
-              ? '重试'
-              : networkPaused
-              ? '$networkWaitText，点击继续'
-              : '继续',
-          onPressed: primaryAction,
-          icon: Icon(Icons.play_arrow, size: 24),
-        ),
-        DownloadTaskStatus.completed => IconButton(
-          visualDensity: VisualDensity.compact,
-          constraints: BoxConstraints.tightFor(width: 36, height: 36),
-          padding: EdgeInsets.zero,
-          tooltip: '播放',
-          onPressed: primaryAction,
-          style: IconButton.styleFrom(
-            backgroundColor: context.appColors.elevated,
-            foregroundColor: context.appColors.text,
-          ),
-          icon: Icon(Icons.play_arrow, size: 22),
-        ),
-        DownloadTaskStatus.cancelled => null,
-      };
-    }
-    return Card(
-      color: nested ? Colors.transparent : context.appColors.surface,
-      elevation: nested ? 0 : null,
-      margin: EdgeInsets.only(bottom: nested ? 0 : 10),
-      child: InkWell(
-        key: ValueKey('download-task-row-${task.taskId}'),
-        onTap: editing ? () => _toggleTaskSelection(task) : primaryAction,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            nested ? 24 : 16,
-            nested ? 6 : 12,
-            8,
-            nested ? 6 : 12,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  if (editing)
-                    Checkbox(
-                      value: selectedTaskIds.contains(task.taskId),
-                      onChanged: (_) => _toggleTaskSelection(task),
-                    ),
-                  Expanded(
-                    child: Text(
-                      nested
-                          ? task.episodeName
-                          : '${task.title} · ${task.episodeName}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: nested ? 15 : 16,
-                        fontWeight: FontWeight.w600,
-                        color: watchedEnough
-                            ? context.appColors.secondary
-                            : context.appColors.text,
-                      ),
-                    ),
-                  ),
-                  if (action != null) ...[SizedBox(width: 4), action],
-                ],
-              ),
-              if (showProgress) ...[
-                SizedBox(height: 5),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: watched?.progress ?? progress,
-                    minHeight: 3,
-                    backgroundColor: context.appColors.divider,
-                    color: watchedEnough
-                        ? context.appColors.secondary
-                        : context.appColors.accent,
-                  ),
-                ),
-              ],
-              SizedBox(height: 4),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      statusText,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: task.status == DownloadTaskStatus.failed
-                            ? context.appColors.error
-                            : context.appColors.secondary,
-                      ),
-                    ),
-                  ),
-                  if (showSpeed) ...[
-                    SizedBox(width: 12),
-                    Text(
-                      '速度 ${_formatSpeed(task.speedBytesPerSecond)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: context.appColors.secondary,
-                      ),
-                    ),
-                  ],
-                  SizedBox(width: 12),
-                  Text(
-                    sizeText,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: context.appColors.secondary,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget _taskCard(DownloadTask task) => DownloadTaskCard(
+    key: ValueKey(task.taskId),
+    task: task,
+    nested: true,
+    editing: editing,
+    selected: selectedTaskIds.contains(task.taskId),
+    busy: busyTaskIds.contains(task.taskId),
+    onToggleSelection: () => _toggleTaskSelection(task),
+    onLongPress: () => _enterEditingWithTasks([task]),
+    onPause: () => _runTaskAction(
+      task,
+      (manager) => manager.pause(task.taskId, waitUntilPaused: true),
+    ),
+    onResume: () => _resumeTask(task),
+    onPlay: () => _playTask(context, ref, task),
+  );
 
   Future<void> _playTask(
     BuildContext context,
@@ -1196,33 +877,4 @@ class _DownloadManagementPageState
 
   Future<DownloadTaskManager> _manager(WidgetRef ref) =>
       ref.read(downloadManagerProvider.future);
-
-  static bool _isFinalizing(DownloadTask task) =>
-      task.status == DownloadTaskStatus.downloading &&
-      task.expectedResourceCount > 0 &&
-      task.completedResourceCount >= task.expectedResourceCount;
-
-  static String _formatSpeed(int bytes) => '${_formatBytes(bytes)}/s';
-
-  static String _formatDuration(int milliseconds) {
-    final duration = Duration(milliseconds: milliseconds);
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours > 0
-        ? '$hours:$minutes:$seconds'
-        : '${duration.inMinutes}:$seconds';
-  }
-
-  static String _formatBytes(int bytes) {
-    if (bytes <= 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    var value = bytes.toDouble();
-    var unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-      value /= 1024;
-      unit++;
-    }
-    return '${value.toStringAsFixed(value >= 100 || unit == 0 ? 0 : 1)} ${units[unit]}';
-  }
 }

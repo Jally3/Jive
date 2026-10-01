@@ -1,9 +1,9 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import '../../app/theme.dart';
-import '../../domain/tmdb_catalog.dart';
-import 'curated_feed_controller.dart';
+import '../../../app/theme.dart';
+import '../../../domain/tmdb_catalog.dart';
+import '../controllers/curated_feed_controller.dart';
 
 class CuratedVideoCard extends StatefulWidget {
   const CuratedVideoCard({super.key, required this.slot, required this.onTap});

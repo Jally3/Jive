@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 
-import '../../domain/video.dart';
-import '../../domain/vod_source.dart';
+import '../../../domain/video.dart';
+import '../../../domain/vod_source.dart';
 
 enum SearchCacheMode { preferCache, refresh }
 

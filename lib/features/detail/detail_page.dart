@@ -16,89 +16,22 @@ import '../../data/vod_source/vod_source_registry.dart';
 import '../../domain/video.dart';
 import '../../domain/playback_selection.dart';
 import '../../domain/vod_source.dart';
-import '../../shared/app_anchored_menu.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/is_tv.dart';
 import '../../shared/skip_settings.dart';
 import './detail_source_controller.dart';
+import './detail_layout.dart';
 import './detail_more_sources_sheet.dart';
+import './widgets/detail_download_sheet.dart';
+import './widgets/detail_episodes_section.dart';
+import './widgets/detail_relationship_button.dart';
+import './widgets/detail_source_section.dart';
 import '../download/download_management_page.dart';
 import '../player/player_page.dart';
 
-/// 详情页宽屏布局：手机保持原密度；平板加大封面、限制主按钮宽度、剧集改等宽网格。
-@visibleForTesting
-class DetailPageLayout {
-  const DetailPageLayout({
-    required this.isTablet,
-    required this.contentWidth,
-    required this.pagePadding,
-    required this.posterWidth,
-    required this.titleSize,
-    required this.appBarTitleSize,
-    required this.descMaxLines,
-    required this.actionRowMaxWidth,
-    required this.episodeColumns,
-  });
-
-  static const double tabletBreakpoint = 600;
-  static const double maxContentWidth = 960;
-  static const double tabletActionRowMaxWidth = 560;
-  static const double tabletPosterWidth = 168;
-  static const double phonePosterWidth = 120;
-  static const double episodePillHeight = 48;
-
-  final bool isTablet;
-  final double contentWidth;
-  final double pagePadding;
-  final double posterWidth;
-  final double titleSize;
-  final double appBarTitleSize;
-  final int descMaxLines;
-  final double actionRowMaxWidth;
-  final int episodeColumns;
-
-  bool get useEpisodeGrid => isTablet && episodeColumns >= 5;
-
-  double get episodeAspectRatio {
-    if (episodeColumns <= 0) return 2.4;
-    final inner = math.max(0.0, contentWidth - pagePadding * 2);
-    final cell = (inner - 8 * (episodeColumns - 1)) / episodeColumns;
-    return cell <= 0 ? 2.4 : cell / episodePillHeight;
-  }
-
-  factory DetailPageLayout.resolve({
-    required double viewportWidth,
-    required double shortestSide,
-  }) {
-    final isTablet = shortestSide >= tabletBreakpoint;
-    final contentWidth = isTablet
-        ? math.min(viewportWidth, maxContentWidth)
-        : viewportWidth;
-    final padding = isTablet ? 24.0 : 16.0;
-    final inner = math.max(0.0, contentWidth - padding * 2);
-    return DetailPageLayout(
-      isTablet: isTablet,
-      contentWidth: contentWidth,
-      pagePadding: padding,
-      posterWidth: isTablet ? tabletPosterWidth : phonePosterWidth,
-      titleSize: isTablet ? 28 : 22,
-      appBarTitleSize: isTablet ? 22 : 17,
-      descMaxLines: isTablet ? 8 : 4,
-      actionRowMaxWidth: isTablet ? tabletActionRowMaxWidth : double.infinity,
-      episodeColumns: _episodeColumns(inner, isTablet: isTablet),
-    );
-  }
-
-  static int _episodeColumns(double inner, {required bool isTablet}) {
-    if (!isTablet) return 0;
-    const minCell = 110.0;
-    const spacing = 8.0;
-    final count = ((inner + spacing) / (minCell + spacing)).floor();
-    return count.clamp(5, 8);
-  }
-}
-
-enum _RelationshipAction { follow, favorite, stopFollowing, remove }
+// 响应式布局指标独立成 detail_layout.dart；此处 re-export 保留
+// detail_page_test.dart 等既有引用路径。
+export 'detail_layout.dart';
 
 class VideoDetailPage extends ConsumerStatefulWidget {
   const VideoDetailPage({super.key, required this.video});
@@ -108,9 +41,6 @@ class VideoDetailPage extends ConsumerStatefulWidget {
 }
 
 class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
-  /// 剧集超过该数量时按每组 100 集折叠展示。
-  static const int _epsGroupSize = 100;
-
   Video? detail;
   String? error;
   bool loading = true, resolving = false, expanded = false;
@@ -301,11 +231,11 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     final index = indexOfEpisode(episodes, played);
     if (index == null) return;
     selected = index;
-    if (episodes.length > _epsGroupSize) {
+    if (episodes.length > DetailEpisodesSection.groupSize) {
       final displayIdx = reversed ? episodes.length - 1 - index : index;
       _expandedEpsGroups
         ..clear()
-        ..add(displayIdx ~/ _epsGroupSize);
+        ..add(displayIdx ~/ DetailEpisodesSection.groupSize);
     }
     setState(() {});
   }
@@ -353,279 +283,19 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       isScrollControlled: true,
       // 宽屏（电视/平板横屏）下收敛宽度居中，不随屏幕拉满。
       constraints: BoxConstraints(maxWidth: 600),
-      builder: (context) {
-        final checked = <int>{current};
-        return StatefulBuilder(
-          builder: (context, setSheetState) => Consumer(
-            builder: (context, ref, _) {
-              final tasks = ref.watch(downloadTasksProvider).value ?? [];
-              final addedIndexes = <int>{
-                for (
-                  var index = 0;
-                  index < sc!.activeVideo.episodes.length;
-                  index++
-                )
-                  if (_taskForEpisode(tasks, sc!.activeVideo.episodes[index])
-                      case final task?
-                      when task.status != DownloadTaskStatus.cancelled)
-                    index,
-              };
-              final availableIndexes = {
-                for (
-                  var index = 0;
-                  index < sc!.activeVideo.episodes.length;
-                  index++
-                )
-                  if (!addedIndexes.contains(index)) index,
-              };
-              final effectiveChecked = checked.intersection(availableIndexes);
-              final allAvailableSelected =
-                  availableIndexes.isNotEmpty &&
-                  effectiveChecked.length == availableIndexes.length;
-              return SafeArea(
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  child: SizedBox(
-                    height: MediaQuery.sizeOf(context).height * 0.7,
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '选择下载剧集',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: availableIndexes.isEmpty
-                                  ? null
-                                  : () {
-                                      setSheetState(() {
-                                        if (allAvailableSelected) {
-                                          checked.clear();
-                                        } else {
-                                          checked
-                                            ..clear()
-                                            ..addAll(availableIndexes);
-                                        }
-                                      });
-                                    },
-                              child: Text(allAvailableSelected ? '取消全选' : '全选'),
-                            ),
-                          ],
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          children: [
-                            Expanded(child:   Text(
-
-                          '下载时自动跳过广告片段',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: context.appColors.secondary,
-                          ),
-                        ),)
-                           ],),
-                       
-                        Divider(),
-                        Expanded(
-                          child: ListView.builder(
-                            itemCount: sc!.activeVideo.episodes.length,
-                            itemBuilder: (_, index) {
-                              final episode = sc!.activeVideo.episodes[index];
-                              final task = _taskForEpisode(tasks, episode);
-                              final alreadyAdded =
-                                  task != null &&
-                                  task.status != DownloadTaskStatus.cancelled;
-                              return CheckboxListTile(
-                                key: ValueKey('download-episode-$index'),
-                                value: alreadyAdded || checked.contains(index),
-                                checkboxShape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                fillColor: alreadyAdded
-                                    ? WidgetStatePropertyAll(
-                                        context.appColors.accentPressed.withValues(alpha: .2))
-                                      
-                                    : null,
-                                title: Text(
-                                  episode.name,
-                                  style: alreadyAdded
-                                      ? TextStyle(
-                                          color: context.appColors.tertiary,
-                                        )
-                                      : null,
-                                ),
-                                subtitle: task == null
-                                    ? null
-                                    : Text(
-                                        _downloadTaskSummary(task),
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: context.appColors.secondary,
-                                        ),
-                                      ),
-                                onChanged: (value) {
-                                  if (alreadyAdded) {
-                                    showAppToast(this.context, '已经添加到下载');
-                                    return;
-                                  }
-                                  setSheetState(() {
-                                    if (value == true) {
-                                      checked.add(index);
-                                    } else {
-                                      checked.remove(index);
-                                    }
-                                  });
-                                },
-                              );
-                            },
-                          ),
-                        ),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: SizedBox(
-                                height: 48,
-                                child: OutlinedButton.icon(
-                                  key: const ValueKey(
-                                    'download-management-button',
-                                  ),
-                                  onPressed: () {
-                                    Navigator.pop(context);
-                                    if (!mounted) return;
-                                    Navigator.of(this.context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            DownloadManagementPage(),
-                                      ),
-                                    );
-                                  },
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor:
-                                        context.appColors.secondary,
-                                    side: BorderSide(
-                                      color: context.appColors.tertiary,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                    ),
-                                  ),
-                                  icon: Icon(Icons.download_done_outlined),
-                                  label: Text('下载管理'),
-                                ),
-                              ),
-                            ),
-                            SizedBox(width: 12),
-                            Expanded(
-                              child: SizedBox(
-                                height: 48,
-                                child: FilledButton.icon(
-                                  key: const ValueKey(
-                                    'confirm-download-button',
-                                  ),
-                                  onPressed: effectiveChecked.isEmpty
-                                      ? null
-                                      : () => Navigator.pop(
-                                          context,
-                                          effectiveChecked.toList(),
-                                        ),
-                                  style: FilledButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                    ),
-                                  ),
-                                  icon: Icon(Icons.download),
-                                  label: Text(
-                                    '确认下载（${effectiveChecked.length} 集）',
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        );
-      },
+      builder: (context) => DetailDownloadSheet(
+        video: sc!.activeVideo,
+        currentEpisodeIndex: current,
+        onOpenManagement: () {
+          if (!mounted) return;
+          Navigator.of(
+            this.context,
+          ).push(MaterialPageRoute(builder: (_) => DownloadManagementPage()));
+        },
+      ),
     );
     if (selectedIndexes == null || selectedIndexes.isEmpty || !mounted) return;
     await _downloadEpisodes(selectedIndexes);
-  }
-
-  DownloadTask? _taskForEpisode(List<DownloadTask> tasks, Episode episode) {
-    final matches = tasks
-        .where(
-          (task) =>
-              task.sourceId == sc?.activeVideo.sourceId &&
-              task.sourceVideoId == sc?.activeVideo.sourceVideoId &&
-              _sameDownloadEpisode(task, episode),
-        )
-        .toList();
-    return matches
-            .where((task) => task.status != DownloadTaskStatus.cancelled)
-            .firstOrNull ??
-        matches.firstOrNull;
-  }
-
-  bool _sameDownloadEpisode(DownloadTask task, Episode episode) {
-    if (task.episodeIdentity.isNotEmpty &&
-        episode.identity.isNotEmpty &&
-        task.episodeIdentity == episode.identity) {
-      return true;
-    }
-    if (task.episodeId.isNotEmpty &&
-        episode.id.isNotEmpty &&
-        task.episodeId == episode.id) {
-      return true;
-    }
-    return task.episodeName.trim().isNotEmpty &&
-        task.episodeName.trim().toLowerCase() ==
-            episode.name.trim().toLowerCase();
-  }
-
-  String _downloadTaskSummary(DownloadTask task) {
-    final status = switch (task.status) {
-      DownloadTaskStatus.queued => '排队中',
-      DownloadTaskStatus.downloading => '下载中',
-      DownloadTaskStatus.paused => '已暂停',
-      DownloadTaskStatus.completed => '已完成',
-      DownloadTaskStatus.failed => '失败，可重试',
-      DownloadTaskStatus.cancelled => '已取消',
-    };
-    final progress = task.expectedResourceCount > 0
-        ? ' · ${(task.progress * 100).round()}%'
-        : '';
-    final size = task.totalBytes > 0
-        ? ' · ${_formatBytes(task.downloadedBytes)}/${_formatBytes(task.totalBytes)}'
-        : '';
-    final speed = task.status == DownloadTaskStatus.downloading
-        ? ' · ${_formatSpeed(task.speedBytesPerSecond)}'
-        : '';
-    return '$status$progress$size$speed';
-  }
-
-  static String _formatSpeed(int bytes) => '${_formatBytes(bytes)}/s';
-
-  static String _formatBytes(int bytes) {
-    if (bytes <= 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    var value = bytes.toDouble();
-    var unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-      value /= 1024;
-      unit++;
-    }
-    return '${value.toStringAsFixed(value >= 100 || unit == 0 ? 0 : 1)} ${units[unit]}';
   }
 
   Future<void> _downloadEpisodes(List<int> indexes) async {
@@ -926,321 +596,27 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         )
       : const Icon(Icons.download_outlined);
 
-  Widget _relationshipBtn(Video v) => Consumer(
-    builder: (_, ref, _) {
-      final favs = ref.watch(favoriteControllerProvider);
-      final record = favs.value
-          ?.where((item) => item.video.globalId == v.globalId)
-          .firstOrNull;
-      final favorite = record?.isFavorite ?? false;
-      final following = record?.isFollowing ?? false;
-      final supportsFollow = v.supportsFollowUpdates;
-      final label = following
-          ? '已追更'
-          : supportsFollow
-          ? (favorite ? '已收藏' : '追更')
-          : (favorite ? '已收藏' : '收藏');
-      final icon = following
-          ? Icons.check
-          : supportsFollow && !favorite
-          ? Icons.add
-          : favorite
-          ? Icons.favorite
-          : Icons.favorite_outline;
-      if (supportsFollow) {
-        return _relationshipMenuButton(
-          v,
-          ref,
-          label: label,
-          icon: icon,
-          favorite: favorite,
-          following: following,
-          isLoading: favs.isLoading,
-        );
-      }
-      return SizedBox(
-        key: const ValueKey('detail-relationship-button'),
-        width: 96,
-        height: 48,
-        child: OutlinedButton.icon(
-          onPressed: favs.isLoading
-              ? null
-              : () async {
-                  try {
-                    final controller = ref.read(
-                      favoriteControllerProvider.notifier,
-                    );
-                    await controller.toggle(v);
-                    if (mounted) {
-                      showAppToast(context, favorite ? '已取消收藏' : '已收藏');
-                    }
-                  } catch (_) {
-                    if (mounted) {
-                      showAppToast(context, '保存失败，请重试');
-                    }
-                  }
-                },
-          style: OutlinedButton.styleFrom(
-            foregroundColor: context.appColors.text,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-          ),
-          icon: Icon(icon, size: 18),
-          label: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(label, maxLines: 1, softWrap: false),
-          ),
-        ),
-      );
-    },
+  Widget _relationshipBtn(Video v) =>
+      DetailRelationshipButton(video: v, isTablet: _layout.isTablet);
+
+  Widget _sourceSection() => DetailSourceSection(
+    controller: sc!,
+    onChipTap: _onSourceChipTap,
+    onMoreSources: _moreSources,
   );
 
-  Widget _relationshipMenuButton(
-    Video video,
-    WidgetRef ref, {
-    required String label,
-    required IconData icon,
-    required bool favorite,
-    required bool following,
-    required bool isLoading,
-  }) => SizedBox(
-    key: const ValueKey('detail-relationship-button'),
-    width: _layout.isTablet ? 200 : 176,
-    height: 48,
-    child: Builder(
-      builder: (anchorContext) => OutlinedButton.icon(
-        onPressed: isLoading
-            ? null
-            : () => _openRelationshipMenu(
-                anchorContext,
-                video,
-                ref,
-                favorite: favorite,
-                following: following,
-              ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: anchorContext.appColors.text,
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-        ),
-        icon: Icon(icon, size: 18),
-        label: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(label, maxLines: 1, softWrap: false),
-              const SizedBox(width: 2),
-              const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-
-  Future<void> _openRelationshipMenu(
-    BuildContext anchorContext,
-    Video video,
-    WidgetRef ref, {
-    required bool favorite,
-    required bool following,
-  }) async {
-    final action = await showAppAnchoredMenu<_RelationshipAction>(
-      anchorContext: anchorContext,
-      matchAnchorWidth: true,
-      maxWidth: 280,
-      builder: (menuContext) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (following) ...[
-              AppAnchoredMenuItem(
-                key: const ValueKey('detail-follow-menu-stop'),
-                icon: Icons.notifications_off_outlined,
-                title: '取消追更',
-                subtitle: '停止新集提醒，保留收藏',
-                onTap: () => Navigator.pop(
-                  menuContext,
-                  _RelationshipAction.stopFollowing,
-                ),
-              ),
-              AppAnchoredMenuItem(
-                key: const ValueKey('detail-follow-menu-remove'),
-                icon: Icons.delete_outline,
-                title: '取消追更并移除',
-                subtitle: '同时从个人内容库移除',
-                onTap: () =>
-                    Navigator.pop(menuContext, _RelationshipAction.remove),
-              ),
-            ] else ...[
-              AppAnchoredMenuItem(
-                key: const ValueKey('detail-follow-menu-follow'),
-                icon: Icons.add_alert_outlined,
-                title: favorite ? '开启追更' : '追更并收藏',
-                subtitle: '有新集时提醒',
-                onTap: () =>
-                    Navigator.pop(menuContext, _RelationshipAction.follow),
-              ),
-              AppAnchoredMenuItem(
-                key: const ValueKey('detail-follow-menu-favorite'),
-                icon: favorite ? Icons.delete_outline : Icons.favorite_outline,
-                title: favorite ? '取消收藏' : '仅收藏',
-                subtitle: favorite ? '从个人内容库移除' : '保存但不提醒',
-                onTap: () => Navigator.pop(
-                  menuContext,
-                  favorite
-                      ? _RelationshipAction.remove
-                      : _RelationshipAction.favorite,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-    if (action != null) {
-      await _saveRelationshipAction(video, ref, action: action);
+  /// 来源芯片点击分支：有候选先挑选、已加载直接切换、未检测按需搜一次、
+  /// 失败重试检测。与「更多来源」入口保持一致。
+  void _onSourceChipTap(DetailSourceState s) {
+    if (s.status == DetailSourceStatus.hasResource) {
+      _candidates(s);
+    } else if (s.status == DetailSourceStatus.loaded && s.detail != null) {
+      _switchLoaded(s);
+    } else if (s.status == DetailSourceStatus.notDetected) {
+      _searchOne(s.source.id);
+    } else if (s.status == DetailSourceStatus.failed) {
+      sc!.retryDetection(s.source.id);
     }
-  }
-
-  Future<void> _saveRelationshipAction(
-    Video video,
-    WidgetRef ref, {
-    required _RelationshipAction action,
-  }) async {
-    try {
-      final controller = ref.read(favoriteControllerProvider.notifier);
-      switch (action) {
-        case _RelationshipAction.follow:
-          await controller.follow(video);
-          if (mounted) showAppToast(context, '已追更，有新集时会提醒你');
-          return;
-        case _RelationshipAction.favorite:
-          await controller.toggle(video);
-          if (mounted) showAppToast(context, '已收藏');
-          return;
-        case _RelationshipAction.stopFollowing:
-          await controller.stopFollowing(video.globalId, keepFavorite: true);
-          if (mounted) showAppToast(context, '已取消追更，收藏仍保留');
-          return;
-        case _RelationshipAction.remove:
-          final wasFollowing = ref
-              .read(favoriteControllerProvider)
-              .value
-              ?.where((item) => item.video.globalId == video.globalId)
-              .firstOrNull
-              ?.isFollowing;
-          await controller.stopFollowing(video.globalId, keepFavorite: false);
-          if (mounted) {
-            showAppToast(
-              context,
-              wasFollowing == true ? '已取消追更并移除收藏' : '已取消收藏',
-            );
-          }
-          return;
-      }
-    } catch (_) {
-      if (mounted) {
-        showAppToast(context, '保存失败，请重试');
-      }
-    }
-  }
-
-  Widget _sourceSection() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text('播放来源', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-      SizedBox(height: 8),
-      _sourceBar(),
-    ],
-  );
-
-  Widget _sourceBar() {
-    final states = sc!.sourceStates;
-    final hasBackup = states.any(
-      (s) =>
-          s.source.id != sc!.activeSourceId &&
-          s.status != DetailSourceStatus.notDetected,
-    );
-    return SizedBox(
-      height: 40,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          for (final s in states) _chip(s),
-          if (!hasBackup)
-            Padding(
-              padding: EdgeInsets.only(right: 6),
-              child: ActionChip(
-                label: Text('查找其他来源'),
-                onPressed: sc!.switching
-                    ? null
-                    : () => sc!.detectOtherSources(),
-              ),
-            )
-          else
-            Padding(
-              padding: EdgeInsets.only(right: 6),
-              child: ActionChip(
-                label: Text('更多 ▾'),
-                onPressed: () => _moreSources(),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _chip(DetailSourceState s) {
-    final active = s.source.id == sc!.activeSourceId;
-    final name = s.source.name;
-    String label;
-    switch (s.status) {
-      case DetailSourceStatus.loaded:
-        final c = s.episodeCount;
-        label = c != null && c > 0
-            ? (c == 1 ? '$name 正片' : '$name $c集')
-            : '$name 有资源';
-      case DetailSourceStatus.hasResource:
-        label = '$name 有资源';
-      case DetailSourceStatus.noResult:
-        label = '$name 0';
-      case DetailSourceStatus.detecting:
-        label = '$name …';
-      case DetailSourceStatus.failed:
-        label = '$name !';
-      case DetailSourceStatus.notDetected:
-        label = '$name —';
-    }
-    return Padding(
-      padding: EdgeInsets.only(right: 6),
-      child: FilterChip(
-        label: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: active
-                ? context.appColors.onAccent
-                : context.appColors.secondary,
-          ),
-        ),
-        selected: active,
-        onSelected: (_) {
-          if (active || sc!.switching) return;
-          if (s.status == DetailSourceStatus.hasResource) {
-            _candidates(s);
-          } else if (s.status == DetailSourceStatus.loaded &&
-              s.detail != null) {
-            _switchLoaded(s);
-          } else if (s.status == DetailSourceStatus.notDetected) {
-            _searchOne(s.source.id);
-          } else if (s.status == DetailSourceStatus.failed) {
-            sc!.retryDetection(s.source.id);
-          }
-        },
-        visualDensity: VisualDensity.compact,
-      ),
-    );
   }
 
   void _switchLoaded(DetailSourceState s) {
@@ -1266,100 +642,14 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       _confirm(s, s.candidates.first);
       return;
     }
-    showModalBottomSheet<void>(
-      context: context,
-      constraints: BoxConstraints(maxWidth: 600),
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: EdgeInsets.fromLTRB(20, 12, 20, 8),
-                child: Text(
-                  '从 ${s.source.name} 选择',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                ),
-              ),
-              Divider(height: 1),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: s.candidates.length,
-                  itemBuilder: (_, i) {
-                    final c = s.candidates[i];
-                    return ListTile(
-                      leading: c.posterUrl.isEmpty
-                          ? Icon(
-                              Icons.movie_outlined,
-                              color: context.appColors.tertiary,
-                            )
-                          : ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: CachedNetworkImage(
-                                imageUrl: c.posterUrl,
-                                width: 40,
-                                height: 60,
-                                fit: BoxFit.cover,
-                                errorWidget: (_, _, _) => Icon(
-                                  Icons.movie_outlined,
-                                  color: context.appColors.tertiary,
-                                ),
-                              ),
-                            ),
-                      title: Text(
-                        c.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        [
-                          c.year,
-                          c.remarks,
-                          c.area,
-                          if (c.episodes.isNotEmpty)
-                            c.episodes.length == 1
-                                ? '正片'
-                                : '${c.episodes.length}集',
-                        ].where((e) => e.isNotEmpty).join(' · '),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: context.appColors.secondary,
-                        ),
-                      ),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _confirm(s, c);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    showDetailCandidatesSheet(context, s: s, onSelect: (c) => _confirm(s, c));
   }
 
   Future<void> _confirm(DetailSourceState s, Video c) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('确认切换来源'),
-        content: Text('将从 ${s.source.name} 加载「${c.title}」的播放信息。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text('确认'),
-          ),
-        ],
-      ),
+    final ok = await confirmSourceSwitch(
+      context,
+      sourceName: s.source.name,
+      videoTitle: c.title,
     );
     if (ok != true) return;
     final current = detail;
@@ -1483,203 +773,43 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     ],
   );
 
-  Widget _eps(Video v) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '剧集',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-              ),
-            ),
-            Text(
-              '${v.episodes.length} 集',
-              style: TextStyle(color: context.appColors.secondary),
-            ),
-            if (v.episodes.length > 1)
-              TextButton.icon(
-                onPressed: () => _toggleReversed(v),
-                style: TextButton.styleFrom(
-                  foregroundColor: context.appColors.secondary,
-                ),
-                icon: Icon(Icons.swap_vert, size: 18),
-                label: Text(reversed ? '正序' : '倒序'),
-              ),
-          ],
-        ),
-        SizedBox(height: 12),
-        if (v.episodes.isEmpty)
-          Padding(
-            padding: EdgeInsets.symmetric(vertical: 32),
-            child: AppEmptyView(message: '暂时没有可用剧集'),
-          )
-        else if (v.episodes.length <= _epsGroupSize)
-          _epsWrap(v, 0, v.episodes.length)
-        else
-          _epsGroups(v),
-      ],
-    );
+  Widget _eps(Video v) => DetailEpisodesSection(
+    video: v,
+    selected: selected,
+    reversed: reversed,
+    expandedGroups: _expandedEpsGroups,
+    layout: _layout,
+    onToggleReversed: () => _toggleReversed(v),
+    onToggleGroup: _toggleEpsGroup,
+    onEpisodeTap: (idx) {
+      setState(() => selected = idx);
+      _play(episodeIndex: idx);
+    },
+  );
+
+  void _toggleEpsGroup(int group) {
+    setState(() {
+      if (_expandedEpsGroups.contains(group)) {
+        _expandedEpsGroups.remove(group);
+      } else {
+        _expandedEpsGroups.add(group);
+      }
+    });
   }
 
   void _toggleReversed(Video v) {
     setState(() {
       reversed = !reversed;
       final total = v.episodes.length;
-      if (total > _epsGroupSize) {
+      if (total > DetailEpisodesSection.groupSize) {
         // 倒序后保持选中集所在分组展开。
         final displayIdx = reversed
             ? total - 1 - selected.clamp(0, total - 1)
             : selected.clamp(0, total - 1);
         _expandedEpsGroups
           ..clear()
-          ..add(displayIdx ~/ _epsGroupSize);
+          ..add(displayIdx ~/ DetailEpisodesSection.groupSize);
       }
     });
-  }
-
-  /// 超过 100 集时按 100 集一组折叠展示，默认只展开选中集所在分组。
-  Widget _epsGroups(Video v) {
-    final total = v.episodes.length;
-    final groupCount = (total + _epsGroupSize - 1) ~/ _epsGroupSize;
-    return Column(
-      children: [
-        for (var g = 0; g < groupCount; g++) ...[
-          _epsGroupHeader(total, g),
-          if (_expandedEpsGroups.contains(g))
-            Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: _epsWrap(
-                v,
-                g * _epsGroupSize,
-                math.min((g + 1) * _epsGroupSize, total),
-              ),
-            ),
-        ],
-      ],
-    );
-  }
-
-  Widget _epsGroupHeader(int total, int group) {
-    final start = group * _epsGroupSize;
-    final end = math.min(start + _epsGroupSize, total);
-    // 显示顺序对应的实际集号范围（倒序时组内集号从大到小）。
-    final first = reversed ? total - start : start + 1;
-    final last = reversed ? total - end + 1 : end;
-    final lo = math.min(first, last);
-    final hi = math.max(first, last);
-    final isExpanded = _expandedEpsGroups.contains(group);
-    return InkWell(
-      onTap: () => setState(() {
-        if (isExpanded) {
-          _expandedEpsGroups.remove(group);
-        } else {
-          _expandedEpsGroups.add(group);
-        }
-      }),
-      child: Padding(
-        padding: EdgeInsets.symmetric(vertical: 10),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                '第 $lo–$hi 集',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: context.appColors.secondary,
-                ),
-              ),
-            ),
-            Icon(
-              isExpanded ? Icons.expand_less : Icons.expand_more,
-              size: 20,
-              color: context.appColors.secondary,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 渲染显示顺序区间 [start, end) 内的剧集按钮。
-  Widget _epsWrap(Video v, int start, int end) {
-    final total = v.episodes.length;
-    final items = [
-      for (var i = 0; i < end - start; i++)
-        _episodeChip(v, reversed ? total - 1 - (start + i) : start + i),
-    ];
-    if (!_layout.useEpisodeGrid) {
-      return Wrap(spacing: 8, runSpacing: 8, children: items);
-    }
-    return GridView.count(
-      crossAxisCount: _layout.episodeColumns,
-      shrinkWrap: true,
-      physics: NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 8,
-      crossAxisSpacing: 8,
-      childAspectRatio: _layout.episodeAspectRatio,
-      children: items,
-    );
-  }
-
-  Widget _episodeChip(Video v, int idx) {
-    final episode = v.episodes[idx];
-    final isSelected = selected == idx;
-    if (!_layout.useEpisodeGrid) {
-      return ChoiceChip(
-        label: Text(episode.name),
-        selected: isSelected,
-        selectedColor: context.appColors.accent,
-        labelStyle: TextStyle(
-          color: isSelected
-              ? context.appColors.onAccent
-              : context.appColors.secondary,
-        ),
-        showCheckmark: false,
-        onSelected: (_) {
-          setState(() => selected = idx);
-          _play(episodeIndex: idx);
-        },
-      );
-    }
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        customBorder: StadiumBorder(),
-        onTap: () {
-          setState(() => selected = idx);
-          _play(episodeIndex: idx);
-        },
-        child: Ink(
-          decoration: ShapeDecoration(
-            color: isSelected
-                ? context.appColors.accent
-                : context.appColors.elevated.withValues(alpha: 0.6),
-            shape: StadiumBorder(
-              side: isSelected
-                  ? BorderSide.none
-                  : BorderSide(color: context.appColors.divider),
-            ),
-          ),
-          child: Center(
-            child: Text(
-              episode.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isSelected
-                    ? context.appColors.onAccent
-                    : context.appColors.secondary,
-                fontSize: 15,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }

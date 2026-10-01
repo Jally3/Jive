@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'curated_feed_controller.dart';
+import '../controllers/curated_feed_controller.dart';
 import 'curated_video_card.dart';
 
 class CuratedVideoGrid extends StatelessWidget {

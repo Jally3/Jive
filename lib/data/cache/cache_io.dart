@@ -77,6 +77,10 @@ class CacheUpstreamStreamException implements Exception {
   const CacheUpstreamStreamException();
 }
 
+class CacheFetchCancelledException implements Exception {
+  const CacheFetchCancelledException();
+}
+
 class ResourceFetcher {
   ResourceFetcher({
     required this.client,
@@ -90,6 +94,7 @@ class ResourceFetcher {
     this.onResourceLength,
     this.onBytesReceived,
     this.failOnCacheUnavailable = false,
+    this.isCancelled,
     this.encryptedSegments = false,
     SingleFlight<CacheFetchResult>? singleFlight,
   }) : singleFlight = singleFlight ?? SingleFlight();
@@ -105,6 +110,7 @@ class ResourceFetcher {
   final void Function(String resourceId, int length)? onResourceLength;
   final void Function(int bytes)? onBytesReceived;
   final bool failOnCacheUnavailable;
+  final bool Function()? isCancelled;
 
   /// 分片为加密内容（AES-128 密文）：跳过格式魔数校验（密文没有
   /// TS 同步字节/fMP4 box 头），字节数比对仍然有效。
@@ -327,6 +333,10 @@ class ResourceFetcher {
         'mode': 'cacheWriteThrough',
       });
     }
+    if (isCancelled?.call() == true) {
+      await upstream.stream.listen((_) {}).cancel();
+      throw const CacheFetchCancelledException();
+    }
     if (upstream.statusCode != HttpStatus.ok) {
       return CacheFetchResult(
         statusCode: upstream.statusCode,
@@ -394,10 +404,28 @@ class ResourceFetcher {
     if (trace != null) {
       _trace(trace, 'fileSetup', {'durationMs': _elapsedMs(fileSetupClock)});
     }
-    final controller = StreamController<List<int>>();
+    late StreamSubscription<List<int>> upstreamSubscription;
+    var finishing = false;
+    final controller = StreamController<List<int>>(
+      onCancel: () async {
+        if (finishing) return;
+        try {
+          await upstreamSubscription.cancel();
+        } finally {
+          try {
+            await sink.close();
+          } finally {
+            await lease.cancel();
+            try {
+              if (await part.exists()) await part.delete();
+            } catch (_) {}
+          }
+        }
+      },
+    );
     var written = 0;
     var sawFirstByte = false;
-    upstream.stream.listen(
+    upstreamSubscription = upstream.stream.listen(
       (chunk) {
         if (!sawFirstByte) {
           sawFirstByte = true;
@@ -421,8 +449,12 @@ class ResourceFetcher {
           });
         }
         final commitClock = trace == null ? null : (Stopwatch()..start());
+        finishing = true;
         try {
           await sink.close();
+          if (isCancelled?.call() == true) {
+            throw const CacheFetchCancelledException();
+          }
           if (ext == 'key' && written != 16) {
             throw const CacheResourceValidationException();
           }
@@ -443,6 +475,9 @@ class ResourceFetcher {
           }
           if (!await lease.ensureCapacity(written)) {
             throw const CacheQuotaException();
+          }
+          if (isCancelled?.call() == true) {
+            throw const CacheFetchCancelledException();
           }
           if (declaredLength <= 0) {
             onResourceLength?.call(resourceId, written);
@@ -506,6 +541,7 @@ class ResourceFetcher {
             'completed': false,
           });
         }
+        finishing = true;
         _reportCacheBypass(PlaybackFallbackReason.cacheWriteFailed);
         Object? closeError;
         try {

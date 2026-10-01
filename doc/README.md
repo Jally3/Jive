@@ -9,6 +9,9 @@ doc/
 ├── README.md                                 # 本索引
 ├── codebase/
 │   └── CODEBASE_MAP.md                       # 代码文件地图（逐文件索引）
+├── merge/
+│   ├── 2026-09-27_docs-app-flows-and-prototypes_into_refactor-code-structure.md # 分支合并、冲突处理与验证记录
+│   └── 2026-10-01_refactor-code-structure_into_playback-startup-trace.md # 播放追踪与结构重构的冲突解决日志
 ├── interview/
 │   └── PROJECT_TECHNICAL_HIGHLIGHTS.md       # 项目技术亮点、原理与面试问答
 ├── hot-update/
@@ -68,6 +71,8 @@ doc/
 | 文档 | 状态 | 说明 |
 | --- | --- | --- |
 | [`codebase/CODEBASE_MAP.md`](codebase/CODEBASE_MAP.md) | 持续生效 | 代码文件地图：`lib/` 逐文件作用索引，新增/移动/删除文件时须同步 |
+| [`merge/2026-09-27_docs-app-flows-and-prototypes_into_refactor-code-structure.md`](merge/2026-09-27_docs-app-flows-and-prototypes_into_refactor-code-structure.md) | 已完成 | `docs/app-flows-and-prototypes` 合并至 `refactor/code-structure` 的任务拆分、冲突决策与验证记录 |
+| [`merge/2026-10-01_refactor-code-structure_into_playback-startup-trace.md`](merge/2026-10-01_refactor-code-structure_into_playback-startup-trace.md) | 待审查，未提交 | `refactor/code-structure` 合入播放追踪分支的冲突取舍、回归测试及既有测试问题对照 |
 | [`interview/PROJECT_TECHNICAL_HIGHLIGHTS.md`](interview/PROJECT_TECHNICAL_HIGHLIGHTS.md) | 持续生效 | 基于当前实现的项目介绍、技术原理、权衡、面试追问与 STAR 案例 |
 | [`hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md`](hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md) | 核心流程已实现 | Android 新版本后台检查、弹窗提示和外部浏览器打开 APK 下载链接；待部署清单并真机验收 |
 | [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) | 持续生效 | 「夜幕影院」深色主题设计规范（颜色/字号/组件 Token），UI 改动须遵守 |

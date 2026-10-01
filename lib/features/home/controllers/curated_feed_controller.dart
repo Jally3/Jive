@@ -1,16 +1,15 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-
-import '../../data/catalog/tmdb_catalog_repository.dart';
-import '../../data/content/video_matcher.dart';
-import '../../data/video_repository.dart';
-import '../../domain/tmdb_catalog.dart';
-import '../../domain/video.dart';
-import '../../domain/video_feed.dart';
-import '../../domain/video_search_target.dart';
-import '../../domain/vod_source.dart';
-import 'curated_vod_search_pool.dart';
+import '../../../data/catalog/tmdb_catalog_repository.dart';
+import '../../../data/content/video_matcher.dart';
+import '../../../domain/tmdb_catalog.dart';
+import '../../../domain/video.dart';
+import '../../../domain/video_feed.dart';
+import '../../../domain/video_search_target.dart';
+import '../../../domain/vod_source.dart';
+import '../../../data/video_repository.dart';
+import '../support/curated_vod_search_pool.dart';
+import 'vod_feed_controller_base.dart';
 
 enum CuratedSlotStatus {
   queued,
@@ -22,7 +21,7 @@ enum CuratedSlotStatus {
   failed,
 }
 
-class CuratedSearchSlot {
+class CuratedSearchSlot implements VodMatchEvidenceSlot {
   CuratedSearchSlot({
     required this.catalogIndex,
     required this.catalogItem,
@@ -34,13 +33,18 @@ class CuratedSearchSlot {
   final TmdbCatalogItem catalogItem;
   final String sourceName;
   CuratedSlotStatus status = CuratedSlotStatus.queued;
+  @override
   Video? matchedVideo;
   int currentQueryIndex = 0;
   String currentQuery = '';
   int evidenceQueryIndex = 0;
+  @override
   String evidenceQuery = '';
+  @override
   int rawResultCount = 0;
+  @override
   List<String> candidateTitles = const [];
+  @override
   Object? lastError;
   int attempt = 0;
   int generation;
@@ -72,14 +76,17 @@ class CuratedFeedEntry {
   final List<String> candidateTitles;
 }
 
-class CuratedFeedController extends ChangeNotifier {
+class CuratedFeedController extends VodMatchingFeedControllerBase {
+  // 显式 super 调用是必要的：自建池时需要带上 requestTimeout，
+  // 无法用 super 参数转发，屏蔽 use_super_parameters。
+  // ignore: use_super_parameters
   CuratedFeedController({
     required this.catalogRepository,
-    required this.videoRepository,
-    required this.source,
+    required VideoRepository videoRepository,
+    required VodSource source,
     this.feed = VideoFeed.newReleases,
     this.scope = TmdbCatalogScope.all,
-    this.matcher = const VideoMatcher(),
+    VideoMatcher matcher = const VideoMatcher(),
     int targetCount = 20,
     int maxCandidatesPerLoad = 20,
     this.maxFallbackSearches = 6,
@@ -91,15 +98,16 @@ class CuratedFeedController extends ChangeNotifier {
     this.maxCachedViews = 8,
     CuratedVodSearchPool? searchPool,
   }) : catalogPageSize = maxCandidatesPerLoad,
-       _searchPool =
-           searchPool ?? CuratedVodSearchPool(requestTimeout: requestTimeout),
        _ownsSearchPool = searchPool == null,
-       _sourceFingerprint = curatedVodSourceFingerprint(source);
+       super(
+         source: source,
+         videoRepository: videoRepository,
+         searchPool:
+             searchPool ?? CuratedVodSearchPool(requestTimeout: requestTimeout),
+         matcher: matcher,
+       );
 
   final TmdbCatalogRepository catalogRepository;
-  final VideoRepository videoRepository;
-  final VodSource source;
-  final VideoMatcher matcher;
   final int catalogPageSize;
   final int maxFallbackSearches;
   final int maxConcurrentSearches;
@@ -108,9 +116,7 @@ class CuratedFeedController extends ChangeNotifier {
   final Duration viewCacheDuration;
   final Duration incompleteSessionDuration;
   final int maxCachedViews;
-  final CuratedVodSearchPool _searchPool;
   final bool _ownsSearchPool;
-  final String _sourceFingerprint;
   VideoFeed feed;
   TmdbCatalogScope scope;
   final Map<_ViewKey, _Session> _sessions = {};
@@ -187,7 +193,7 @@ class CuratedFeedController extends ChangeNotifier {
           : TmdbCatalogScope.all;
       scope = effectiveScope;
       final key = _ViewKey(
-        _sourceFingerprint,
+        sourceFingerprint,
         requestedFeed,
         effectiveScope,
         snapshot.revision,
@@ -355,8 +361,8 @@ class CuratedFeedController extends ChangeNotifier {
     }
     if (!session.forceRefresh) {
       for (var index = startIndex; index < queries.length; index++) {
-        final ready = _searchPool.peekReady(
-          sourceFingerprint: _sourceFingerprint,
+        final ready = searchPool.peekReady(
+          sourceFingerprint: sourceFingerprint,
           query: queries[index],
         );
         if (ready == null) continue;
@@ -433,19 +439,10 @@ class CuratedFeedController extends ChangeNotifier {
   }) async {
     final remaining = deadline.difference(DateTime.now());
     if (remaining <= Duration.zero) throw TimeoutException('榜单匹配超时');
-    final repository = videoRepository;
-    final lease = _searchPool.acquire(
-      sourceFingerprint: _sourceFingerprint,
+    final lease = acquireVodSearch(
+      source: source,
       query: query,
       mode: refresh ? SearchCacheMode.refresh : SearchCacheMode.preferCache,
-      loader: (abortTrigger) => repository is CancellableVideoRepository
-          ? (repository as CancellableVideoRepository).fetchPageCancellable(
-              source,
-              page: 1,
-              keyword: query,
-              abortTrigger: abortTrigger,
-            )
-          : repository.fetchPage(source, page: 1, keyword: query),
     );
     try {
       final result = await Future.any([
@@ -466,17 +463,8 @@ class CuratedFeedController extends ChangeNotifier {
     String query,
     VideoPage page,
   ) {
-    final count = page.total ?? page.items.length;
-    if (slot.evidenceQuery.isEmpty || count > slot.rawResultCount) {
-      slot
-        ..rawResultCount = count
-        ..evidenceQuery = query
-        ..evidenceQueryIndex = queryIndex
-        ..candidateTitles = page.items
-            .map((video) => video.title.trim())
-            .where((title) => title.isNotEmpty)
-            .take(5)
-            .toList(growable: false);
+    if (recordMatchEvidence(slot, query: query, page: page)) {
+      slot.evidenceQueryIndex = queryIndex;
     }
     return matcher.matchTarget(
       VideoSearchTarget.fromCatalog(slot.catalogItem),
@@ -559,7 +547,7 @@ class CuratedFeedController extends ChangeNotifier {
   bool _valid(_Session session, CuratedSearchSlot slot, int generation) =>
       !_disposed &&
       !session.cancelled &&
-      session.key.sourceFingerprint == _sourceFingerprint &&
+      session.key.sourceFingerprint == sourceFingerprint &&
       slot.generation == generation;
   CuratedFeedEntry _entryFor(CuratedSearchSlot slot) => CuratedFeedEntry(
     catalogItem: slot.catalogItem,
@@ -670,7 +658,7 @@ class CuratedFeedController extends ChangeNotifier {
         ..attached = false;
       if (!session.abort.isCompleted) session.abort.complete();
     }
-    if (_ownsSearchPool) _searchPool.close();
+    if (_ownsSearchPool) searchPool.close();
     super.dispose();
   }
 }

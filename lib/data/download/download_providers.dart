@@ -20,6 +20,7 @@ final downloadManagerProvider = FutureProvider<DownloadTaskManager>((
     store: cache.store,
     cacheManager: cache,
     client: client,
+    taskClientFactory: http.Client.new,
     initialNetworkAccess: ref.read(downloadNetworkAccessProvider),
     resolveSelection: (task) async {
       final source = registry.findById(task.sourceId);

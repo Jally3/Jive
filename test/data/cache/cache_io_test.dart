@@ -156,6 +156,74 @@ void main() {
     );
   });
 
+  test(
+    'cancelling a traced response releases its write lease and part file',
+    () async {
+      var upstreamCancelled = false;
+      final upstream = StreamController<List<int>>(
+        onCancel: () => upstreamCancelled = true,
+      );
+      final client = MockClient.streaming(
+        (request, body) async => http.StreamedResponse(upstream.stream, 200),
+      );
+      final created = await manager.upsertEntry(entry('canceltrace'));
+      final fetcher = ResourceFetcher(
+        client: client,
+        sessionHeaders: const {},
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: created.contentKeyHash,
+        revisionKeyHash: created.revisionKeyHash,
+      );
+      final events = <Map<String, Object?>>[];
+      final id = 'sha256:${'e' * 64}';
+      final result = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/cancel.ts'),
+        resourceId: id,
+        ext: 'ts',
+        trace: events.add,
+      );
+      final firstChunk = Completer<void>();
+      final subscription = result.body.listen((_) => firstChunk.complete());
+      upstream.add('Gpartial'.codeUnits);
+      await firstChunk.future;
+      expect((await manager.stats()).reservedBytes, greaterThan(0));
+      await subscription.cancel();
+      await upstream.close();
+
+      expect(upstreamCancelled, isTrue);
+      expect((await manager.stats()).reservedBytes, 0);
+      expect(await manager.resourceRecord(created.key, id), isNull);
+      expect(
+        store
+            .partialFile(created.contentKeyHash, created.revisionKeyHash, id)
+            .existsSync(),
+        isFalse,
+      );
+      expect(
+        store
+            .resourceFile(
+              created.contentKeyHash,
+              created.revisionKeyHash,
+              id,
+              'ts',
+            )
+            .existsSync(),
+        isFalse,
+      );
+      expect(
+        events.map((event) => event['event']),
+        contains('upstreamFirstByte'),
+      );
+      expect(
+        events.map((event) => event['event']),
+        isNot(contains('cacheCommit')),
+      );
+      client.close();
+    },
+  );
+
   test('cached resource serves a sub range with 206', () async {
     final client = MockClient(
       (request) async => http.Response('G123456789', 200),

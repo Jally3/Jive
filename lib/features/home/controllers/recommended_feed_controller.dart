@@ -1,18 +1,16 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-
-import '../../data/content/video_matcher.dart';
-import '../../data/recommendation/backend_recommendation_client.dart';
-import '../../data/recommendation/recommendation_client.dart';
-import '../../data/recommendation/recommendation_repository.dart';
-import '../../data/video_repository.dart';
-import '../../domain/library.dart';
-import '../../domain/recommendation.dart';
-import '../../domain/video.dart';
-import '../../domain/vod_source.dart';
-import '../../domain/watch_record.dart';
-import 'curated_vod_search_pool.dart';
+import '../../../data/content/video_matcher.dart';
+import '../../../data/recommendation/backend_recommendation_client.dart';
+import '../../../data/recommendation/recommendation_client.dart';
+import '../../../data/recommendation/recommendation_repository.dart';
+import '../../../domain/library.dart';
+import '../../../domain/recommendation.dart';
+import '../../../domain/video.dart';
+import '../../../domain/vod_source.dart';
+import '../../../domain/watch_record.dart';
+import '../support/curated_vod_search_pool.dart';
+import 'vod_feed_controller_base.dart';
 
 enum RecommendedCandidateStatus {
   queued,
@@ -23,7 +21,7 @@ enum RecommendedCandidateStatus {
   failed,
 }
 
-class RecommendedCandidateSlot {
+class RecommendedCandidateSlot implements VodMatchEvidenceSlot {
   RecommendedCandidateSlot({
     required this.candidate,
     required this.pageIndex,
@@ -39,41 +37,40 @@ class RecommendedCandidateSlot {
   bool exposureReported = false;
   bool outcomeReported = false;
   RecommendedCandidateStatus status = RecommendedCandidateStatus.queued;
+  @override
   Video? matchedVideo;
+  @override
   String evidenceQuery = '';
+  @override
   int rawResultCount = 0;
+  @override
   List<String> candidateTitles = const [];
+  @override
   Object? lastError;
 
   String get query => evidenceQuery.isEmpty ? candidate.title : evidenceQuery;
 }
 
-class RecommendedFeedController extends ChangeNotifier {
+class RecommendedFeedController extends VodMatchingFeedControllerBase {
   RecommendedFeedController({
     required this.recommendationRepository,
-    required this.videoRepository,
-    required this.source,
-    required CuratedVodSearchPool searchPool,
-    this.matcher = const VideoMatcher(),
+    required super.videoRepository,
+    required super.source,
+    required super.searchPool,
+    super.matcher,
     this.maxCandidates = 24,
     this.targetCount = 12,
     this.maxConcurrentSearches = 3,
     this.maxQueriesPerCandidate = 2,
     this.maxSearchRequests = 30,
-  }) : _searchPool = searchPool,
-       _sourceFingerprint = curatedVodSourceFingerprint(source);
+  });
 
   final RecommendationRepository recommendationRepository;
-  final VideoRepository videoRepository;
-  VodSource source;
-  final VideoMatcher matcher;
   final int maxCandidates;
   final int targetCount;
   final int maxConcurrentSearches;
   final int maxQueriesPerCandidate;
   final int maxSearchRequests;
-  final CuratedVodSearchPool _searchPool;
-  String _sourceFingerprint;
 
   final List<Video> items = [];
   final List<RecommendationCandidate> candidates = [];
@@ -195,7 +192,7 @@ class RecommendedFeedController extends ChangeNotifier {
         cachedVideos = await recommendationRepository.readPlayableCache(
           history: history,
           library: library,
-          sourceFingerprint: _sourceFingerprint,
+          sourceFingerprint: sourceFingerprint,
         );
       } catch (_) {
         // 本地缓存不可用不能阻断推荐主链路。
@@ -483,7 +480,7 @@ class RecommendedFeedController extends ChangeNotifier {
         recommendationRepository.writePlayableCache(
           history: _history,
           library: _library,
-          sourceFingerprint: _sourceFingerprint,
+          sourceFingerprint: sourceFingerprint,
           videos: items,
         ),
       );
@@ -574,7 +571,7 @@ class RecommendedFeedController extends ChangeNotifier {
 
   Future<void> switchVodSource(VodSource nextSource) async {
     final nextFingerprint = curatedVodSourceFingerprint(nextSource);
-    if (nextFingerprint == _sourceFingerprint) return;
+    if (nextFingerprint == sourceFingerprint) return;
     final switchEpoch = ++_sourceSwitchEpoch;
     // Source changes are observed while HomePage is building. Defer notifier
     // mutations so listeners never call setState during that build.
@@ -600,7 +597,7 @@ class RecommendedFeedController extends ChangeNotifier {
     }
 
     source = nextSource;
-    _sourceFingerprint = nextFingerprint;
+    sourceFingerprint = nextFingerprint;
     playableFromCache = false;
     error = null;
     searched = 0;
@@ -739,7 +736,7 @@ class RecommendedFeedController extends ChangeNotifier {
           await recommendationRepository.writePlayableCache(
             history: _history,
             library: _library,
-            sourceFingerprint: _sourceFingerprint,
+            sourceFingerprint: sourceFingerprint,
             videos: items,
           );
         } catch (_) {
@@ -760,7 +757,7 @@ class RecommendedFeedController extends ChangeNotifier {
   }) async {
     bool active() => _current(generation) && !(streamWork?.cancelled ?? false);
     final matchingSource = source;
-    final matchingFingerprint = _sourceFingerprint;
+    final matchingFingerprint = sourceFingerprint;
     final candidate = slot.candidate;
     var sawAmbiguous = false;
     var sawFailure = false;
@@ -773,38 +770,16 @@ class RecommendedFeedController extends ChangeNotifier {
         ..status = RecommendedCandidateStatus.searching
         ..lastError = null;
       _notify();
-      final lease = _searchPool.acquire(
-        sourceFingerprint: matchingFingerprint,
+      final lease = acquireVodSearch(
+        source: matchingSource,
         query: query,
-        loader: (abortTrigger) => videoRepository is CancellableVideoRepository
-            ? (videoRepository as CancellableVideoRepository)
-                  .fetchPageCancellable(
-                    matchingSource,
-                    page: 1,
-                    keyword: query,
-                    abortTrigger: abortTrigger,
-                  )
-            : videoRepository.fetchPage(
-                matchingSource,
-                page: 1,
-                keyword: query,
-              ),
+        fingerprint: matchingFingerprint,
       );
       streamWork?.leases.add(lease);
       try {
         final pooled = await lease.future;
         if (!active()) return false;
-        final resultCount = pooled.page.total ?? pooled.page.items.length;
-        if (slot.evidenceQuery.isEmpty || resultCount > slot.rawResultCount) {
-          slot
-            ..evidenceQuery = query
-            ..rawResultCount = resultCount
-            ..candidateTitles = pooled.page.items
-                .map((video) => video.title.trim())
-                .where((title) => title.isNotEmpty)
-                .take(5)
-                .toList(growable: false);
-        }
+        recordMatchEvidence(slot, query: query, page: pooled.page);
         final result = matcher.matchTarget(
           candidate.searchTarget,
           pooled.page.items,

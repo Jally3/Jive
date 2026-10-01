@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../shared/app_states.dart';
 import '../shared/app_update_dialog.dart';
 import '../shared/double_back_exit_scope.dart';
+import '../shared/screen_awake_controller.dart';
 import '../data/download/download_providers.dart';
 import '../data/library_repository.dart';
 import '../data/theme_mode_preferences.dart';
@@ -33,6 +34,7 @@ class JiveApp extends ConsumerWidget {
         theme: buildLightTheme(),
         darkTheme: buildDarkTheme(),
         themeMode: themeMode,
+        navigatorObservers: [ref.watch(screenAwakeRouteObserverProvider)],
         builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
           value: Theme.of(context).brightness == Brightness.dark
               ? SystemUiOverlayStyle.light

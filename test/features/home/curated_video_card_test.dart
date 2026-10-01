@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/domain/tmdb_catalog.dart';
 import 'package:jive/domain/video.dart';
-import 'package:jive/features/home/curated_feed_controller.dart';
-import 'package:jive/features/home/curated_video_card.dart';
+import 'package:jive/features/home/controllers/curated_feed_controller.dart';
+import 'package:jive/features/home/widgets/curated_video_card.dart';
 
 void main() {
   testWidgets('renders Catalog metadata before a VOD match is ready', (

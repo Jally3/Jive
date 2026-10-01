@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../app/theme.dart';
 import '../../data/cache/cache_controller.dart';
 import '../../data/cache/cache_ttl_policy.dart';
 import '../../data/download/download_network_policy.dart';
+import '../../data/download/download_screen_awake_preferences.dart';
 import '../../data/playback/prefetch_policy.dart';
 import '../../data/playback/trace/playback_trace_config.dart';
 import '../../data/theme_mode_preferences.dart';
 import '../cache/cache_management_page.dart';
 import 'playback_trace/playback_trace_viewer_page.dart';
+
+final appVersionProvider = FutureProvider<String>((ref) async {
+  final info = await PackageInfo.fromPlatform();
+  return '${info.version} (${info.buildNumber})';
+});
 
 String _formatBytes(int bytes) {
   if (bytes <= 0) return '0 B';
@@ -206,6 +213,26 @@ class _MoreSettingsPageState extends ConsumerState<MoreSettingsPage> {
           children: [
             Consumer(
               builder: (context, ref, _) {
+                final preference = ref.watch(downloadKeepScreenAwakeProvider);
+                return SwitchListTile(
+                  secondary: Icon(Icons.light_mode_outlined),
+                  title: Text('下载时保持屏幕常亮'),
+                  subtitle: Text(
+                    '仅下载管理页在前台且有任务进行时生效；锁屏或切后台仍会暂停下载',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  value: preference.value ?? false,
+                  onChanged: preference.isLoading
+                      ? null
+                      : (value) => ref
+                            .read(downloadKeepScreenAwakeProvider.notifier)
+                            .setEnabled(value),
+                );
+              },
+            ),
+            Divider(height: 1, color: context.appColors.divider),
+            Consumer(
+              builder: (context, ref, _) {
                 final preference = ref.watch(allowCellularDownloadsProvider);
                 final allowed = preference.value ?? false;
                 return SwitchListTile(
@@ -306,6 +333,29 @@ class _MoreSettingsPageState extends ConsumerState<MoreSettingsPage> {
             ],
           ),
         ],
+        SizedBox(height: 16),
+        _SettingsSection(
+          title: '关于',
+          children: [
+            Consumer(
+              builder: (context, ref, _) {
+                final version = ref.watch(appVersionProvider);
+                return ListTile(
+                  leading: Icon(Icons.info_outline),
+                  title: Text('版本号'),
+                  subtitle: Text(
+                    version.when(
+                      data: (value) => value,
+                      loading: () => '获取中…',
+                      error: (_, _) => '暂不可用',
+                    ),
+                    style: TextStyle(fontSize: 13),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ],
     ),
   );

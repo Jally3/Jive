@@ -6,6 +6,7 @@ import 'cache_index.dart';
 import 'cache_manager.dart';
 import 'cache_ttl_policy.dart';
 import '../download/platform_disk_space.dart';
+import '../download/download_task_store.dart';
 
 final cacheRootDirectoryProvider = FutureProvider<Directory>((ref) async {
   // Explicit downloads must survive app restarts and must not be constrained
@@ -38,7 +39,8 @@ final cacheManagerProvider = FutureProvider<CacheManager>((ref) async {
     diskSpace: ref.watch(diskSpaceProvider),
     maxAge: ttl.maxAge,
   );
-  await manager.initialize();
+  final protectedDownloads = await loadProtectedDownloadEntryKeys(root);
+  await manager.initialize(protectedDownloadEntryKeys: protectedDownloads);
   ref.listen(cacheTtlProvider, (_, next) {
     final option = next.value;
     if (option != null) manager.setMaxAge(option.maxAge);

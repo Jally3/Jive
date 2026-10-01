@@ -9,7 +9,7 @@ import 'package:jive/domain/video.dart';
 import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/video_search_target.dart';
 import 'package:jive/domain/vod_source.dart';
-import 'package:jive/features/home/curated_feed_controller.dart';
+import 'package:jive/features/home/controllers/curated_feed_controller.dart';
 
 void main() {
   test(

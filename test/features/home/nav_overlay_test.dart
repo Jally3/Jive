@@ -18,6 +18,7 @@ import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
 import 'package:jive/features/home/home_page.dart';
+import 'package:jive/features/home/widgets/home_back_to_top_button.dart';
 import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/shared/video_card.dart';
 import 'package:jive/shared/video_grid.dart';
@@ -363,6 +364,25 @@ void main() {
     expect(grid.bottom, scaffold.bottom);
   });
 
+  testWidgets('back-to-top button stays above the bottom navigation', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.padding = const FakeViewPadding(bottom: 34);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetPadding);
+    await _pumpHome(tester);
+
+    final button = tester.getRect(find.byType(HomeBackToTopButton));
+    final navigation = tester.getRect(
+      find.byKey(const ValueKey('floating-nav-bar')),
+    );
+
+    expect(button.bottom, lessThanOrEqualTo(navigation.top - 16));
+  });
+
   testWidgets(
     'recommendation stream shows matching progress before the first VOD match',
     (tester) async {
@@ -468,6 +488,139 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('category trailing slot swaps without reserving a blank button', (
+    tester,
+  ) async {
+    await _pumpHome(tester);
+
+    expect(
+      find.byKey(const ValueKey('home-category-expand-button')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+      findsNothing,
+    );
+
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(
+      find.byKey(const ValueKey('home-category-expand-button')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('collapsed root row shows a transparent primary feed label', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final parentContext = find.byKey(
+      const ValueKey('home-category-parent-context'),
+    );
+    expect(parentContext, findsOneWidget);
+    final primaryFeedLabel = find.descendant(
+      of: parentContext,
+      matching: find.text('综合'),
+    );
+    expect(primaryFeedLabel, findsOneWidget);
+    final parentContainer = tester.widget<Container>(parentContext);
+    expect(parentContainer.color, isNull);
+    expect(parentContainer.decoration, isNull);
+    expect(parentContainer.padding, const EdgeInsets.symmetric(horizontal: 8));
+    expect(
+      tester.getSize(parentContext).width,
+      closeTo(tester.getSize(primaryFeedLabel).width + 16, 0.01),
+    );
+
+    final expandButton = find.byKey(
+      const ValueKey('home-category-panel-expand-button'),
+    );
+    final toggleSlot = find.byKey(
+      const ValueKey('home-category-toggle-visible'),
+    );
+    expect(tester.widget(toggleSlot), isA<SizedBox>());
+    expect(tester.getSize(toggleSlot).width, 44);
+    final allChip = find.widgetWithText(ChoiceChip, '全部');
+    expect(
+      tester.getRect(allChip).left,
+      greaterThanOrEqualTo(tester.getRect(parentContext).right),
+    );
+    expect(
+      tester.getRect(allChip).right,
+      lessThanOrEqualTo(tester.getRect(expandButton).left),
+    );
+
+    final rootTabs = find.byKey(
+      const PageStorageKey<String>('home-root-category-tabs-storm'),
+    );
+    final rootTabsState = _rootTabScrollState(tester);
+    rootTabsState.position.jumpTo(rootTabsState.position.maxScrollExtent);
+    await tester.pump();
+    expect(
+      tester.getRect(rootTabs).right,
+      lessThanOrEqualTo(tester.getRect(expandButton).left),
+    );
+  });
+
+  testWidgets('expanded panel separates channel and collapse buttons', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    final panel = find.byKey(const ValueKey('home-category-expanded-panel'));
+    final channelsButton = find.descendant(
+      of: panel,
+      matching: find.byKey(const ValueKey('home-category-expand-button')),
+    );
+    final collapseButton = find.descendant(
+      of: panel,
+      matching: find.byKey(
+        const ValueKey('home-category-panel-collapse-button'),
+      ),
+    );
+    expect(channelsButton, findsOneWidget);
+    expect(collapseButton, findsOneWidget);
+    expect(
+      tester.getRect(channelsButton).overlaps(tester.getRect(collapseButton)),
+      isFalse,
+    );
   });
 
   testWidgets('home exposes all native and curated feeds in a fixed row', (
@@ -518,6 +671,18 @@ void main() {
       expect(after, greaterThan(before));
     },
   );
+
+  testWidgets('category tab rows share the same left edge', (tester) async {
+    await _pumpHome(tester);
+
+    final feedTab = find.widgetWithText(ChoiceChip, '综合');
+    final categoryTab = find.widgetWithText(ChoiceChip, '全部');
+
+    expect(
+      tester.getRect(feedTab).left,
+      closeTo(tester.getRect(categoryTab).left, 0.01),
+    );
+  });
 
   testWidgets('curated scope survives feed and VOD source switches', (
     tester,
@@ -753,6 +918,100 @@ void main() {
           .selected,
       isTrue,
     );
+  });
+
+  testWidgets('scrolling keeps only the leaf row pinned', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(tester, repository: _ManyNestedCategoryRepository());
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '电影'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump();
+
+    final leafTop = tester
+        .getTopLeft(find.widgetWithText(ChoiceChip, '子分类0'))
+        .dy;
+    final feedBottom = tester
+        .getBottomLeft(find.widgetWithText(ChoiceChip, '综合'))
+        .dy;
+    expect(leafTop, greaterThanOrEqualTo(0));
+    expect(feedBottom, lessThanOrEqualTo(leafTop));
+    final parentContext = find.byKey(
+      const ValueKey('home-category-parent-context'),
+    );
+    expect(parentContext, findsOneWidget);
+    expect(
+      find.descendant(of: parentContext, matching: find.text('电影')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: parentContext, matching: find.byType(TextButton)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: parentContext,
+        matching: find.byIcon(Icons.arrow_drop_down_rounded),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('pinned category row expands as an overlay without moving grid', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await _pumpHome(tester, repository: _ManyNestedCategoryRepository());
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '电影'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final scrollState = _homeScrollState(tester);
+    scrollState.position.jumpTo(500);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    final offset = scrollState.position.pixels;
+
+    await tester.tap(
+      find.byKey(const ValueKey('home-category-panel-expand-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(
+      find.byKey(const ValueKey('home-category-expanded-panel')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-category-panel-barrier')),
+      findsOneWidget,
+    );
+    expect(scrollState.position.pixels, closeTo(offset, 0.01));
+
+    await tester.tap(find.byKey(const ValueKey('home-category-panel-barrier')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(
+      find.byKey(const ValueKey('home-category-expanded-panel')),
+      findsNothing,
+    );
+    expect(scrollState.position.pixels, closeTo(offset, 0.01));
   });
 
   testWidgets('expand button opens the all-channels page', (tester) async {

@@ -23,15 +23,12 @@ lib/shared/
 ├── double_back_exit_scope.dart        # Android 根页面返回拦截：2 秒内连续返回两次才退出应用
 ├── is_tv.dart                         # isTvProvider：经 jive/device 通道判断是否 Android TV（iOS/失败恒 false）
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
+├── screen_awake_controller.dart        # 屏幕常亮请求协调：播放器与下载页共享持有、前后台同步及平台开关串行化
 ├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
-<<<<<<< HEAD
-├── skip_settings.dart                 # 跳过片头/片尾芯片选择：详情页与非全屏播放器底部共用
-├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、TMDB 排名/评分徽标、观看进度条、TV 焦点描边
-=======
 ├── skip_settings.dart                 # 同行收起的片头/片尾状态按钮与锚点下拉菜单：详情页和非全屏播放器共用
-├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、观看进度条、TV 焦点描边
->>>>>>> codex/jive-dev
-└── video_grid.dart                    # 自适应视频网格 VideoGrid：两列/四列 sliver 布局、动态卡片比例
+├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、TMDB 排名/评分徽标、观看进度条、TV 焦点描边
+├── video_grid.dart                    # 自适应视频网格 VideoGrid：两列/四列 sliver 布局、动态卡片比例
+└── format_utils.dart                  # 字节/速度/时长轻量格式化：详情页与下载管理页共用
 ```
 
 ## 领域模型（`lib/domain/`）
@@ -140,8 +137,9 @@ lib/data/playback/
 ```text
 lib/data/cache/
 ├── cache_manager.dart                 # 缓存核心 CacheManager：磁盘配额、下载保护的 LRU/TTL 淘汰、引用计数 CacheRef 与写租约 WriteLease
-├── cache_index.dart                   # 磁盘索引格式与 CacheIndexStore：条目/资源记录、state.json 探测、目录常量
-├── cache_io.dart                      # 资源抓取器 ResourceFetcher：读穿/写穿缓存、SingleFlight、完整性校验及可选启动期 I/O 细分诊断
+├── cache_models.dart                  # 缓存记录模型：CacheEntry/RevisionState/CacheResourceRecord、统计视图与 JSON 序列化
+├── cache_index.dart                   # 磁盘布局与 CacheIndexStore：index/state/manifest 文件 IO、state.json 探测、目录常量（re-export cache_models）
+├── cache_io.dart                      # 资源抓取器 ResourceFetcher：读穿/写穿缓存、SingleFlight 合并、响应头白名单、取消清理、完整性校验及可选启动期 I/O 细分诊断
 ├── content_key.dart                   # ContentKey 构建：源+视频+线路+剧集身份编码后的 sha256 寻址
 ├── url_normalizer.dart                # URL 归一化：剔除时效签名参数，保证缓存寻址稳定
 ├── single_flight.dart                 # 并发原语：AsyncMutex 串行锁与 SingleFlight 在飞请求去重
@@ -167,6 +165,10 @@ lib/data/network/
 lib/data/download/
 ├── download_manager.dart              # 边下边播分片预取器 SegmentPrefetcher：并发抓取、指数退避、窗口随播放位置重锚定
 ├── download_network_policy.dart       # 离线下载网络策略：蜂窝网络开关持久化与当前网络准入判定
+├── download_screen_awake_preferences.dart # 下载页常亮偏好：默认关闭、SharedPreferences 持久化
+├── download_task.dart                 # 下载任务模型：DownloadTask、状态/失败原因枚举、失败文案与 JSON 解析
+├── download_permit_pool.dart          # 分片并发许可池 DownloadPermitPool：限制同时抓取的网络分片数
+├── download_task_store.dart           # 下载任务索引轻量读取：在缓存清理前恢复旧版离线条目保护集
 ├── download_task_manager.dart         # 显式下载引擎 DownloadTaskManager：任务持久化、网络闸门、单次蜂窝授权、暂停/恢复/断点续与进度发布
 ├── download_providers.dart            # 下载装配 downloadManagerProvider：注入缓存、剧集回解析与网络准入联动
 └── platform_disk_space.dart           # 磁盘空间通道 PlatformDiskSpaceProvider：MethodChannel(jive/cache) 读容量/可用空间
@@ -181,29 +183,52 @@ lib/features/
 ├── splash/
 │   └── splash_page.dart               # 冷启动品牌页：居中 Logo + 「Jive」词标、底部轻量加载；最短展示常量 splashMinHold
 ├── home/
-│   ├── home_page.dart                 # 首页：横滑 Feed、两级分类导航、流式猜你喜欢、Tab 可见性、跨源查找与选源入口
+│   ├── home_page.dart                 # 首页壳：控制器装配、Feed/分类选中状态、跨源查找与不可用流程、我的频道管理
 │   ├── category_channels_page.dart    # 「全部频道」全屏页：我的频道自适应网格（手机 4 列、平板 5–8 列）、编辑模式增删与拖拽排序、全部分类分组
-│   ├── continue_watching_row.dart     # 首页续播条：只展示最近一条（剧集完播仍挂、电影过 2/3 不挂）；关闭或点其他影片后本进程隐藏
-│   ├── paged_video_controller.dart    # 首页 VOD 源分页控制器：加载更多、错误态、首页结果 2 分钟快照缓存
-│   ├── curated_feed_controller.dart   # TMDB 策展 Feed：固定排名 Slot、逐项流式匹配、确定性去重、分页与可恢复会话
-│   ├── recommended_feed_controller.dart # NDJSON 候选边收边匹配/临时展示，done 提交与失败回滚；Tab/切源保留 Session，按来源重建匹配
-│   ├── recommendation_unavailable_section.dart # 推荐未匹配/歧义折叠区：默认海报、状态摘要与手动确认入口
-│   ├── curated_vod_search_pool.dart   # Home 生命周期 VOD 查询池：同步 ready 读取、SingleFlight、来源隔离、TTL/LRU 与清理/取消
-│   ├── curated_video_grid.dart        # 策展专用自适应 Sliver 网格：保持 Catalog 卡位并承载页头、统计和显式加载操作
-│   ├── curated_video_card.dart        # 策展专用卡片：Catalog 海报/排名/评分即时展示及七种来源匹配状态
-│   └── curated_unavailable_section.dart # 策展未匹配折叠区兼容组件（当前首页已由固定卡位状态与底部统计取代）
+│   ├── widgets/
+│   │   ├── home_category_header.dart   # 固定分类栏：Feed tab 行、TMDB 范围/VOD 两级分类行、子分类行与钉住 HeaderDelegate
+│   │   ├── home_recommended_body.dart  # 推荐流 body：状态视图、匹配进度横幅、加载更多控制与不可用候选列表
+│   │   ├── home_curated_body.dart      # 策展榜单 body：状态视图、匹配摘要、失败重试与继续加载
+│   │   ├── home_state_scroll_view.dart # 各 Feed 空/加载/错误状态容器：与网格共享 header slivers 和滚动控制器
+│   │   ├── home_back_to_top_button.dart # 返回顶部悬浮按钮：毛玻璃质感、滚动超阈值淡入
+│   │   ├── home_unavailable_dialog.dart # 不可用条目统一确认对话框：去搜索页或继续查找备用源
+│   │   ├── continue_watching_row.dart       # 首页续播条：只展示最近一条（剧集完播仍挂、电影过 2/3 不挂）；关闭或点其他影片后本进程隐藏
+│   │   ├── curated_video_grid.dart          # 策展专用自适应 Sliver 网格：保持 Catalog 卡位并承载页头、统计和显式加载操作
+│   │   ├── curated_video_card.dart          # 策展专用卡片：Catalog 海报/排名/评分即时展示及七种来源匹配状态
+│   │   └── recommendation_unavailable_section.dart # 推荐未匹配/歧义折叠区：默认海报、状态摘要与手动确认入口
+│   ├── controllers/
+│   │   ├── paged_video_controller.dart      # 首页 VOD 源分页控制器：加载更多、错误态、首页结果 2 分钟快照缓存
+│   │   ├── curated_feed_controller.dart     # TMDB 策展 Feed：固定排名 Slot、逐项流式匹配、确定性去重、分页与可恢复会话
+│   │   ├── recommended_feed_controller.dart # NDJSON 候选边收边匹配/临时展示，done 提交与失败回滚；Tab/切源保留 Session，按来源重建匹配
+│   │   └── vod_feed_controller_base.dart    # 推荐/策展控制器公共基类：来源与查询池接线、来源指纹、池租约获取与检索证据记录
+│   └── support/
+│       ├── curated_vod_search_pool.dart     # Home 生命周期 VOD 查询池：同步 ready 读取、SingleFlight、来源隔离、TTL/LRU 与清理/取消
+│       └── home_scroll_memory.dart          # Feed 滚动记忆 FeedScrollMemory：按 key 保存/恢复滚动位置、滚动过渡与返回顶部可见性
 ├── search/
 │   ├── search_page.dart               # 搜索页：输入防抖、本地搜索历史、跟随全局切源、多源结果聚合展示
 │   ├── multi_source_search_controller.dart  # 多源搜索控制器：并行探测各可搜索源、逐源分页与状态聚合
 │   └── search_launch_request.dart      # 跨页面搜索导航请求：携带关键词、起始来源与当前源审阅模式
 ├── detail/
-│   ├── detail_page.dart               # 详情页 VideoDetailPage：详情加载、动态收藏/追更、下载、切源与片头片尾设置；响应式动作行和剧集网格
+│   ├── detail_page.dart               # 详情页壳 VideoDetailPage：详情加载/播放、追更收藏装配、下载创建与响应式动作行
+│   ├── detail_layout.dart             # 详情页宽屏布局指标 DetailPageLayout：断点、封面宽度、剧集网格列数
 │   ├── detail_source_controller.dart  # 详情页跨源探测 DetailSourceController：备用源搜索匹配与状态机
-│   └── detail_more_sources_sheet.dart # 「全部来源」底栏：备用源状态列表与一键探测
+│   ├── detail_more_sources_sheet.dart # 「全部来源」底栏：备用源状态列表与一键探测
+│   └── widgets/
+│       ├── detail_download_sheet.dart   # 选择下载剧集弹层：剧集勾选、既有任务状态展示与确认下载
+│       ├── detail_source_section.dart   # 播放来源区块：来源芯片横滑栏、候选列表弹层与切源确认
+│       ├── detail_episodes_section.dart # 剧集区块：排序切换、百集分组折叠、Wrap 胶囊/平板等宽网格
+│       └── detail_relationship_button.dart # 追更/收藏按钮：锚点菜单（追更/收藏/取消）与 favoriteController 持久化
 ├── player/
-│   ├── player_page.dart               # 播放器主页 PlayerPage：会话建立与降级、手势亮度/音量、进度记忆、TTL 退出清理
+│   ├── player_page.dart               # 播放器主页壳 PlayerPage：页面参数、生命周期装配与 UI 组装；状态基类与职责 mixin 见下方 part 文件
+│   ├── parts/player_state.dart              # 播放页共享状态基类 PlayerStateBase：全部可变字段（含启动追踪）与跨职责接缝的抽象声明
+│   ├── parts/player_session_lifecycle.dart  # 会话建立与降级 mixin：缓存优先→代理 HLS→直链回退、控制器安装、切集/重试释放、状态总泵与启动分段追踪
+│   ├── parts/player_persistence.dart        # 进度与生命周期 mixin：定时保存观看/离线进度、前后台暂停恢复、播放器常亮请求同步
+│   ├── parts/player_controls_state.dart     # 控制栏与全屏 mixin：控制条显隐、屏幕锁、TV 遥控器按键映射、全屏方向与系统 UI
+│   ├── parts/player_episodes.dart           # 剧集切换 mixin：选集/上下集、线路降级重解析、AGE 会话头绑定、下载键同步
+│   ├── parts/player_playback_commands.dart  # 播放命令 mixin：播放/暂停/静音/倍速、当前集下载、片头片尾跳过策略执行
+│   ├── parts/player_gestures.dart           # 屏幕手势 mixin：横滑快进、纵滑亮度/音量、长按 2 倍速（含缓冲回退重试）
+│   ├── parts/player_seek.dart               # 拖动快进状态机 mixin：seek 开始/预览/提交/取消、绝对位置跳转与时长记忆
 │   ├── playback_seek_clock.dart       # 拖动/seek 稳定时钟：记住可播时长、冻结尺子、判断 native 落点是否被断点吸附
-│   ├── resume_watch.dart              # 按 WatchRecord 续播（离线优先）与单条历史删除确认
 │   └── widgets/
 │       ├── player_controls_bar.dart       # 底部控制条：进度、播放/暂停、上下集、下载、倍速、选集、全屏
 │       ├── player_top_bar.dart            # 沉浸式顶栏：返回按钮与标题
@@ -215,13 +240,18 @@ lib/features/
 │       └── player_info_panel.dart         # 竖屏播放器下方信息面板：跳过片头/片尾、简介与分组选集
 ├── profile/
 │   └── profile_page.dart              # 「我的」页：追更与收藏/历史双 tab，更新置顶/已读；下载快捷入口含状态进度动画
+├── watch_history/
+│   └── resume_watch.dart              # 按 WatchRecord 续播（离线优先）与单条历史删除确认
 ├── cache/
 │   └── cache_management_page.dart     # 缓存管理页：用量统计、配额展示、单条删除与清空确认
 ├── download/
-│   └── download_management_page.dart  # 下载管理页：响应式速度/进度摘要、任务分组筛选、批量操作、离线播放入口
+│   ├── download_management_page.dart  # 下载管理页壳：编辑/批量状态、分组展开与筛选、蜂窝继续确认、离线播放入口及常亮请求
+│   └── widgets/
+│       ├── download_task_card.dart      # 视频分组卡片与单任务卡片：进度、离线观看进度状态文案、主操作按钮
+│       └── download_summary_header.dart # 顶部汇总卡片：当前速度/已下载统计与全部暂停/继续快捷操作
 └── settings/
     ├── source_management_page.dart    # 源管理页：源列表、健康检查（延迟/可用性）与结果持久化展示
-    ├── more_settings_page.dart        # 更多设置：缓存 TTL 选择、预加载开关、缓存管理入口；诊断开关开启时显示耗时分析入口
+    ├── more_settings_page.dart        # 更多设置：缓存 TTL 选择、预加载/下载常亮开关、缓存管理入口与版本号；诊断开关开启时显示耗时分析入口
     └── playback_trace/                # 临时播放耗时分析页：导入 JSON/JSONL、阶段排行柱状图与原始日志查看
 ```
 
@@ -230,6 +260,7 @@ lib/features/
 ```text
 tool/
 ├── check_flutter_sdk.sh               # 校验生成配置引用的 Flutter SDK 与 .fvmrc 一致
+├── restore_fvm.sh                     # 恢复其他 Flutter 发行版命令运行后受影响的 FVM 生成配置
 ├── playback_trace_report.html         # 离线静态报告：阶段排行/对比，并展示代理清单与前三个启动资源的缓存、TTFB、下载和下游耗时
 ├── run_with_playback_trace.sh          # 开启启动耗时诊断运行 App，并把追踪行实时写入 logs/playback_trace.log
 └── run_top10_playback_trace.sh         # 集成测试自动播放首页前 10 个不同视频，汇总写入 playback_trace_top10.log
