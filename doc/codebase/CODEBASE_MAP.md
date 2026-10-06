@@ -23,6 +23,8 @@ lib/shared/
 ├── double_back_exit_scope.dart        # Android 根页面返回拦截：2 秒内连续返回两次才退出应用
 ├── is_tv.dart                         # isTvProvider：经 jive/device 通道判断是否 Android TV（iOS/失败恒 false）
 ├── playback_scrubber.dart             # 播放进度滑杆：缓冲区间合并绘制、可拖动预览 seek
+├── playback_loading_controller.dart   # Riverpod 起播进度：按页面会话隔离阶段/遮罩状态，自动释放；仅局部订阅
+├── playback_loading_view.dart         # 起播等待视图：首次延迟文字、固定文案区域避免闪动；短屏大字体适配、无障碍播报及详情局部遮罩
 ├── screen_awake_controller.dart        # 屏幕常亮请求协调：播放器与下载页共享持有、前后台同步及平台开关串行化
 ├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
 ├── skip_settings.dart                 # 同行收起的片头/片尾状态按钮与锚点下拉菜单：详情页和非全屏播放器共用
@@ -290,10 +292,12 @@ test/
 ├── data/                              # 数据层单测，按子域分目录：
 │   ├── vod_source/                    #   源配置/注册表/各 Adapter（含 Syncnext 插件运行时）；video_detail_cache_test.dart 覆盖到期/LRU/容量淘汰
 │   ├── content/                       #   分类导航、黑名单、过滤开关
+│   ├── device/                        #   设备时钟、电量、前后台与平台快照生命周期
+│   ├── network/                       #   网络监听共享/释放、恢复前台和迟到快照隔离
 │   ├── playback/                      #   会话、代理、HLS 解析、广告过滤、嗅探、预取
 │   ├── cache/                         #   缓存管理器/索引/IO/TTL/ContentKey 等
 │   ├── download/                      #   预取器、任务管理器、磁盘空间
 │   └── *.dart                         #   三个仓储的测试在 data/ 根部
 ├── features/                          # 页面与控制器测试，目录与 features/ 同名对应
-└── shared/                            # 共享组件测试（toast、进度滑杆、选源弹层）
+└── shared/                            # 共享组件测试（toast、进度滑杆、选源弹层）；playback_loading_controller_test.dart 覆盖会话隔离/自动释放；playback_loading_view_test.dart 覆盖局部刷新/布局稳定/大字体/退出清理
 ```

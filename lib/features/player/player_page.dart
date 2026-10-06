@@ -38,6 +38,8 @@ import '../../domain/watch_record.dart';
 import '../../shared/app_toast.dart';
 import '../../shared/is_tv.dart';
 import '../../shared/playback_scrubber.dart';
+import '../../shared/playback_loading_view.dart';
+import '../../shared/playback_loading_controller.dart';
 import '../../shared/screen_awake_controller.dart';
 import 'widgets/playback_status_indicator.dart';
 import 'widgets/player_controls_bar.dart';
@@ -100,6 +102,10 @@ class _PlayerPageState extends PlayerStateBase
   @override
   void initState() {
     super.initState();
+    ref.listenManual(playbackLoadingProvider(_loadingOwner), (_, _) {});
+    _loadingController = ref.read(
+      playbackLoadingProvider(_loadingOwner).notifier,
+    );
     // Cache provider-backed dependencies while the ConsumerState is mounted.
     // dispose() must not access ref because its BuildContext is deactivated.
     historyRepository = ref.read(historyRepositoryProvider);
@@ -354,7 +360,7 @@ class _PlayerPageState extends PlayerStateBase
           child: failed
               ? SingleChildScrollView(child: _error())
               : initializing
-              ? const CircularProgressIndicator()
+              ? _loadingView
               : _player(),
         ),
         if (!showStandaloneBack) ...[
@@ -411,10 +417,7 @@ class _PlayerPageState extends PlayerStateBase
       );
     }
     if (initializing) {
-      return const AspectRatio(
-        aspectRatio: 16 / 9,
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return AspectRatio(aspectRatio: 16 / 9, child: _loadingView);
     }
     return _player(portrait: true);
   }

@@ -17,6 +17,8 @@ import '../../domain/video.dart';
 import '../../domain/playback_selection.dart';
 import '../../domain/vod_source.dart';
 import '../../shared/app_toast.dart';
+import '../../shared/playback_loading_view.dart';
+import '../../shared/playback_loading_controller.dart';
 import '../../shared/is_tv.dart';
 import '../../shared/skip_settings.dart';
 import './detail_source_controller.dart';
@@ -44,6 +46,10 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   Video? detail;
   String? error;
   bool loading = true, resolving = false, expanded = false;
+  Timer? _playbackProgressTimer;
+  bool _preparingPlayback = false;
+  final Object _loadingOwner = Object();
+  late final PlaybackLoadingController _loadingController;
   bool reversed = false;
   int selected = 0;
   DetailSourceController? sc;
@@ -57,7 +63,17 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   late DetailPageLayout _layout;
 
   @override
+  void initState() {
+    super.initState();
+    ref.listenManual(playbackLoadingProvider(_loadingOwner), (_, _) {});
+    _loadingController = ref.read(
+      playbackLoadingProvider(_loadingOwner).notifier,
+    );
+  }
+
+  @override
   void dispose() {
+    _playbackProgressTimer?.cancel();
     sc?.dispose();
     _playFocusNode.dispose();
     super.dispose();
@@ -141,7 +157,14 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
     if (sc == null || resolving) return;
     setState(() {
       resolving = true;
+      _preparingPlayback = true;
       if (episodeIndex != null) selected = episodeIndex;
+    });
+    _playbackProgressTimer?.cancel();
+    _playbackProgressTimer = Timer(const Duration(milliseconds: 200), () {
+      if (mounted && _preparingPlayback) {
+        _loadingController.show(PlaybackLoadingPhase.playbackInfo);
+      }
     });
     final overlay = Overlay.of(context);
     final active = sc!.activeVideo;
@@ -166,6 +189,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       );
       if (cachedSelection != null) {
         if (!mounted) return;
+        _finishPlaybackPreparation();
         final played = await Navigator.of(context).push<Episode>(
           MaterialPageRoute(
             builder: (_) => PlayerPage(
@@ -205,6 +229,7 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       final selection = selectionFor(fresh, ep);
       if (!mounted) return;
       setState(() => detail = fresh);
+      _finishPlaybackPreparation();
       final played = await Navigator.of(context).push<Episode>(
         MaterialPageRoute(
           builder: (_) => PlayerPage(
@@ -222,8 +247,16 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
         showAppToastVia(overlay, '$e（可尝试查找其他来源）');
       }
     } finally {
+      _finishPlaybackPreparation();
       if (mounted) setState(() => resolving = false);
     }
+  }
+
+  void _finishPlaybackPreparation() {
+    _playbackProgressTimer?.cancel();
+    if (!mounted) return;
+    _preparingPlayback = false;
+    _loadingController.hide();
   }
 
   void _syncSelectedFromPlayer(Episode? played) {
@@ -381,31 +414,34 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
           ),
         ],
       ),
-      body: rs.when(
-        loading: () => AppLoadingView(label: '正在加载…'),
-        error: (e, _) => AppErrorView(
-          message: '$e',
-          onRetry: () => ref.invalidate(vodSourceRegistryProvider),
+      body: PlaybackLoadingOverlay(
+        session: _loadingOwner,
+        child: rs.when(
+          loading: () => AppLoadingView(label: '正在加载…'),
+          error: (e, _) => AppErrorView(
+            message: '$e',
+            onRetry: () => ref.invalidate(vodSourceRegistryProvider),
+          ),
+          data: (_) {
+            if (sc == null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _init();
+              });
+              return AppLoadingView();
+            }
+            if (loading) return AppLoadingView(label: '正在加载详情…');
+            if (error != null) {
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AppErrorView(message: error!, onRetry: _load),
+                  TextButton(onPressed: _moreSources, child: Text('切换来源')),
+                ],
+              );
+            }
+            return _content(sc!.activeVideo);
+          },
         ),
-        data: (_) {
-          if (sc == null) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _init();
-            });
-            return AppLoadingView();
-          }
-          if (loading) return AppLoadingView(label: '正在加载详情…');
-          if (error != null) {
-            return Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                AppErrorView(message: error!, onRetry: _load),
-                TextButton(onPressed: _moreSources, child: Text('切换来源')),
-              ],
-            );
-          }
-          return _content(sc!.activeVideo);
-        },
       ),
     );
   }

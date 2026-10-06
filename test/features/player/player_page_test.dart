@@ -39,6 +39,7 @@ import 'package:jive/features/player/widgets/player_controls_bar.dart';
 import 'package:jive/features/player/widgets/player_indicators.dart';
 import 'package:jive/features/player/widgets/player_gesture_layer.dart';
 import 'package:jive/shared/is_tv.dart';
+import 'package:jive/shared/playback_loading_view.dart';
 import 'package:jive/shared/playback_scrubber.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
@@ -73,6 +74,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   Size videoSize = const Size(160, 90);
   Duration videoDuration = const Duration(minutes: 10);
   Duration Function(Duration requested)? seekLanding;
+  Completer<void>? seekGate;
   int _nextPlayerId = 0;
 
   int get lastPlayerId => _nextPlayerId - 1;
@@ -170,6 +172,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
     positions[playerId] = landed;
     seekPositions.add(position);
     calls.add('seekTo:$playerId');
+    await seekGate?.future;
   }
 
   @override
@@ -466,6 +469,166 @@ void main() {
     wakelockPlusPlatformInstance = originalWakelockPlusPlatformInstance;
   });
 
+  for (final (size, textScale) in [
+    (const Size(390, 844), 1.0),
+    (const Size(844, 390), 2.0),
+  ]) {
+    testWidgets(
+      'loading progress shows the actual initialization phase at $size',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = size;
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        videoPlatform.initializationPlan = [_InitializationResult.pending];
+        final video = _playableVideo('https://cdn.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+          textScale: textScale,
+        );
+        await _pumpUntil(tester, () => videoPlatform.dataSources.isNotEmpty);
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(find.text('正在加载画面…'), findsOneWidget);
+        expect(find.text('正在获取播放信息…'), findsNothing);
+        expect(tester.takeException(), isNull);
+        videoPlatform.emitInitialized(videoPlatform.lastPlayerId);
+        await _pumpUntil(
+          tester,
+          () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+        );
+        expect(find.byType(PlaybackLoadingView), findsNothing);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  for (final intro in [false, true]) {
+    testWidgets(
+      'loading progress describes ${intro ? 'intro skipping' : 'resume positioning'} while seek is pending',
+      (tester) async {
+        if (intro) {
+          SharedPreferences.setMockInitialValues({
+            skipPolicyStoreKey:
+                '{"test-source:1":{"introSeconds":30,"outroSeconds":0}}',
+          });
+        }
+        videoPlatform.seekGate = Completer<void>();
+        final video = _playableVideo('https://cdn.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+          resumePosition: intro ? Duration.zero : const Duration(seconds: 90),
+        );
+        await _pumpUntil(tester, () => videoPlatform.seekPositions.isNotEmpty);
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(find.text(intro ? '正在跳过片头…' : '正在恢复播放进度…'), findsOneWidget);
+        videoPlatform.seekGate!.complete();
+        await _pumpUntil(
+          tester,
+          () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+        );
+        expect(find.byType(PlaybackLoadingView), findsNothing);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  testWidgets('loading progress describes a pending explicit address refresh', (
+    tester,
+  ) async {
+    final video = _playableVideo('https://cdn.example.com/1.mp4');
+    final repository = _FakeVideoRepository(video);
+    await _pumpPlayerPage(tester, video: video, repository: repository);
+    await _pumpUntil(
+      tester,
+      () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+    );
+    videoPlatform.emitError(videoPlatform.lastPlayerId);
+    await _pumpUntil(tester, () => find.text('重新获取并重试').evaluate().isNotEmpty);
+    repository.resolutionGate = Completer<Video>();
+    await tester.tap(find.text('重新获取并重试'));
+    await _pumpUntil(tester, () => repository.resolveCalls == 1);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('正在重新获取播放地址…'), findsOneWidget);
+    repository.resolutionGate!.complete(video);
+    await _pumpUntil(
+      tester,
+      () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+    );
+    expect(find.byType(PlaybackLoadingView), findsNothing);
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets(
+    'loading progress follows preparation and an expired address refresh',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final response = Completer<http.Response>();
+      var requests = 0;
+      await http.runWithClient(
+        () async {
+          final video = _playableVideo(
+            'https://old.example.com/m3u8/?url=pending',
+          );
+          final fresh = _playableVideo('https://fresh.example.com/1.mp4');
+          final repository = _FakeVideoRepository(fresh);
+          repository.resolutionGate = Completer<Video>();
+          final adapter = MacCmsV10Adapter(
+            MockClient((_) async => http.Response('', 200)),
+          );
+          await _pumpPlayerPage(
+            tester,
+            video: video,
+            repository: repository,
+            registry: VodSourceRegistry(
+              [_testSource],
+              {'mac_cms_v10': adapter},
+            ),
+          );
+          await _pumpUntil(tester, () => requests > 0);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 200));
+          expect(find.text('正在准备视频…'), findsOneWidget);
+          final spinner = find.byType(CircularProgressIndicator);
+          final spinnerElement = tester.element(spinner);
+          final spinnerCenter = tester.getCenter(spinner);
+          final infoPanel = tester.widget<PlayerInfoPanel>(
+            find.byType(PlayerInfoPanel),
+          );
+          response.complete(http.Response('', 403));
+          await _pumpUntil(tester, () => repository.resolveCalls == 1);
+          await tester.pump();
+          expect(find.text('播放地址已失效，正在重新获取…'), findsOneWidget);
+          expect(tester.element(spinner), same(spinnerElement));
+          expect(tester.getCenter(spinner), spinnerCenter);
+          expect(
+            tester.widget<PlayerInfoPanel>(find.byType(PlayerInfoPanel)),
+            same(infoPanel),
+          );
+          expect(find.text('正在准备视频…'), findsNothing);
+          repository.resolutionGate!.complete(fresh);
+          await _pumpUntil(
+            tester,
+            () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+          );
+          expect(find.byType(PlaybackLoadingView), findsNothing);
+          await _unmountPlayerPage(tester);
+        },
+        () => MockClient((_) {
+          requests++;
+          return response.future;
+        }),
+      );
+    },
+  );
+
   for (final status in [401, 403, 404, 410]) {
     testWidgets(
       'expired MacCMS address HTTP $status refreshes once before playback',
@@ -674,6 +837,7 @@ void main() {
         await waitForSources(2);
         expect(videoPlatform.dataSources.last.uri, video.episodes.first.url);
         await tester.pump(const Duration(milliseconds: 200));
+        expect(find.text('视频加载较慢，正在尝试重新连接…'), findsOneWidget);
         videoPlatform.emitInitialized(videoPlatform.lastPlayerId);
         await _pumpUntil(
           tester,

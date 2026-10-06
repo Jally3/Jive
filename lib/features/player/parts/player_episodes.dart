@@ -23,6 +23,7 @@ mixin PlayerEpisodeNavigation on PlayerStateBase {
       nextSelection ?? selectionFor(widget.video, next),
     );
     if (!mounted) return;
+    _setLoadingPhase(PlaybackLoadingPhase.preparingVideo, generation);
     setState(() {
       failed = false;
       initializing = true;

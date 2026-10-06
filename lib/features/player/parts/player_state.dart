@@ -70,6 +70,17 @@ abstract class PlayerStateBase extends ConsumerState<PlayerPage>
   Timer? controlsTimer;
   Timer? _lockButtonTimer;
   bool failed = false, fullScreen = false, initializing = true;
+  final Object _loadingOwner = Object();
+  late final PlaybackLoadingController _loadingController;
+  late final Widget _loadingView = PlaybackLoadingView(session: _loadingOwner);
+
+  void _setLoadingPhase(PlaybackLoadingPhase phase, int generation) {
+    if (!mounted || generation != setupGeneration) {
+      return;
+    }
+    _loadingController.setPhase(phase);
+  }
+
   bool fillScreen = false;
   bool controlsVisible = true;
   bool _episodeMenuOpen = false;

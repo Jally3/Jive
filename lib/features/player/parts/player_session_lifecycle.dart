@@ -30,6 +30,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
     _introDecisionPosition = Duration.zero;
     _resetSeekState();
     final generation = ++setupGeneration;
+    _setLoadingPhase(PlaybackLoadingPhase.preparingVideo, generation);
     _startupWatchdog?.cancel();
     _startupWatchdog = null;
     _selection = _bindPlaybackHeaders(_selection);
@@ -239,6 +240,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
         return;
       }
       setState(() => playbackStatus = status);
+      _setLoadingPhase(PlaybackLoadingPhase.loadingPicture, generation);
       final proxyUrl = session?.proxyManifestUrl;
       final isHls = target?.playbackSource.format == PlaybackFormat.hls;
       final requestHeaders =
@@ -301,6 +303,15 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
           },
         );
         final failedSession = session;
+        if (failedSession != null && !widget.offlineOnly) {
+          _setLoadingPhase(
+            error is PlaybackStartupTimeout &&
+                    error.reason == PlaybackStartupTimeoutReason.noProgress
+                ? PlaybackLoadingPhase.reconnecting
+                : PlaybackLoadingPhase.alternatePlayback,
+            generation,
+          );
+        }
         final cleanup = startupTrace?.startStage(
           PlaybackTraceStage.proxyFallbackCleanup,
         );
@@ -411,6 +422,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
     }
     final previousSelection = _selection;
     final previousEpisode = episode;
+    _setLoadingPhase(PlaybackLoadingPhase.expiredAddress, generation);
     final fresh = await ref
         .read(videoRepositoryProvider)
         .resolvePlayback(source, widget.video.ref, forceRefresh: true);
@@ -459,6 +471,12 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       _introSkipped = true;
     }
     if (target > Duration.zero && target < next.value.duration) {
+      _setLoadingPhase(
+        _introSkipped
+            ? PlaybackLoadingPhase.skippingIntro
+            : PlaybackLoadingPhase.restoringPosition,
+        generation,
+      );
       final resumeSeek = startupTrace?.startStage(
         PlaybackTraceStage.resumeSeek,
       );
@@ -478,6 +496,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       if (session != null) await _closeSession(session);
       return;
     }
+    _setLoadingPhase(PlaybackLoadingPhase.loadingPicture, generation);
     final setSpeed = startupTrace?.startStage(
       PlaybackTraceStage.controllerSetSpeed,
     );
@@ -771,6 +790,12 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
     _playbackDesired = true;
     _completionHandled = false;
     if (!mounted) return;
+    _setLoadingPhase(
+      widget.offlineOnly
+          ? PlaybackLoadingPhase.preparingVideo
+          : PlaybackLoadingPhase.refreshingAddress,
+      generation,
+    );
     setState(() {
       failed = false;
       initializing = true;

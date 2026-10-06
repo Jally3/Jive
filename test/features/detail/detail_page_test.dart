@@ -63,6 +63,7 @@ class _FakeDetailRepository implements VideoRepository {
 
   final int activeEpisodes;
   final Set<String> failSources;
+  Completer<Video>? resolutionGate;
 
   @override
   Future<VideoPage> fetchPage(
@@ -118,7 +119,7 @@ class _FakeDetailRepository implements VideoRepository {
     VodSource source,
     VideoRef ref, {
     bool forceRefresh = false,
-  }) => fetchDetail(source, ref);
+  }) => resolutionGate?.future ?? fetchDetail(source, ref);
 }
 
 ProviderContainer _container(
@@ -298,6 +299,57 @@ Future<void> _pumpUntil(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets(
+    'pending playback information shows progress and failure clears it',
+    (tester) async {
+      final repository = _FakeDetailRepository(activeEpisodes: 2);
+      repository.resolutionGate = Completer<Video>();
+      final container = _playerAwareContainer(repository);
+      addTearDown(container.dispose);
+      await container.read(vodSourceRegistryProvider.future);
+      await _pumpDetailPage(tester, container);
+      await tester.pump();
+      await tester.tap(find.text('播放 第1集'));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(
+        find.byKey(const ValueKey('detail-playback-loading')),
+        findsNothing,
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('正在获取播放信息…'), findsOneWidget);
+      repository.resolutionGate!.completeError(
+        const VideoDataException('连接失败'),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('detail-playback-loading')),
+        findsNothing,
+      );
+      expect(find.byType(PlayerPage), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('leaving detail cancels pending playback progress updates', (
+    tester,
+  ) async {
+    final repository = _FakeDetailRepository(activeEpisodes: 2);
+    repository.resolutionGate = Completer<Video>();
+    final container = _playerAwareContainer(repository);
+    addTearDown(container.dispose);
+    await container.read(vodSourceRegistryProvider.future);
+    await _pumpDetailPage(tester, container);
+    await tester.pump();
+    await tester.tap(find.text('播放 第1集'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpWidget(const SizedBox.shrink());
+    repository.resolutionGate!.completeError(const VideoDataException('连接失败'));
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('detail-playback-loading')), findsNothing);
+  });
 
   testWidgets(
     'MacCMS detail reuses its response and filtered episodes do not play another episode',
