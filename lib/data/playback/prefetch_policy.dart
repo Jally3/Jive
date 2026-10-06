@@ -59,7 +59,7 @@ Duration prefetchAheadFor(
 
 /// 当前预取目标（领先播放位置的时长）。Duration.zero 表示不预取：
 /// 模式关闭、无网络，或网络类型未知（保守起见不偷跑流量）。
-final prefetchAheadProvider = Provider<Duration>((ref) {
+final prefetchAheadProvider = Provider.autoDispose<Duration>((ref) {
   final mode = ref.watch(prefetchModeProvider).value;
   if (mode == null) return Duration.zero;
   final results = ref.watch(connectivityResultsProvider).value;

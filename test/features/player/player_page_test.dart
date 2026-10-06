@@ -6,6 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:jive/data/device/device_status_provider.dart';
+import 'package:jive/data/network/connectivity_provider.dart';
+import 'package:jive/domain/device_status.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:jive/data/cache/cache_index.dart';
@@ -322,6 +326,9 @@ Future<ProviderContainer> _pumpPlayerPage(
   PlaybackStartupTrace? startupTrace,
   CacheManager? cacheManager,
   VodSourceRegistry? registry,
+  Stream<DateTime>? deviceClock,
+  Stream<DeviceBatteryStatus?>? deviceBattery,
+  Stream<List<ConnectivityResult>>? deviceNetwork,
 }) async {
   final container = ProviderContainer(
     overrides: [
@@ -335,6 +342,12 @@ Future<ProviderContainer> _pumpPlayerPage(
       ),
       prefetchAheadProvider.overrideWithValue(Duration.zero),
       isTvProvider.overrideWith((ref) async => isTv),
+      if (deviceClock != null)
+        deviceClockProvider(true).overrideWith((ref) => deviceClock),
+      if (deviceBattery != null)
+        deviceBatteryProvider(true).overrideWith((ref) => deviceBattery),
+      if (deviceNetwork != null)
+        connectivityResultsProvider.overrideWith((ref) => deviceNetwork),
       if (cacheManager != null)
         cacheManagerProvider.overrideWith((ref) async => cacheManager),
     ],
@@ -1999,6 +2012,252 @@ void main() {
           (button) => button.tooltip == '重新播放' && button.style != null,
         );
     expect(replayButton.tooltip, '重新播放');
+    await _unmountPlayerPage(tester);
+  });
+
+  for (final isLastEpisode in [false, true]) {
+    testWidgets(
+      '${isLastEpisode ? 'last episode' : 'single episode'} completion hides controls and replay after inactivity',
+      (tester) async {
+        final video = isLastEpisode
+            ? _playableSeries('https://old.example.com')
+            : _playableVideo('https://old.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          episode: video.episodes.last,
+          repository: _FakeVideoRepository(video),
+        );
+        await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+        await tester.pump(const Duration(seconds: 4));
+        expect(_controlsBarOpacity(tester), 0);
+
+        videoPlatform.emitCompleted(0);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        final replay = find.byKey(
+          const ValueKey('player-center-replay-button'),
+        );
+        expect(_controlsBarOpacity(tester), 1);
+        expect(replay.hitTestable(), findsOneWidget);
+
+        await tester.pump(const Duration(milliseconds: 3100));
+        expect(_controlsBarOpacity(tester), 0);
+        expect(replay.hitTestable(), findsNothing);
+
+        final bounds = tester.getRect(find.byType(PlayerGestureLayer));
+        await tester.tapAt(
+          Offset(bounds.left + bounds.width * 0.75, bounds.center.dy),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(_controlsBarOpacity(tester), 1);
+        expect(replay.hitTestable(), findsOneWidget);
+
+        await tester.pump(const Duration(seconds: 2));
+        await tester.tap(find.byKey(const ValueKey('player-position-label')));
+        await tester.pump(const Duration(seconds: 2));
+        expect(_controlsBarOpacity(tester), 1);
+        await tester.pump(const Duration(milliseconds: 1100));
+        expect(_controlsBarOpacity(tester), 0);
+        expect(replay.hitTestable(), findsNothing);
+        expect(videoPlatform.playing[0], isFalse);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  for (final completed in [false, true]) {
+    testWidgets(
+      'top bar interaction renews controls timeout ${completed ? 'after completion' : 'during playback'}',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(844, 390);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final video = _playableVideo('https://old.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+        );
+        await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+        if (completed) {
+          videoPlatform.emitCompleted(0);
+          await tester.pump();
+          await tester.pump();
+        }
+        await tester.pump(const Duration(seconds: 2));
+        final scrim = tester.getRect(
+          find.byKey(const ValueKey('player-top-scrim')),
+        );
+        await tester.tapAt(Offset(scrim.right - 8, scrim.top + 8));
+        await tester.pump(const Duration(seconds: 2));
+        expect(_controlsBarOpacity(tester), 1);
+        await tester.pump(const Duration(milliseconds: 1100));
+        expect(_controlsBarOpacity(tester), 0);
+        expect(videoPlatform.playing[0], !completed);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  for (final fullscreen in [false, true]) {
+    testWidgets(
+      'left edge toggles controls in ${fullscreen ? 'fullscreen' : 'windowed playback'}',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(390, 844);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final video = _playableVideo('https://old.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+        );
+        await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+        if (fullscreen) {
+          await tester.tap(find.byTooltip('进入全屏'));
+          await tester.pump();
+          tester.view.physicalSize = const Size(844, 390);
+          await tester.pump();
+        }
+        final bounds = tester.getRect(find.byType(PlayerGestureLayer));
+        final videoBounds = tester.getRect(find.byType(VideoPlayer));
+        final edge = Offset(
+          videoBounds.left + 8,
+          fullscreen ? bounds.center.dy : bounds.top + 24,
+        );
+        expect(_controlsBarOpacity(tester), 1);
+        await tester.tapAt(edge);
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(_controlsBarOpacity(tester), 0);
+        await tester.tapAt(edge);
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(_controlsBarOpacity(tester), 1);
+        expect(videoPlatform.playing[0], isTrue);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  testWidgets('TV keeps completed controls visible for remote interaction', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1920, 1080);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+      isTv: true,
+    );
+    await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+    videoPlatform.emitCompleted(0);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    expect(_controlsBarOpacity(tester), 1);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(_controlsBarOpacity(tester), 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump(const Duration(seconds: 4));
+    expect(_controlsBarOpacity(tester), 1);
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets(
+    'device status updates preserve the player and controls deadline',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(844, 390);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final clock = StreamController<DateTime>.broadcast();
+      final battery = StreamController<DeviceBatteryStatus?>.broadcast();
+      final network = StreamController<List<ConnectivityResult>>.broadcast();
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+        deviceClock: clock.stream,
+        deviceBattery: battery.stream,
+        deviceNetwork: network.stream,
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      );
+      await tester.pump(const Duration(seconds: 2));
+      final title = tester.widget(
+        find.byKey(const ValueKey('player-top-title-row')),
+      );
+      clock.add(DateTime(2026, 10, 6, 21, 37));
+      battery.add(const DeviceBatteryStatus(level: 19, charging: false));
+      network.add([ConnectivityResult.mobile]);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('21:37'), findsOneWidget);
+      expect(find.text('19'), findsOneWidget);
+      expect(find.text('蜂窝'), findsOneWidget);
+      expect(
+        tester.widget(find.byKey(const ValueKey('player-top-title-row'))),
+        same(title),
+      );
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(_controlsBarOpacity(tester), 0);
+      expect(videoPlatform.dataSources, hasLength(1));
+      expect(videoPlatform.playing[0], isTrue);
+      await _unmountPlayerPage(tester);
+      unawaited(clock.close());
+      unawaited(battery.close());
+      unawaited(network.close());
+      await tester.pump();
+    },
+  );
+
+  testWidgets('top bar uses screen safe area once around letterboxed video', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.padding = const FakeViewPadding(left: 59, right: 34);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetPadding);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+      deviceNetwork: Stream.value([ConnectivityResult.wifi]),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+    );
+    final bar = tester.getRect(find.byKey(const ValueKey('player-top-scrim')));
+    final back = tester.getRect(find.byKey(const ValueKey('fullscreen-back')));
+    final status = tester.getRect(
+      find.byKey(const ValueKey('player-device-status')),
+    );
+    final picture = tester.getRect(find.byType(VideoPlayer));
+    expect(picture.left, greaterThan(59));
+    expect(bar.left, 0);
+    expect(bar.right, 844);
+    expect(back.left, 59 + 8);
+    expect(status.right, 844 - 34 - 8);
+    expect(find.text('Wi-Fi'), findsNothing);
+    await tester.tapAt(const Offset(20, 195));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(_controlsBarOpacity(tester), 0);
+    await tester.tapAt(const Offset(20, 195));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(_controlsBarOpacity(tester), 1);
     await _unmountPlayerPage(tester);
   });
 

@@ -37,6 +37,7 @@ lib/shared/
 
 ```text
 lib/domain/
+├── device_status.dart                 # 设备状态值对象：网络类型、电量百分比与充电/低电量状态
 ├── app_update_info.dart               # APK 版本清单模型：容错解析版本、HTTPS 下载地址和更新说明
 ├── recommendation.dart                # 后端推荐候选、模式、会话、分页、元数据与缓存模型
 ├── video.dart                         # 核心模型：Video / VideoRef / Episode / PlaybackLine / VideoCategory / VideoPage
@@ -155,8 +156,15 @@ lib/data/cache/
 
 ```text
 lib/data/network/
-├── connectivity_provider.dart          # 共享网络状态：首次读取当前连接，持续发布 Wi-Fi/蜂窝/断网变化
+├── connectivity_provider.dart          # 共享网络状态：首次/恢复前台读取、防旧快照覆盖新事件；最后一个消费者退出后释放监听
 └── json_http_client.dart               # Jive 自有 API 传输：JSON 缓冲请求及可取消的原始流响应
+```
+
+## 设备状态（`lib/data/device/`）
+
+```text
+lib/data/device/
+└── device_status_provider.dart        # 前后台、分钟时钟、电池/充电事件/30秒轮询、网络映射；自动释放，iOS 快照恢复监控开关
 ```
 
 ## 下载（`lib/data/download/`）
@@ -233,7 +241,8 @@ lib/features/
 │   ├── playback_seek_clock.dart       # 拖动/seek 稳定时钟：记住可播时长、冻结尺子、判断 native 落点是否被断点吸附
 │   └── widgets/
 │       ├── player_controls_bar.dart       # 底部控制条：进度、播放/暂停、上下集、下载、倍速、选集、全屏
-│       ├── player_top_bar.dart            # 沉浸式顶栏：返回按钮与标题
+│       ├── player_top_bar.dart            # 沉浸式顶栏：返回、标题、设备状态；屏幕安全区 + 8px 留白，窄屏/大字体双行布局
+│       ├── player_device_status.dart      # 设备状态区：时间/网络/电量分别消费 Riverpod 局部刷新；Wi-Fi 仅图标
 │       ├── player_gesture_layer.dart      # 手势层：单击/双击/横滑 seek/长按倍速/纵滑亮度音量的事件分发
 │       ├── player_overlays.dart           # 悬浮层：暂停态中央大播放按钮等
 │       ├── player_indicators.dart         # 指示器：缓冲菊花等播放中状态

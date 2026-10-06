@@ -343,6 +343,13 @@ class _PlayerPageState extends PlayerStateBase
     return Stack(
       fit: StackFit.expand,
       children: [
+        if (!showStandaloneBack)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _screenLocked ? _toggleLockedControls : _toggleControls,
+            ),
+          ),
         Center(
           child: failed
               ? SingleChildScrollView(child: _error())
@@ -350,6 +357,20 @@ class _PlayerPageState extends PlayerStateBase
               ? const CircularProgressIndicator()
               : _player(),
         ),
+        if (!showStandaloneBack) ...[
+          _gestureIndicator(topBarVisible: controlsVisible && !_screenLocked),
+          // 顶栏按屏幕安全区定位，避免视频黑边与 SafeArea 叠加留白。
+          PlayerTopBar(
+            visible: controlsVisible && !_screenLocked,
+            fullScreen: fullScreen,
+            title: '${widget.video.title} · ${episode.name}',
+            onShowControls: _showControls,
+            isTv: _isTv,
+            onBack: fullScreen
+                ? _toggleFullScreen
+                : () => unawaited(_saveAndPop()),
+          ),
+        ],
         if (showStandaloneBack)
           Align(
             alignment: Alignment.topLeft,
@@ -399,6 +420,20 @@ class _PlayerPageState extends PlayerStateBase
   }
 
   Widget _error() => PlayerErrorView(message: errorMessage, onRetry: _retry);
+
+  Widget _gestureIndicator({bool topBarVisible = false}) =>
+      PlayerGestureIndicator(
+        controller: controller!,
+        previewPosition: previewPosition,
+        seekClock: seekClock,
+        seekCommitting: seekCommitting,
+        screenSeeking: screenSeeking,
+        speedBoosting: speedBoosting,
+        speedBoostFallback: speedBoostFallback,
+        verticalDrag: verticalDrag,
+        positionBeforeSeek: positionBeforeSeek,
+        topBarVisible: topBarVisible,
+      );
 
   Widget _player({bool portrait = false}) {
     final current = controller!;
@@ -476,28 +511,7 @@ class _PlayerPageState extends PlayerStateBase
           screenSeeking: screenSeeking,
           seekCommitting: seekCommitting,
         ),
-        PlayerGestureIndicator(
-          controller: current,
-          previewPosition: previewPosition,
-          seekClock: seekClock,
-          seekCommitting: seekCommitting,
-          screenSeeking: screenSeeking,
-          speedBoosting: speedBoosting,
-          speedBoostFallback: speedBoostFallback,
-          verticalDrag: verticalDrag,
-          positionBeforeSeek: positionBeforeSeek,
-        ),
-        // Overlay 布局没有 AppBar（全屏或 iPad 横屏未全屏），
-        // 统一由播放器内顶栏提供返回和标题。
-        if (overlayLayout)
-          PlayerTopBar(
-            visible: controlsVisible && !lockActive,
-            fullScreen: fullScreen,
-            title: '${widget.video.title} · ${episode.name}',
-            onBack: fullScreen
-                ? _toggleFullScreen
-                : () => unawaited(_saveAndPop()),
-          ),
+        if (!overlayLayout) _gestureIndicator(),
         PlayerControlsBar(
           controller: current,
           previewPosition: previewPosition,

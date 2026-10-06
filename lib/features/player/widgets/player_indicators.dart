@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../shared/playback_scrubber.dart';
+import 'player_top_bar.dart';
 
 /// 缓冲指示：播放中缓冲且不在滑屏/提交 seek 时，画面中央显示菊花。
 class PlayerBufferingIndicator extends StatelessWidget {
@@ -64,6 +65,7 @@ class PlayerGestureIndicator extends StatelessWidget {
     required this.speedBoostFallback,
     required this.verticalDrag,
     required this.positionBeforeSeek,
+    this.topBarVisible = false,
   });
 
   final VideoPlayerController controller;
@@ -75,6 +77,7 @@ class PlayerGestureIndicator extends StatelessWidget {
   final ValueNotifier<bool> speedBoostFallback;
   final ValueNotifier<({bool isVolume, double value})?> verticalDrag;
   final Duration positionBeforeSeek;
+  final bool topBarVisible;
 
   @override
   Widget build(BuildContext context) {
@@ -185,44 +188,60 @@ class PlayerGestureIndicator extends StatelessWidget {
             alignment: Alignment.center,
             children: [
               Center(child: centerIndicator),
-              SafeArea(
-                minimum: const EdgeInsets.only(top: 52, right: 16),
-                child: Align(
-                  alignment: Alignment.topRight,
-                  child: AnimatedOpacity(
-                    opacity: speedVisible ? 1 : 0,
-                    duration: speedVisible
-                        ? const Duration(milliseconds: 120)
-                        : const Duration(milliseconds: 150),
-                    child: DecoratedBox(
-                      key: const ValueKey('speed-boost-indicator'),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.45),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.fast_forward,
-                              color: Colors.white,
-                              size: 16,
+              LayoutBuilder(
+                builder: (context, constraints) => SafeArea(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      top: topBarVisible
+                          ? playerTopBarHeight(
+                                  context,
+                                  constraints.maxWidth -
+                                      MediaQuery.viewPaddingOf(
+                                        context,
+                                      ).horizontal,
+                                ) +
+                                8
+                          : 52,
+                      right: 16,
+                    ),
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: AnimatedOpacity(
+                        opacity: speedVisible ? 1 : 0,
+                        duration: speedVisible
+                            ? const Duration(milliseconds: 120)
+                            : const Duration(milliseconds: 150),
+                        child: DecoratedBox(
+                          key: const ValueKey('speed-boost-indicator'),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
                             ),
-                            SizedBox(width: 4),
-                            Text(
-                              '2×',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.fast_forward,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  '2×',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),

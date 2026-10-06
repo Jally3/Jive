@@ -27,7 +27,6 @@ mixin PlayerControlsState on PlayerStateBase {
     if (_screenLocked ||
         value == null ||
         !value.isInitialized ||
-        value.isCompleted ||
         failed ||
         isSeeking ||
         _popupMenuOpen ||

@@ -749,6 +749,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
         controlsVisible = true;
         volumeSliderVisible = false;
       });
+      _scheduleControlsHide();
       unawaited(_save());
       unawaited(_syncWakelock());
     }
