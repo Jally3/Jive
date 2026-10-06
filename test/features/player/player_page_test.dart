@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:jive/data/cache/cache_index.dart';
+import 'package:jive/data/cache/cache_manager.dart';
+import 'package:jive/data/cache/cache_providers.dart';
+import 'package:jive/data/cache/content_key.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/playback/prefetch_policy.dart';
@@ -19,6 +24,8 @@ import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/data/vod_source/adapters/mac_cms_v10_adapter.dart';
 import 'package:jive/data/playback/ad_filter.dart';
 import 'package:jive/domain/playback_status.dart';
+import 'package:jive/domain/playback_selection.dart';
+import 'package:jive/features/settings/playback_trace/playback_trace_report.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
@@ -39,6 +46,15 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:wakelock_plus_platform_interface/wakelock_plus_platform_interface.dart';
 
 enum _InitializationResult { success, failure, pending }
+
+class _FakeCacheDiskSpace implements DiskSpaceProvider {
+  @override
+  Future<int> availableBytes() async => 20 << 30;
+  @override
+  Future<int?> totalCapacityBytes() async => 64 << 30;
+  @override
+  Future<int?> platformCacheLimitBytes() async => null;
+}
 
 class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   final List<DataSource> dataSources = [];
@@ -304,6 +320,7 @@ Future<ProviderContainer> _pumpPlayerPage(
   ThemeData? theme,
   Map<String, Duration> episodeResumePositions = const {},
   PlaybackStartupTrace? startupTrace,
+  CacheManager? cacheManager,
   VodSourceRegistry? registry,
 }) async {
   final container = ProviderContainer(
@@ -318,9 +335,12 @@ Future<ProviderContainer> _pumpPlayerPage(
       ),
       prefetchAheadProvider.overrideWithValue(Duration.zero),
       isTvProvider.overrideWith((ref) async => isTv),
+      if (cacheManager != null)
+        cacheManagerProvider.overrideWith((ref) async => cacheManager),
     ],
   );
   await container.read(vodSourceRegistryProvider.future);
+  if (cacheManager != null) await container.read(cacheManagerProvider.future);
   addTearDown(container.dispose);
   await tester.pumpWidget(
     UncontrolledProviderScope(
@@ -532,6 +552,143 @@ void main() {
       await _unmountPlayerPage(tester);
     }, () => MockClient((_) async => http.Response('', 502)));
   });
+
+  testWidgets(
+    'stalled proxy falls back at eight seconds and logs the final direct mode',
+    (tester) async {
+      final video = _playableVideo('https://example.com/watchdog.m3u8');
+      final selection = selectionFor(video, video.episodes.first)!;
+      final content = ContentKeyBuilder().build(
+        ContentKeyParts(
+          sourceId: selection.sourceId,
+          sourceVideoId: selection.sourceVideoId,
+          playbackLineIdentity: selection.playbackLineIdentity,
+          episodeIdentity: selection.episodeIdentity,
+        ),
+      );
+      final manager = (await tester.runAsync(() async {
+        final directory = await Directory.systemTemp.createTemp(
+          'jive_watchdog_player',
+        );
+        final store = CacheIndexStore(directory);
+        final manager = CacheManager(
+          store: store,
+          diskSpace: _FakeCacheDiskSpace(),
+        );
+        await manager.initialize();
+        final entry = await manager.upsertEntry(
+          CacheEntry(
+            contentKeyVersion: content.version,
+            contentKeyHash: content.hash,
+            revisionKeyHash: 'watchdog',
+            manifestFingerprint: 'watchdog',
+            manifestBaseUrl: video.episodes.first.url,
+            sourceId: selection.sourceId,
+            sourceVideoId: selection.sourceVideoId,
+            title: selection.title,
+            playbackLineIdentity: selection.playbackLineIdentity,
+            playbackLineName: '',
+            episodeIdentity: selection.episodeIdentity,
+            episodeId: selection.episode.id,
+            episodeName: selection.episode.name,
+          ),
+        );
+        final id = 'sha256:${'a' * 64}';
+        final file = store.resourceFile(content.hash, 'watchdog', id, 'ts');
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(List.filled(188, 0x47));
+        await manager.setExpectations(entry.key, 1);
+        final lease = await manager.reserve(entry.key, 188);
+        await lease!.commitResource(resourceId: id, size: 188, ext: 'ts');
+        await store.saveProxyManifest(
+          content.hash,
+          'watchdog',
+          '#EXTM3U\n#EXTINF:4.0,\n/play/old/res/$id\n#EXT-X-ENDLIST\n',
+        );
+        addTearDown(() async {
+          await manager.flush();
+          await directory.delete(recursive: true);
+        });
+        return manager;
+      }))!;
+      final trace = PlaybackStartupTrace.maybeStart(
+        videoTitle: video.title,
+        sourceId: video.sourceId,
+        sourceVideoId: video.sourceVideoId,
+        episode: video.episodes.first,
+        offlineOnly: false,
+      );
+      final messages = <String>[];
+      final originalDebugPrint = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) messages.add(message);
+      };
+      try {
+        videoPlatform.initializationPlan = [
+          _InitializationResult.pending,
+          _InitializationResult.pending,
+        ];
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+          cacheManager: manager,
+          startupTrace: trace,
+        );
+        Future<void> waitForSources(int count) async {
+          for (
+            var attempts = 0;
+            attempts < 200 && videoPlatform.dataSources.length < count;
+            attempts++
+          ) {
+            await tester.runAsync(() async {
+              await Future<void>.delayed(const Duration(milliseconds: 5));
+            });
+            await tester.pump();
+          }
+          expect(videoPlatform.dataSources, hasLength(count));
+          await tester.pump();
+        }
+
+        await waitForSources(1);
+        expect(
+          videoPlatform.dataSources.first.uri,
+          startsWith('http://127.0.0.1:'),
+        );
+        await tester.pump(const Duration(seconds: 7));
+        expect(videoPlatform.dataSources, hasLength(1));
+        await tester.pump(const Duration(seconds: 1));
+        await waitForSources(2);
+        expect(videoPlatform.dataSources.last.uri, video.episodes.first.url);
+        await tester.pump(const Duration(milliseconds: 200));
+        videoPlatform.emitInitialized(videoPlatform.lastPlayerId);
+        await _pumpUntil(
+          tester,
+          () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+        );
+        if (trace != null) {
+          final report = parsePlaybackTraceLogs(messages.join('\n')).single;
+          expect(report.result, 'success');
+          expect(report.mode, 'direct');
+          expect((report.raw['playback'] as Map)['usedProxy'], isFalse);
+          final stages = report.raw['stages'] as List;
+          final proxy =
+              stages.singleWhere(
+                    (stage) => stage['name'] == 'controllerInitializeProxy',
+                  )
+                  as Map;
+          expect((proxy['metadata'] as Map)['timeoutReason'], 'noProgress');
+        }
+        await _unmountPlayerPage(tester);
+        await tester.runAsync(
+          () async => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        debugPrint = originalDebugPrint;
+      }
+    },
+  );
 
   for (final result in [
     _InitializationResult.success,

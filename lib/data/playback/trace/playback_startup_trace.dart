@@ -7,11 +7,19 @@ import '../../../domain/video.dart';
 import 'playback_trace_config.dart';
 
 final class PlaybackTraceSpan {
-  PlaybackTraceSpan._(this.name, this.stopwatch, this.metadata);
+  PlaybackTraceSpan._(
+    this.name,
+    this.stopwatch,
+    this.metadata,
+    this.startedAtMs,
+    this.parent,
+  );
 
   final String name;
   final Stopwatch stopwatch;
   final Map<String, Object?> metadata;
+  final double startedAtMs;
+  final String? parent;
   bool finished = false;
 }
 
@@ -123,6 +131,7 @@ final class PlaybackStartupTrace {
 
   PlaybackTraceSpan? startStage(
     String name, {
+    String? parent,
     Map<String, Object?> metadata = const {},
   }) {
     if (_finished) return null;
@@ -131,6 +140,8 @@ final class PlaybackStartupTrace {
         name,
         Stopwatch()..start(),
         Map<String, Object?>.from(metadata),
+        _total.elapsedMicroseconds / 1000,
+        parent,
       );
       _openSpans.add(span);
       return span;
@@ -151,12 +162,50 @@ final class PlaybackStartupTrace {
       _openSpans.remove(span);
       _stages.add({
         'name': span.name,
+        'startedAtMs': span.startedAtMs,
+        if (span.parent != null) 'parent': span.parent,
         'durationMs': span.stopwatch.elapsedMicroseconds / 1000,
         'result': result,
         if (span.metadata.isNotEmpty || metadata.isNotEmpty)
           'metadata': {...span.metadata, ...metadata},
       });
     } catch (_) {}
+  }
+
+  Future<T> measure<T>(
+    String name,
+    Future<T> Function() operation, {
+    String? parent,
+  }) async {
+    final span = startStage(name, parent: parent);
+    try {
+      final result = await operation();
+      finishStage(span);
+      return result;
+    } catch (error) {
+      finishStage(
+        span,
+        result: 'failed',
+        metadata: {'errorType': error.runtimeType.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  T measureSync<T>(String name, T Function() operation, {String? parent}) {
+    final span = startStage(name, parent: parent);
+    try {
+      final result = operation();
+      finishStage(span);
+      return result;
+    } catch (error) {
+      finishStage(
+        span,
+        result: 'failed',
+        metadata: {'errorType': error.runtimeType.toString()},
+      );
+      rethrow;
+    }
   }
 
   void complete() => _finish('success');

@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -9,6 +11,10 @@ import 'package:jive/data/cache/content_key.dart';
 import 'package:jive/data/playback/hls_parser.dart';
 import 'package:jive/data/playback/local_proxy.dart';
 import 'package:jive/data/playback/playback_session.dart';
+import 'package:jive/data/playback/trace/playback_startup_trace.dart';
+import 'package:jive/data/playback/trace/playback_trace_config.dart';
+import 'package:jive/data/playback/trace/playback_trace_stage.dart';
+import 'package:jive/features/settings/playback_trace/playback_trace_report.dart';
 import 'package:jive/domain/playback_selection.dart';
 import 'package:jive/domain/playback_source.dart';
 import 'package:jive/domain/playback_status.dart';
@@ -172,6 +178,124 @@ void main() {
     expect(preparation.status.reason, PlaybackFallbackReason.cacheUnavailable);
     expect(requested, isFalse);
   });
+
+  test('cache-only precheck does not resolve a manifest on miss', () async {
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      return http.Response('unexpected', 200);
+    });
+    for (final withCache in [true, false]) {
+      final preparation = await PlaybackSession.prepare(
+        selection: _selection(),
+        proxy: proxy,
+        parser: HlsParser(client: client),
+        client: client,
+        cacheManager: withCache ? manager : null,
+        store: withCache ? store : null,
+        cacheOnly: true,
+      );
+      expect(preparation.session, isNull);
+      expect(
+        preparation.status.reason,
+        PlaybackFallbackReason.cacheUnavailable,
+      );
+    }
+    expect(requests, 0);
+  });
+
+  test(
+    'trace separates master/media network, parsing and cache preparation',
+    () async {
+      final selection = _selection(url: 'https://cdn.example.com/master.m3u8');
+      final trace = PlaybackStartupTrace.maybeStart(
+        videoTitle: selection.title,
+        sourceId: selection.sourceId,
+        sourceVideoId: selection.sourceVideoId,
+        episode: selection.episode,
+        offlineOnly: false,
+      )!;
+      final messages = <String>[];
+      final originalDebugPrint = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) messages.add(message);
+      };
+      addTearDown(() => debugPrint = originalDebugPrint);
+      final requests = <String>[];
+      final client = MockClient((request) async {
+        requests.add(request.url.path);
+        return http.Response(
+          request.url.path.endsWith('master.m3u8')
+              ? '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100000\nmedia.m3u8\n'
+              : '#EXTM3U\n#EXTINF:4.0,\nsegment.ts\n#EXT-X-ENDLIST\n',
+          200,
+        );
+      });
+      final parent = trace.startStage(PlaybackTraceStage.hlsSessionPrepare);
+      final preparation = await PlaybackSession.prepare(
+        selection: selection,
+        proxy: proxy,
+        parser: HlsParser(
+          client: client,
+          adFilter: const AdFilter(enabled: true),
+          startupTrace: trace,
+        ),
+        client: client,
+        cacheManager: manager,
+        store: store,
+        startupTrace: trace,
+      );
+      trace.finishStage(parent);
+      trace.complete();
+      expect(preparation.session, isNotNull);
+      await preparation.session!.close(proxy);
+      expect(requests, ['/master.m3u8', '/media.m3u8']);
+      final report = parsePlaybackTraceLogs(messages.join('\n')).single;
+      expect(
+        report.stages.where(
+          (stage) => stage.name == PlaybackTraceStage.hlsManifestFetch,
+        ),
+        hasLength(2),
+      );
+      expect(
+        report.stages.where(
+          (stage) => stage.name == PlaybackTraceStage.hlsManifestParse,
+        ),
+        hasLength(2),
+      );
+      for (final name in [
+        PlaybackTraceStage.sessionCacheLookup,
+        PlaybackTraceStage.hlsProxyPlan,
+        PlaybackTraceStage.sessionCacheEntry,
+        PlaybackTraceStage.sessionCachePersist,
+        PlaybackTraceStage.sessionCacheAcquire,
+      ]) {
+        expect(
+          report.stages.singleWhere((stage) => stage.name == name).parent,
+          PlaybackTraceStage.hlsSessionPrepare,
+        );
+      }
+      expect(
+        report.stages
+            .singleWhere(
+              (stage) => stage.name == PlaybackTraceStage.hlsAdFilter,
+            )
+            .parent,
+        PlaybackTraceStage.hlsManifestParse,
+      );
+      expect(
+        jsonEncode(report.raw),
+        isNot(contains('https://cdn.example.com')),
+      );
+      expect(
+        (report.raw['stages'] as List).every(
+          (stage) => stage['startedAtMs'] is num,
+        ),
+        isTrue,
+      );
+    },
+    skip: !PlaybackTraceConfig.enabled,
+  );
 
   test(
     'online prepare persists the proxy manifest for later offline use',

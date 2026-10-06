@@ -138,6 +138,7 @@ class ResourceFetcher {
     required String ext,
     Map<String, String>? downstreamHeaders,
     bool background = false,
+    bool streamRangeMiss = false,
     ResourceTraceEventCallback? trace,
   }) async {
     final cacheLookup = trace == null ? null : (Stopwatch()..start());
@@ -156,6 +157,13 @@ class ResourceFetcher {
       return _passthrough(origin, downstreamHeaders, trace: trace);
     }
     if (_rangeHeader(downstreamHeaders) != null) {
+      // Native startup probes need their requested bytes immediately. Do not
+      // download a whole segment before answering a small Range. The ordinary
+      // prefetch/download path can still fill the complete resource later.
+      if (streamRangeMiss) {
+        _trace(trace, 'rangeResponse', {'mode': 'streamingPassThrough'});
+        return _passthrough(origin, downstreamHeaders, trace: trace);
+      }
       return _fetchRangeWithCache(
         origin,
         resourceId,

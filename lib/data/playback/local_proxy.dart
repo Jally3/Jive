@@ -34,6 +34,9 @@ class ProxySessionRoute {
   final ResourceTraceEventCallback? onStartupTraceEvent;
   final int startupTraceResourceLimit;
 
+  /// Installed only during online proxy initialization, independently of logs.
+  void Function(int bytes)? onStartupBytes;
+
   int activeReads = 0;
   bool closing = false;
   int _startupTraceResourceCount = 0;
@@ -216,6 +219,7 @@ class LocalProxyServer {
         resourceId: resourceId,
         ext: ext,
         downstreamHeaders: _headerMap(request.headers),
+        streamRangeMiss: true,
         trace: trace,
       );
       final response = request.response;
@@ -242,14 +246,17 @@ class LocalProxyServer {
       }
       var downstreamBytes = 0;
       var firstDownstreamByte = true;
-      final tracedBody = trace == null
+      final tracedBody = trace == null && route.onStartupBytes == null
           ? result.body
           : result.body.transform(
               StreamTransformer<List<int>, List<int>>.fromHandlers(
                 handleData: (chunk, sink) {
+                  if (result.statusCode >= 200 && result.statusCode < 300) {
+                    route.onStartupBytes?.call(chunk.length);
+                  }
                   if (firstDownstreamByte) {
                     firstDownstreamByte = false;
-                    trace({
+                    trace?.call({
                       'event': 'downstreamFirstByte',
                       'elapsedMs':
                           (requestClock?.elapsedMicroseconds ?? 0) / 1000,
@@ -325,19 +332,22 @@ class LocalProxyServer {
     }
     var bytes = 0;
     var firstByte = true;
-    final body = trace == null
+    final body = trace == null && route.onStartupBytes == null
         ? upstream.stream
         : upstream.stream.transform(
             StreamTransformer<List<int>, List<int>>.fromHandlers(
               handleData: (chunk, sink) {
+                if (upstream.statusCode >= 200 && upstream.statusCode < 300) {
+                  route.onStartupBytes?.call(chunk.length);
+                }
                 if (firstByte) {
                   firstByte = false;
-                  trace({
+                  trace?.call({
                     'event': 'upstreamFirstByte',
                     'elapsedMs':
                         (upstreamClock?.elapsedMicroseconds ?? 0) / 1000,
                   });
-                  trace({
+                  trace?.call({
                     'event': 'downstreamFirstByte',
                     'elapsedMs':
                         (requestClock?.elapsedMicroseconds ?? 0) / 1000,

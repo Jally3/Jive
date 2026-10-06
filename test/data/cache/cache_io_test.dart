@@ -334,6 +334,55 @@ void main() {
     },
   );
 
+  test(
+    'native Range miss streams before completion and never caches partial bytes',
+    () async {
+      final upstream = StreamController<List<int>>();
+      addTearDown(upstream.close);
+      var requests = 0;
+      final client = MockClient.streaming((request, body) async {
+        requests++;
+        expect(request.headers['range'], 'bytes=4-7');
+        return http.StreamedResponse(
+          upstream.stream,
+          206,
+          headers: {
+            'content-range': 'bytes 4-7/1000000',
+            'content-length': '4',
+          },
+        );
+      });
+      final created = await manager.upsertEntry(entry('streamrange'));
+      final fetcher = ResourceFetcher(
+        client: client,
+        sessionHeaders: const {},
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: 'ckstreamrange',
+        revisionKeyHash: 'rkstreamrange',
+      );
+      final id = 'sha256:${'a' * 64}';
+      final result = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/a.m4s'),
+        resourceId: id,
+        ext: 'm4s',
+        downstreamHeaders: {'range': 'bytes=4-7'},
+        streamRangeMiss: true,
+      );
+      expect(result.statusCode, 206);
+      expect(result.headers['content-range'], 'bytes 4-7/1000000');
+      final firstBytes = Completer<List<int>>();
+      final subscription = result.body.listen(firstBytes.complete);
+      upstream.add('ftyp'.codeUnits);
+      expect(await firstBytes.future, 'ftyp'.codeUnits);
+      expect(upstream.isClosed, isFalse);
+      await subscription.cancel();
+      expect(await manager.resourceRecord(created.key, id), isNull);
+      expect(requests, 1);
+    },
+  );
+
   test('over quota fetch streams through without caching', () async {
     manager = CacheManager(
       store: store,

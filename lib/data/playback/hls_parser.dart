@@ -3,6 +3,8 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import '../../domain/playback_source.dart';
 import './ad_filter.dart';
+import 'trace/playback_startup_trace.dart';
+import 'trace/playback_trace_stage.dart';
 
 /// HLS 是否能进入本地代理/缓存链路；不支持时播放器应改用源地址直连。
 enum HlsCacheability { cacheable, directFallback }
@@ -160,11 +162,13 @@ class HlsParser {
     required this.client,
     this.maxHops = 3,
     this.adFilter = const AdFilter(),
+    this.startupTrace,
   });
 
   final http.Client client;
   final int maxHops;
   final AdFilter adFilter;
+  final PlaybackStartupTrace? startupTrace;
 
   /// 从 [source] 开始解析 master/media 清单，并跟随最多 [maxHops] 层变体。
   ///
@@ -173,11 +177,29 @@ class HlsParser {
     var current = source;
     for (var hop = 0; hop < maxHops; hop++) {
       http.Response response;
+      final fetch = startupTrace?.startStage(
+        PlaybackTraceStage.hlsManifestFetch,
+        parent: PlaybackTraceStage.hlsSessionPrepare,
+        metadata: {'hop': hop},
+      );
       try {
         response = await client
             .get(current.url, headers: filterSessionHeaders(current.headers))
             .timeout(const Duration(seconds: 12));
-      } catch (_) {
+        startupTrace?.finishStage(
+          fetch,
+          result: response.statusCode == 200 ? 'success' : 'failed',
+          metadata: {
+            'statusCode': response.statusCode,
+            'bytes': response.bodyBytes.length,
+          },
+        );
+      } catch (error) {
+        startupTrace?.finishStage(
+          fetch,
+          result: 'failed',
+          metadata: {'errorType': error.runtimeType.toString()},
+        );
         return const HlsDecision.directFallback('manifest 请求失败');
       }
       if (response.statusCode != 200) {
@@ -186,17 +208,33 @@ class HlsParser {
           httpStatusCode: response.statusCode,
         );
       }
-      final body = utf8.decode(response.bodyBytes);
-      final finalUri = response.request?.url ?? current.url;
-      if (_isMaster(body)) {
-        final variant = _firstVariantUri(body, finalUri);
-        if (variant == null) {
-          return const HlsDecision.directFallback('master 缺少可用变体');
+      final parse = startupTrace?.startStage(
+        PlaybackTraceStage.hlsManifestParse,
+        parent: PlaybackTraceStage.hlsSessionPrepare,
+        metadata: {'hop': hop},
+      );
+      try {
+        final body = utf8.decode(response.bodyBytes);
+        final finalUri = response.request?.url ?? current.url;
+        if (_isMaster(body)) {
+          final variant = _firstVariantUri(body, finalUri);
+          if (variant == null) {
+            return const HlsDecision.directFallback('master 缺少可用变体');
+          }
+          current = current.copyWith(url: variant);
+          continue;
         }
-        current = current.copyWith(url: variant);
-        continue;
+        return decideMedia(body, finalUri);
+      } catch (error) {
+        startupTrace?.finishStage(
+          parse,
+          result: 'failed',
+          metadata: {'errorType': error.runtimeType.toString()},
+        );
+        rethrow;
+      } finally {
+        startupTrace?.finishStage(parse);
       }
-      return decideMedia(body, finalUri);
     }
     return const HlsDecision.directFallback('master 层级过深');
   }
@@ -217,7 +255,13 @@ class HlsParser {
       return const HlsDecision.directFallback('直播流回退直连');
     }
     if (adFilter.enabled && !playlist.hasImplicitEncryptionIv) {
-      final outcome = adFilter.filter(playlist);
+      final outcome =
+          startupTrace?.measureSync(
+            PlaybackTraceStage.hlsAdFilter,
+            () => adFilter.filter(playlist),
+            parent: PlaybackTraceStage.hlsManifestParse,
+          ) ??
+          adFilter.filter(playlist);
       if (outcome.removedAny && outcome.filtered.isNotEmpty) {
         return HlsDecision.filtered(
           buildFilteredPlaylist(playlist, outcome),

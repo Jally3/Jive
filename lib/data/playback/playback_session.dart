@@ -14,6 +14,8 @@ import '../download/download_manager.dart';
 import './hls_parser.dart';
 import './local_proxy.dart';
 import '../cache/url_normalizer.dart';
+import 'trace/playback_startup_trace.dart';
+import 'trace/playback_trace_stage.dart';
 
 /// 播放会话从准备到释放的生命周期状态。
 enum PlaybackSessionStatus { preparing, ready, closing, closed, failed }
@@ -88,10 +90,15 @@ class PlaybackSession {
     CacheManager? cacheManager,
     CacheIndexStore? store,
     bool offlineOnly = false,
+    // Used by the unknown-format precheck: a miss must not fetch a manifest.
+    bool cacheOnly = false,
     Duration timeout = const Duration(seconds: 15),
     void Function(PlaybackFallbackReason reason)? onCacheBypass,
     ResourceTraceEventCallback? onStartupTraceEvent,
+    PlaybackStartupTrace? startupTrace,
+    String traceParent = PlaybackTraceStage.hlsSessionPrepare,
   }) async {
+    PlaybackTraceSpan? activePreparation;
     try {
       final cachedEnabled = cacheManager != null && store != null;
       final contentKey = cachedEnabled
@@ -109,16 +116,21 @@ class PlaybackSession {
       );
 
       if (contentKey != null) {
-        final cached = await cacheManager!.findOffline(
-          contentKey.hash,
-          manifestBaseUrl,
-        );
+        Future<CacheEntry?> lookup() =>
+            cacheManager!.findOffline(contentKey.hash, manifestBaseUrl);
+        final cached =
+            await (startupTrace?.measure(
+                  PlaybackTraceStage.sessionCacheLookup,
+                  lookup,
+                  parent: traceParent,
+                ) ??
+                lookup());
         if (cached != null) {
           final offline = await _buildOfflineSession(
             selection: selection,
             proxy: proxy,
             client: client,
-            cacheManager: cacheManager,
+            cacheManager: cacheManager!,
             store: store!,
             contentKey: contentKey,
             entry: cached,
@@ -135,7 +147,7 @@ class PlaybackSession {
         }
       }
 
-      if (offlineOnly) {
+      if (offlineOnly || cacheOnly) {
         return const PlaybackSessionPreparation(
           session: null,
           status: PlaybackStatus(
@@ -166,7 +178,13 @@ class PlaybackSession {
       final originalDurationMs =
           filteredDurationMs + (timelineMapping?.removedMs ?? 0);
       final token = _token();
-      final plan = parser.buildProxyPlan(playlist, token);
+      final plan =
+          startupTrace?.measureSync(
+            PlaybackTraceStage.hlsProxyPlan,
+            () => parser.buildProxyPlan(playlist, token),
+            parent: PlaybackTraceStage.hlsSessionPrepare,
+          ) ??
+          parser.buildProxyPlan(playlist, token);
 
       String? entryKey;
       CacheRef? cacheRef;
@@ -183,6 +201,10 @@ class PlaybackSession {
           manifestFingerprint,
         );
         entryKey = '${contentKey.hash}|$revisionKeyHash';
+        final cacheEntry = activePreparation = startupTrace?.startStage(
+          PlaybackTraceStage.sessionCacheEntry,
+          parent: PlaybackTraceStage.hlsSessionPrepare,
+        );
         await mgr.upsertEntry(
           CacheEntry(
             contentKeyVersion: contentKey.version,
@@ -202,27 +224,44 @@ class PlaybackSession {
             episodeName: selection.episode.name,
           ),
         );
-        if (timelineMapping != null) {
-          await _saveTimeline(
-            st,
+        startupTrace?.finishStage(cacheEntry);
+        activePreparation = null;
+        final persist = activePreparation = startupTrace?.startStage(
+          PlaybackTraceStage.sessionCachePersist,
+          parent: PlaybackTraceStage.hlsSessionPrepare,
+        );
+        // These files are independent. Complete all writes before publishing
+        // expectations or acquiring the entry, preserving offline consistency.
+        await Future.wait<void>([
+          if (timelineMapping != null)
+            _saveTimeline(
+              st,
+              contentKey.hash,
+              revisionKeyHash,
+              manifestFingerprint,
+              timelineMapping,
+            ),
+          st.saveProxyManifest(
             contentKey.hash,
             revisionKeyHash,
-            manifestFingerprint,
-            timelineMapping,
-          );
-        }
-        await st.saveProxyManifest(
-          contentKey.hash,
-          revisionKeyHash,
-          plan.proxyManifest,
-        );
-        await st.saveSourceManifest(
-          contentKey.hash,
-          revisionKeyHash,
-          decision.sourcePlaylist?.raw ?? playlist.raw,
+            plan.proxyManifest,
+          ),
+          st.saveSourceManifest(
+            contentKey.hash,
+            revisionKeyHash,
+            decision.sourcePlaylist?.raw ?? playlist.raw,
+          ),
+        ]);
+        startupTrace?.finishStage(persist);
+        activePreparation = null;
+        final acquire = activePreparation = startupTrace?.startStage(
+          PlaybackTraceStage.sessionCacheAcquire,
+          parent: PlaybackTraceStage.hlsSessionPrepare,
         );
         await mgr.setExpectations(entryKey, plan.expectedResourceCount);
         cacheRef = await mgr.acquire(entryKey);
+        startupTrace?.finishStage(acquire);
+        activePreparation = null;
         fetcher = ResourceFetcher(
           client: client,
           sessionHeaders: selection.playbackSource.headers,
@@ -273,7 +312,12 @@ class PlaybackSession {
                 reason: PlaybackFallbackReason.cacheUnavailable,
               ),
       );
-    } catch (_) {
+    } catch (error) {
+      startupTrace?.finishStage(
+        activePreparation,
+        result: 'failed',
+        metadata: {'errorType': error.runtimeType.toString()},
+      );
       return const PlaybackSessionPreparation(
         session: null,
         status: PlaybackStatus(

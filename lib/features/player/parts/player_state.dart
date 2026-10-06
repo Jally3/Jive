@@ -65,6 +65,7 @@ abstract class PlayerStateBase extends ConsumerState<PlayerPage>
   http.Client? _sessionClient;
   PlaybackUrlResolver? _urlResolver;
   PlaybackStartupTrace? _startupTrace;
+  PlaybackStartupWatchdog? _startupWatchdog;
   Timer? saveTimer;
   Timer? controlsTimer;
   Timer? _lockButtonTimer;

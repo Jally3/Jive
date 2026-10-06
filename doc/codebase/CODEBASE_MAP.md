@@ -121,14 +121,15 @@ lib/data/content/
 ```text
 lib/data/playback/
 ├── playback_session.dart              # 播放会话 PlaybackSession：解析 manifest、注册代理路由、挂缓存写穿与分片预取、产出降级状态
-├── local_proxy.dart                   # 本地回环代理 LocalProxyServer：按 token 路由转发 manifest/分片，并可采样前三个启动资源的下游耗时
+├── playback_startup_watchdog.dart      # 代理起播进展监控：有效媒体字节重置 8 秒空闲期限，保留 20 秒硬上限，支持取消
+├── local_proxy.dart                   # 本地回环代理：按 token 转发 manifest/分片；Range 未命中直接流式返回；上报起播字节进展与前三个资源耗时
 ├── playback_url_resolver.dart         # 未知格式播放地址解析 PlaybackUrlResolver：HTML/重定向解析，结果带 10 分钟缓存
 ├── hls_parser.dart                    # HLS manifest 解析与代理改写：HlsParser / HlsProxyPlan / HlsDecision 可缓存性判定
 ├── ad_filter.dart                     # 广告分片识别与剔除 AdFilter（adfilter-v3：夹心中插 + 节奏侏儒 + AdFilterReport）；TimelineMapping 负责源时间轴 ↔ 过滤后时间轴换算
 ├── content_type_sniffer.dart          # 播放格式嗅探：HEAD content-type 优先、魔数回退，带 TTL 缓存
 ├── prefetch_policy.dart               # 预取策略：Wi-Fi/蜂窝预取窗口时长，prefetchModeProvider 开关持久化
 ├── skip_policy.dart                   # 按影片缓存跳过片头/片尾时长（默认关闭；30/60/90/自定义）
-└── trace/                             # JIVE_PLAYBACK_TRACE 编译期开关控制的播放启动分段计时与单次 JSON 汇总
+└── trace/                             # JIVE_PLAYBACK_TRACE 开关控制的启动计时与 JSON 汇总；包含 HLS 网络/解析/过滤/缓存子阶段及父阶段关系
 ```
 
 ## 缓存（`lib/data/cache/`）

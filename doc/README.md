@@ -23,6 +23,7 @@ doc/
 │   ├── NAVIGATION_MAP.md                     # 启动链路、AppShell 骨架与全局导航地图
 │   ├── USER_FLOWS.md                         # 浏览/搜索/详情换源/续播/追更/设置流程
 │   ├── PLAYBACK_PIPELINE.md                  # 播放全链路十步流水线与降级路径
+│   ├── PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md # 点击到首帧的全链路复核与待实施优化
 │   ├── CACHE_DOWNLOAD_FLOWS.md               # 缓存体系与下载任务生命周期
 │   └── PROTOTYPES.md                         # 全部页面 ASCII 原型图（线框+注解）
 ├── native-android/
@@ -80,6 +81,7 @@ doc/
 | [`flows/NAVIGATION_MAP.md`](flows/NAVIGATION_MAP.md) | 持续生效 | 启动链路、AppShell 骨架、全局导航地图与路由/弹层方式盘点 |
 | [`flows/USER_FLOWS.md`](flows/USER_FLOWS.md) | 持续生效 | 内容浏览、搜索、详情换源、续播、收藏追更、设置的用户流程与状态分支 |
 | [`flows/PLAYBACK_PIPELINE.md`](flows/PLAYBACK_PIPELINE.md) | 持续生效 | 播放全链路十步流水线、播放模式五态与降级回退路径 |
+| [`flows/PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md`](flows/PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md) | 待实施 | 点击到首帧计时、请求复用、前台网络优先及原生/代理对照实验 |
 | [`flows/CACHE_DOWNLOAD_FLOWS.md`](flows/CACHE_DOWNLOAD_FLOWS.md) | 持续生效 | 缓存配额/磁盘布局/TTL 与下载任务生命周期、网络策略 |
 | [`flows/PROTOTYPES.md`](flows/PROTOTYPES.md) | 持续生效 | 全部页面 ASCII 原型图集（线框 + 区块注解 + 宽屏断点） |
 | [`native-android/ANDROID_NATIVE_PLAN.md`](native-android/ANDROID_NATIVE_PLAN.md) | 规划稿（待评审） | 安卓原生版重写规划：技术选型、Flutter→Kotlin 模块映射、P0–P8 分期排期与验收清单 |

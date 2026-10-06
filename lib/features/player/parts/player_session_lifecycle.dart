@@ -30,6 +30,8 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
     _introDecisionPosition = Duration.zero;
     _resetSeekState();
     final generation = ++setupGeneration;
+    _startupWatchdog?.cancel();
+    _startupWatchdog = null;
     _selection = _bindPlaybackHeaders(_selection);
     final skipPolicyLoad = startupTrace?.startStage(
       PlaybackTraceStage.skipPolicyLoad,
@@ -102,6 +104,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
             final offlinePreparation = await _prepareSession(
               target,
               generation,
+              cacheOnly: true,
             );
             startupTrace?.finishStage(
               unknownPrecheck,
@@ -262,8 +265,22 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
             ? PlaybackTraceStage.controllerInitializeDirect
             : PlaybackTraceStage.controllerInitializeProxy,
       );
+      final watchdog = proxyUrl != null && !widget.offlineOnly
+          ? PlaybackStartupWatchdog()
+          : null;
       try {
-        await next.initialize().timeout(const Duration(seconds: 20));
+        if (watchdog != null) {
+          _startupWatchdog = watchdog;
+          session!.route.onStartupBytes = watchdog.recordBytes;
+          try {
+            await watchdog.waitFor(next.initialize());
+          } finally {
+            session.route.onStartupBytes = null;
+            if (identical(_startupWatchdog, watchdog)) _startupWatchdog = null;
+          }
+        } else {
+          await next.initialize().timeout(const Duration(seconds: 20));
+        }
         startupTrace?.finishStage(controllerInitialize);
         controllerInitialize = null;
         if (!mounted || generation != setupGeneration) {
@@ -276,21 +293,27 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
         startupTrace?.finishStage(
           controllerInitialize,
           result: 'failed',
-          metadata: {'errorType': error.runtimeType.toString()},
+          metadata: {
+            'errorType': error.runtimeType.toString(),
+            if (error is PlaybackStartupTimeout)
+              'timeoutReason': error.reason.name,
+            if (watchdog != null) 'receivedBytes': watchdog.receivedBytes,
+          },
         );
-        await next.dispose();
+        final failedSession = session;
+        final cleanup = startupTrace?.startStage(
+          PlaybackTraceStage.proxyFallbackCleanup,
+        );
+        await Future.wait<void>([
+          next.dispose(),
+          if (failedSession != null) _closeSession(failedSession),
+        ]);
+        startupTrace?.finishStage(cleanup);
+        session = null;
         if (!mounted || generation != setupGeneration) {
-          if (session != null) await _closeSession(session);
           return;
         }
-        if (session != null && widget.offlineOnly) {
-          await _closeSession(session);
-          session = null;
-        }
-        if (session != null && !widget.offlineOnly) {
-          await _closeSession(session);
-          session = null;
-          if (!mounted || generation != setupGeneration) return;
+        if (failedSession != null && !widget.offlineOnly) {
           _setPlaybackStatus(
             const PlaybackStatus(
               mode: PlaybackMode.direct,
@@ -298,6 +321,10 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
                   PlaybackFallbackReason.proxyControllerInitializationFailed,
             ),
             generation: generation,
+          );
+          startupTrace?.updatePlayback(
+            mode: PlaybackMode.direct.name,
+            usedProxy: false,
           );
           next = VideoPlayerController.networkUrl(
             Uri.parse(directUrl),
@@ -519,15 +546,35 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
     PlaybackSelection target,
     int generation, {
     bool offlineOnly = false,
+    bool cacheOnly = false,
   }) async {
     try {
       final proxy = _proxy ??= LocalProxyServer();
-      await proxy.start();
       final client = _sessionClient ??= http.Client();
+      final traceParent = cacheOnly
+          ? PlaybackTraceStage.unknownCachePrecheck
+          : PlaybackTraceStage.hlsSessionPrepare;
       CacheManager? cacheManager;
-      try {
-        cacheManager = await ref.read(cacheManagerProvider.future);
-      } catch (_) {}
+      Future<void> loadCacheManager() async {
+        try {
+          cacheManager = await ref.read(cacheManagerProvider.future);
+        } catch (_) {}
+      }
+
+      await Future.wait<void>([
+        _startupTrace?.measure(
+              PlaybackTraceStage.proxyServerStart,
+              proxy.start,
+              parent: traceParent,
+            ) ??
+            proxy.start(),
+        _startupTrace?.measure(
+              PlaybackTraceStage.cacheManagerLoad,
+              loadCacheManager,
+              parent: traceParent,
+            ) ??
+            loadCacheManager(),
+      ]);
       return await PlaybackSession.prepare(
         selection: target,
         proxy: proxy,
@@ -535,11 +582,15 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
           client: client,
           // 在线边下边播同样过滤广告分片；隐式 IV 加密流由解析器自动排除。
           adFilter: const AdFilter(enabled: true),
+          startupTrace: _startupTrace,
         ),
         client: client,
         cacheManager: cacheManager,
         store: cacheManager?.store,
         offlineOnly: offlineOnly,
+        cacheOnly: cacheOnly,
+        startupTrace: _startupTrace,
+        traceParent: traceParent,
         onCacheBypass: (reason) {
           _setPlaybackStatus(
             PlaybackStatus(

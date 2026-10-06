@@ -59,7 +59,7 @@ class _PlaybackTraceViewerPageState extends State<PlaybackTraceViewerPage> {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
         Text(
-          '粘贴控制台中的 JIVE_PLAYBACK_TRACE JSON；支持单条 JSON、多条 JSONL 和带控制台前缀的日志。',
+          '粘贴控制台中的 JIVE_PLAYBACK_TRACE JSON；支持 JSON、JSONL 和控制台日志。标记 ↳ 的子阶段已包含在父阶段中，耗时不能重复相加。',
           style: TextStyle(color: context.appColors.secondary, fontSize: 13),
         ),
         const SizedBox(height: 12),
@@ -370,7 +370,11 @@ class _StageBar extends StatelessWidget {
     children: [
       Row(
         children: [
-          Expanded(child: Text(_stageLabel(stage.name))),
+          Expanded(
+            child: Text(
+              '${stage.parent == null ? '' : '↳ '}${_stageLabel(stage.name)}',
+            ),
+          ),
           Text(
             _durationLabel(stage.durationMs),
             style: const TextStyle(
@@ -441,6 +445,17 @@ String _stageLabel(String stage) =>
       'playbackSourceResolve': '真实播放地址解析',
       'contentTypeSniff': '媒体格式探测',
       'hlsSessionPrepare': 'HLS 清单与会话构建',
+      'proxyServerStart': '本地代理启动',
+      'cacheManagerLoad': '缓存管理器就绪',
+      'sessionCacheLookup': '完整缓存查询',
+      'hlsManifestFetch': 'HLS 清单网络请求',
+      'hlsManifestParse': 'HLS 清单解析',
+      'hlsAdFilter': 'HLS 广告过滤',
+      'hlsProxyPlan': '代理清单改写',
+      'sessionCacheEntry': '缓存条目初始化',
+      'sessionCachePersist': '清单与时间轴落盘',
+      'sessionCacheAcquire': '缓存引用获取',
+      'proxyFallbackCleanup': '失败播放资源释放',
       'controllerInitializeProxy': '代理播放器初始化',
       'controllerInitializeDirect': '直连播放器初始化',
       'controllerConfigure': '播放器配置总计',

@@ -10,6 +10,17 @@ abstract final class PlaybackTraceStage {
   static const playbackSourceResolve = 'playbackSourceResolve';
   static const contentTypeSniff = 'contentTypeSniff';
   static const hlsSessionPrepare = 'hlsSessionPrepare';
+  static const proxyServerStart = 'proxyServerStart';
+  static const cacheManagerLoad = 'cacheManagerLoad';
+  static const sessionCacheLookup = 'sessionCacheLookup';
+  static const hlsManifestFetch = 'hlsManifestFetch';
+  static const hlsManifestParse = 'hlsManifestParse';
+  static const hlsAdFilter = 'hlsAdFilter';
+  static const hlsProxyPlan = 'hlsProxyPlan';
+  static const sessionCacheEntry = 'sessionCacheEntry';
+  static const sessionCachePersist = 'sessionCachePersist';
+  static const sessionCacheAcquire = 'sessionCacheAcquire';
+  static const proxyFallbackCleanup = 'proxyFallbackCleanup';
   static const controllerInitializeProxy = 'controllerInitializeProxy';
   static const controllerInitializeDirect = 'controllerInitializeDirect';
   static const controllerConfigure = 'controllerConfigure';

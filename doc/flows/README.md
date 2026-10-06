@@ -24,6 +24,7 @@ doc/flows/
 ├── NAVIGATION_MAP.md         # ① 启动链路、AppShell 骨架、全局导航地图
 ├── USER_FLOWS.md             # ② 面向用户的流程：浏览/搜索/详情换源/续播/追更/设置
 ├── PLAYBACK_PIPELINE.md      # ③ 播放全链路：点击到出画面的十步流水线
+├── PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md # 点击到首帧的计时边界、瓶颈与待实施优化
 ├── CACHE_DOWNLOAD_FLOWS.md   # ④ 缓存体系与下载任务生命周期
 └── PROTOTYPES.md             # ⑤ 全部页面 ASCII 原型图（线框 + 区块注解）
 ```
@@ -41,5 +42,6 @@ doc/flows/
 
 - 「应用有几个页面、怎么跳」→ [NAVIGATION_MAP.md](NAVIGATION_MAP.md) 第 3 节全景导航地图
 - 「点一个视频到出画面发生了什么」→ [PLAYBACK_PIPELINE.md](PLAYBACK_PIPELINE.md) 第 1 节全链路总览
+- 「从点击到首帧还能如何提速」→ [PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md](PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md)
 - 「边下边播和离线下载是什么关系」→ [CACHE_DOWNLOAD_FLOWS.md](CACHE_DOWNLOAD_FLOWS.md) 第 1 节
 - 「某页面有哪些区块和交互」→ [PROTOTYPES.md](PROTOTYPES.md) 对应小节

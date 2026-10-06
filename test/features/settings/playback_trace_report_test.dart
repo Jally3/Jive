@@ -50,6 +50,20 @@ void main() {
     expect(reports.map((report) => report.traceId), ['one', 'two']);
   });
 
+  test('preserves parent stages while accepting legacy traces', () {
+    final value = _log('nested', 2500);
+    (value['stages'] as List).add({
+      'name': 'hlsManifestFetch',
+      'durationMs': 500,
+      'result': 'success',
+      'parent': 'hlsSessionPrepare',
+      'startedAtMs': 100,
+    });
+    final report = parsePlaybackTraceLogs(jsonEncode(value)).single;
+    expect(report.stages.last.parent, 'hlsSessionPrepare');
+    expect(report.stages.first.parent, isNull);
+  });
+
   test('reassembles chunked terminal output', () {
     final payload = base64Encode(
       utf8.encode(jsonEncode(_log('chunked', 3100))),

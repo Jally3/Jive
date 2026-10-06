@@ -21,6 +21,7 @@ import '../../data/playback/playback_url_resolver.dart';
 import '../../data/playback/prefetch_policy.dart';
 import '../../data/playback/skip_policy.dart';
 import '../../data/playback/trace/playback_startup_trace.dart';
+import '../../data/playback/playback_startup_watchdog.dart';
 import '../../data/playback/trace/playback_trace_stage.dart';
 import '../../data/vod_source/adapters/age_adapter.dart';
 import '../../data/history_repository.dart';
@@ -156,6 +157,7 @@ class _PlayerPageState extends PlayerStateBase
   void dispose() {
     _startupTrace?.cancel();
     setupGeneration++;
+    _startupWatchdog?.cancel();
     _lifecycleGeneration++;
     _isAppForeground = false;
     _playbackDesired = false;

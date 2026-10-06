@@ -5,11 +5,13 @@ final class PlaybackTraceStageReport {
     required this.name,
     required this.durationMs,
     required this.result,
+    this.parent,
   });
 
   final String name;
   final double durationMs;
   final String result;
+  final String? parent;
 }
 
 final class PlaybackTraceReport {
@@ -63,6 +65,7 @@ final class PlaybackTraceReport {
             name: name,
             durationMs: duration.toDouble(),
             result: stage['result']?.toString() ?? 'unknown',
+            parent: stage['parent']?.toString(),
           ),
         );
       }

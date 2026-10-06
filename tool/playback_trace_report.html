@@ -237,6 +237,17 @@
         playbackSourceResolve: '真实播放地址解析',
         contentTypeSniff: '媒体格式探测',
         hlsSessionPrepare: 'HLS 清单与会话构建',
+        proxyServerStart: '本地代理启动',
+        cacheManagerLoad: '缓存管理器就绪',
+        sessionCacheLookup: '完整缓存查询',
+        hlsManifestFetch: 'HLS 清单网络请求',
+        hlsManifestParse: 'HLS 清单解析',
+        hlsAdFilter: 'HLS 广告过滤',
+        hlsProxyPlan: '代理清单改写',
+        sessionCacheEntry: '缓存条目初始化',
+        sessionCachePersist: '清单与时间轴落盘',
+        sessionCacheAcquire: '缓存引用获取',
+        proxyFallbackCleanup: '失败播放资源释放',
         controllerInitializeProxy: '代理播放器初始化',
         controllerInitializeDirect: '直连播放器初始化',
         controllerConfigure: '播放器配置总计',
@@ -269,7 +280,7 @@
         if (!value || typeof value !== 'object' || value.tag !== 'JIVE_PLAYBACK_TRACE') return null;
         const stages = Array.isArray(value.stages) ? value.stages
           .filter(stage => stage && typeof stage.name === 'string' && Number.isFinite(Number(stage.durationMs)))
-          .map(stage => ({name: stage.name, durationMs: Number(stage.durationMs), result: String(stage.result || 'unknown')})) : [];
+          .map(stage => ({name: stage.name, parent: stage.parent, durationMs: Number(stage.durationMs), result: String(stage.result || 'unknown')})) : [];
         return {
           traceId: String(value.traceId || `unknown-${reports.length}`),
           result: String(value.result || 'unknown'),
@@ -418,7 +429,7 @@
         const rows = ranking.map(stage => {
           const percentTotal = report.totalStartupMs ? stage.durationMs / report.totalStartupMs * 100 : 0;
           return `<div class="stage-row ${stage.result === 'failed' || stage.result === 'cancelled' ? 'failed' : ''}">
-            <div class="stage-name" title="${escapeHtml(stage.name)}">${escapeHtml(stageLabel(stage.name))}</div>
+            <div class="stage-name" title="${escapeHtml(stage.name)}">${stage.parent ? '↳ ' : ''}${escapeHtml(stageLabel(stage.name))}</div>
             <div class="track"><div class="bar" style="width:${Math.max(0.4, stage.durationMs / max * 100).toFixed(2)}%"></div></div>
             <div class="number">${formatMs(stage.durationMs)}</div>
             <div class="number percent">${percentTotal.toFixed(1)}%</div>
@@ -433,7 +444,7 @@
               <div class="metric"><span class="metric-label">最慢阶段耗时</span><span class="metric-value">${slowest ? formatMs(slowest.durationMs) : '—'}</span></div>
             </div>
           </section>
-          <section class="card chart-card"><h2>阶段耗时排行</h2>${rows || '<p class="muted">没有阶段数据</p>'}</section>
+          <section class="card chart-card"><h2>阶段耗时排行</h2><p class="muted small">↳ 子阶段已包含在父阶段中，耗时不能重复相加。</p>${rows || '<p class="muted">没有阶段数据</p>'}</section>
           ${renderStartupIo(report)}
           <section class="card raw-card"><details><summary>查看原始 JSON</summary><pre>${escapeHtml(JSON.stringify(report.raw, null, 2))}</pre></details></section>`;
       }
