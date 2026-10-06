@@ -151,8 +151,11 @@ class _FeedRepository implements VideoRepository, VideoFeedRepository {
   }) => throw UnimplementedError();
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _CountingRepository implements VideoRepository {
@@ -188,8 +191,11 @@ class _CountingRepository implements VideoRepository {
     bool forceRefresh = false,
   }) => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _RetryRepository implements VideoRepository {
@@ -229,8 +235,11 @@ class _RetryRepository implements VideoRepository {
     bool forceRefresh = false,
   }) => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _PageRepository implements VideoRepository {
@@ -259,8 +268,11 @@ class _PageRepository implements VideoRepository {
     bool forceRefresh = false,
   }) => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _DelayedRepository implements VideoRepository {
@@ -295,6 +307,9 @@ class _DelayedRepository implements VideoRepository {
     bool forceRefresh = false,
   }) => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }

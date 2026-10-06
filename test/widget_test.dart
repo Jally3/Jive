@@ -86,8 +86,11 @@ class _FakeRepository implements VideoRepository {
     ],
   );
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 class _TreeCategoryRepository extends _FakeRepository {

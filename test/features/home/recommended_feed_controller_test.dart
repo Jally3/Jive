@@ -536,8 +536,11 @@ class _SearchVideoRepository implements VideoRepository {
   }) => throw UnimplementedError();
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _ControlledSearchVideoRepository extends _SearchVideoRepository {

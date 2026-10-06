@@ -78,8 +78,11 @@ class _FakeRepository implements VideoRepository, VideoFeedRepository {
     bool forceRefresh = false,
   }) async => const Video(id: '1', title: 't', typeId: 1, category: 'c');
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 class _EmptyRepository extends _FakeRepository {

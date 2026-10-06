@@ -28,6 +28,7 @@ final downloadManagerProvider = FutureProvider<DownloadTaskManager>((
       final fresh = await repository.resolvePlayback(
         source,
         VideoRef(sourceId: task.sourceId, sourceVideoId: task.sourceVideoId),
+        forceRefresh: true,
       );
       final lines = fresh.playbackLines
           .where((line) => line.identity == task.playbackLineIdentity)

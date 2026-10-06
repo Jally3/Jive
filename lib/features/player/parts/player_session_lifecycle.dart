@@ -4,7 +4,12 @@ part of '../player_page.dart';
 /// 安装控制器、切换/重试时安全地释放旧播放资源。
 mixin PlayerSessionLifecycle on PlayerStateBase {
   @override
-  Future<void> _setup(Duration resume) async {
+  Future<void> _setup(Duration resume) => _setupAttempt(resume);
+
+  Future<void> _setupAttempt(
+    Duration resume, {
+    bool refreshAttempted = false,
+  }) async {
     if (_startupTrace == null || _startupTrace!.isFinished) {
       _startupTrace = PlaybackStartupTrace.maybeStart(
         videoTitle: widget.video.title,
@@ -43,6 +48,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       var target = _selection;
       PlaybackSession? session;
       PlaybackStatus? preparedStatus;
+      int? addressHttpStatusCode;
       if (target != null) {
         try {
           if (widget.offlineOnly) {
@@ -125,6 +131,13 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
             startupTrace?.updateEpisode(episode);
           }
         } on PlaybackUrlResolutionException catch (error) {
+          if (!refreshAttempted &&
+              await _refreshRejectedAddress(error.httpStatusCode, generation)) {
+            if (mounted && generation == setupGeneration) {
+              await _setupAttempt(resume, refreshAttempted: true);
+            }
+            return;
+          }
           if (mounted && generation == setupGeneration) {
             setState(() {
               failed = true;
@@ -181,6 +194,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
             );
             session = preparation.session;
             status = preparation.status;
+            addressHttpStatusCode = preparation.addressHttpStatusCode;
             if (!mounted || generation != setupGeneration) {
               if (session != null) await _closeSession(session);
               return;
@@ -208,9 +222,17 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
         );
         session = preparation.session;
         status = preparation.status;
+        addressHttpStatusCode = preparation.addressHttpStatusCode;
       }
       if (!mounted || generation != setupGeneration) {
         if (session != null) await _closeSession(session);
+        return;
+      }
+      if (!refreshAttempted &&
+          await _refreshRejectedAddress(addressHttpStatusCode, generation)) {
+        if (mounted && generation == setupGeneration) {
+          await _setupAttempt(resume, refreshAttempted: true);
+        }
         return;
       }
       setState(() => playbackStatus = status);
@@ -343,6 +365,44 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       }
       startupTrace?.fail(error);
     }
+  }
+
+  /// Structured HTTP failures can indicate an expired cached MacCMS address.
+  /// Native error strings are not used to guess expiry; those use explicit retry.
+  Future<bool> _refreshRejectedAddress(int? statusCode, int generation) async {
+    if (widget.offlineOnly ||
+        !const {401, 403, 404, 410}.contains(statusCode) ||
+        !mounted ||
+        generation != setupGeneration) {
+      return false;
+    }
+    final registry = ref.read(vodSourceRegistryProvider).value;
+    final source = registry?.findById(widget.video.sourceId);
+    if (source == null ||
+        registry?.adapterFor(source) is! ReusablePlaybackDetailAdapter) {
+      return false;
+    }
+    final previousSelection = _selection;
+    final previousEpisode = episode;
+    final fresh = await ref
+        .read(videoRepositoryProvider)
+        .resolvePlayback(source, widget.video.ref, forceRefresh: true);
+    if (!mounted || generation != setupGeneration) return true;
+    final refreshed = refreshSelectionFor(
+      freshVideo: fresh,
+      priorEpisode: previousEpisode,
+      previousSelection: previousSelection,
+    );
+    if (refreshed == null) {
+      throw const VideoDataException('该剧集的播放地址已经失效');
+    }
+    if (previousSelection != null) {
+      _urlResolver?.clearCacheFor(previousSelection.playbackSource.url);
+    }
+    _urlResolver?.clearCacheFor(refreshed.playbackSource.url);
+    episode = refreshed.episode;
+    _selection = refreshed;
+    return true;
   }
 
   Future<void> _installController(
@@ -683,7 +743,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       if (source == null) throw const VideoDataException('未知来源');
       final fresh = await ref
           .read(videoRepositoryProvider)
-          .resolvePlayback(source, widget.video.ref);
+          .resolvePlayback(source, widget.video.ref, forceRefresh: true);
       if (!mounted || generation != setupGeneration) return;
       final refreshed = refreshSelectionFor(
         freshVideo: fresh,
@@ -702,7 +762,7 @@ mixin PlayerSessionLifecycle on PlayerStateBase {
       }
       episode = refreshed.episode;
       _selection = refreshed;
-      await _setup(oldPosition);
+      await _setupAttempt(oldPosition, refreshAttempted: true);
     } catch (e) {
       if (mounted && generation == setupGeneration) {
         setState(() {

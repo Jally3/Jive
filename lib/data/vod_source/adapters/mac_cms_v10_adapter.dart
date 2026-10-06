@@ -6,7 +6,10 @@ import '../../video_repository.dart';
 import '../vod_source_adapter.dart';
 
 class MacCmsV10Adapter
-    implements VodSourceAdapter, CancellableVodSourceAdapter {
+    implements
+        VodSourceAdapter,
+        CancellableVodSourceAdapter,
+        ReusablePlaybackDetailAdapter {
   MacCmsV10Adapter(this.client);
   final http.Client client;
 
@@ -77,29 +80,22 @@ class MacCmsV10Adapter
     return _videoFromJson(
       source,
       Map<String, dynamic>.from(list.first as Map),
-      includeEpisodes: false,
+      retainPlaybackLines: true,
     );
   }
 
   @override
   Future<Video> resolvePlayback(VodSource source, VideoRef ref) async {
-    final json = await _request(source, {
-      'ac': 'detail',
-      'ids': ref.sourceVideoId,
-    });
-    final list = json['list'];
-    if (list is! List || list.isEmpty || list.first is! Map) {
-      throw const VideoDataException('没有找到视频详情');
-    }
-    final detail = _videoFromJson(
-      source,
-      Map<String, dynamic>.from(list.first as Map),
-      includeEpisodes: true,
-    );
-    if (detail.episodes.isEmpty) {
+    return playbackFromDetail(await fetchDetail(source, ref));
+  }
+
+  @override
+  Video playbackFromDetail(Video detail) {
+    if (detail.playbackLines.isEmpty) {
       throw const VideoDataException('该视频暂时没有可用播放地址');
     }
-    return detail;
+    // Only a lightweight projection; the cache retains the original detail.
+    return detail.copyWith(episodes: detail.playbackLines.first.episodes);
   }
 
   Future<Map<String, dynamic>> _request(
@@ -145,7 +141,7 @@ class MacCmsV10Adapter
     return VideoPage(
       items: raw
           .whereType<Map<String, dynamic>>()
-          .map((e) => _videoFromJson(source, e, includeEpisodes: false))
+          .map((e) => _videoFromJson(source, e))
           .toList(),
       page: _int(json['page']).clamp(1, 1000000),
       pageCount: _int(json['pagecount']).clamp(1, 1000000),
@@ -156,12 +152,13 @@ class MacCmsV10Adapter
   Video _videoFromJson(
     VodSource source,
     Map<String, dynamic> json, {
-    required bool includeEpisodes,
+    bool retainPlaybackLines = false,
   }) {
     final playUrl = '${json['vod_play_url'] ?? ''}';
     final playFrom = '${json['vod_play_from'] ?? ''}';
-    final lines = _buildPlaybackLines(playUrl, playFrom);
-    final defaultLine = lines.isEmpty ? null : lines.first;
+    final lines = retainPlaybackLines
+        ? _buildPlaybackLines(playUrl, playFrom)
+        : const <PlaybackLine>[];
     return Video(
       id: '${json['vod_id'] ?? ''}',
       title: '${json['vod_name'] ?? '未命名视频'}',
@@ -177,10 +174,8 @@ class MacCmsV10Adapter
       area: '${json['vod_area'] ?? ''}',
       actors: '${json['vod_actor'] ?? ''}',
       director: '${json['vod_director'] ?? ''}',
-      episodes: includeEpisodes
-          ? (defaultLine?.episodes ?? const [])
-          : _episodeMetadata(playUrl),
-      playbackLines: includeEpisodes ? lines : const [],
+      episodes: _episodeMetadata(playUrl),
+      playbackLines: lines,
     );
   }
 

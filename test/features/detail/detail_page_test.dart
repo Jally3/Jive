@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:jive/app/theme.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
@@ -12,6 +15,7 @@ import 'package:jive/data/playback/skip_policy.dart';
 import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/library_repository.dart';
 import 'package:jive/data/video_repository.dart';
+import 'package:jive/data/vod_source/adapters/mac_cms_v10_adapter.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
@@ -110,8 +114,11 @@ class _FakeDetailRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 ProviderContainer _container(
@@ -259,7 +266,7 @@ _installPlayerPlatforms() {
   );
 }
 
-ProviderContainer _playerAwareContainer(_FakeDetailRepository repository) =>
+ProviderContainer _playerAwareContainer(VideoRepository repository) =>
     ProviderContainer(
       overrides: [
         videoRepositoryProvider.overrideWithValue(repository),
@@ -291,6 +298,65 @@ Future<void> _pumpUntil(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets(
+    'MacCMS detail reuses its response and filtered episodes do not play another episode',
+    (tester) async {
+      final platforms = _installPlayerPlatforms();
+      addTearDown(platforms.restore);
+      var requests = 0;
+      final adapter = MacCmsV10Adapter(
+        MockClient((_) async {
+          requests++;
+          return http.Response.bytes(
+            utf8.encode(
+              jsonEncode({
+                'code': 1,
+                'list': [
+                  {
+                    'vod_id': '1',
+                    'vod_name': '测试剧集',
+                    'vod_play_from': 'mp4',
+                    'vod_play_url':
+                        r'第1集$http://cdn.example.com/1.mp4#第2集$https://cdn.example.com/2.mp4',
+                  },
+                ],
+              }),
+            ),
+            200,
+          );
+        }),
+      );
+      final repository = VideoRepositoryImpl(adapterResolver: (_) => adapter);
+      addTearDown(repository.dispose);
+      final container = _playerAwareContainer(repository);
+      addTearDown(container.dispose);
+      await container.read(vodSourceRegistryProvider.future);
+      await _pumpDetailPage(tester, container);
+      await tester.pump();
+      expect(requests, 1);
+      await tester.tap(find.text('播放 第1集'));
+      await tester.pump();
+      expect(find.byType(PlayerPage), findsNothing);
+      expect(platforms.video.dataSources, isEmpty);
+      expect(find.text('该剧集暂时没有可用播放地址（可尝试查找其他来源）'), findsOneWidget);
+      expect(requests, 1);
+      await _scrollDetailToBottom(tester);
+      final chip = find.text('第2集');
+      await tester.ensureVisible(chip);
+      await tester.pumpAndSettle();
+      await tester.tap(chip);
+      await _pumpUntil(tester, () => platforms.video.dataSources.isNotEmpty);
+      expect(
+        platforms.video.dataSources.single.uri,
+        'https://cdn.example.com/2.mp4',
+      );
+      expect(requests, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      repository.dispose();
+    },
+  );
 
   testWidgets('focuses the play button by default on TV', (tester) async {
     final container = _container(_FakeDetailRepository(), isTv: true);

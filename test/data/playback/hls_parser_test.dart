@@ -23,6 +23,23 @@ segment-relative.ts
 ''';
 
 void main() {
+  test(
+    'manifest rejection preserves its HTTP status for address refresh',
+    () async {
+      final decision =
+          await HlsParser(
+            client: MockClient((_) async => http.Response('', 403)),
+          ).resolve(
+            PlaybackSource(
+              url: Uri.parse('https://cdn/expired.m3u8'),
+              format: PlaybackFormat.hls,
+            ),
+          );
+      expect(decision.isCacheable, isFalse);
+      expect(decision.httpStatusCode, 403);
+    },
+  );
+
   PlaybackSource source(String url) =>
       PlaybackSource(url: Uri.parse(url), format: PlaybackFormat.hls);
 

@@ -24,10 +24,12 @@ class PlaybackSessionPreparation {
   const PlaybackSessionPreparation({
     required this.session,
     required this.status,
+    this.addressHttpStatusCode,
   });
 
   final PlaybackSession? session;
   final PlaybackStatus status;
+  final int? addressHttpStatusCode;
 }
 
 /// 一次播放选择对应的本地代理、缓存引用、清单和时间轴生命周期。
@@ -149,6 +151,7 @@ class PlaybackSession {
       if (!decision.isCacheable || decision.mediaPlaylist == null) {
         return PlaybackSessionPreparation(
           session: null,
+          addressHttpStatusCode: decision.httpStatusCode,
           status: PlaybackStatus(
             mode: PlaybackMode.direct,
             reason: _fallbackReasonForHls(decision.reason),

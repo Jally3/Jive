@@ -645,8 +645,11 @@ class _AllMatchVideoRepository implements VideoRepository {
     bool forceRefresh = false,
   }) => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _CountingAllMatchVideoRepository extends _AllMatchVideoRepository {

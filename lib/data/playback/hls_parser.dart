@@ -15,6 +15,7 @@ class HlsDecision {
       mediaPlaylist = playlist,
       sourcePlaylist = playlist,
       filterConfidence = null,
+      httpStatusCode = null,
       reason = null;
 
   /// 清单已过滤广告；[sourcePlaylist] 保留原始清单用于审计和缓存元数据。
@@ -25,10 +26,11 @@ class HlsDecision {
     required this.filterConfidence,
   }) : cacheability = HlsCacheability.cacheable,
        mediaPlaylist = playlist,
+       httpStatusCode = null,
        reason = null;
 
   /// 清单无法安全改写；[reason] 用于映射用户可见的回退原因。
-  const HlsDecision.directFallback(String this.reason)
+  const HlsDecision.directFallback(String this.reason, {this.httpStatusCode})
     : cacheability = HlsCacheability.directFallback,
       mediaPlaylist = null,
       sourcePlaylist = null,
@@ -39,6 +41,7 @@ class HlsDecision {
   final HlsMediaPlaylist? sourcePlaylist;
   final double? filterConfidence;
   final String? reason;
+  final int? httpStatusCode;
 
   bool get isCacheable => cacheability == HlsCacheability.cacheable;
 }
@@ -180,6 +183,7 @@ class HlsParser {
       if (response.statusCode != 200) {
         return HlsDecision.directFallback(
           'manifest HTTP ${response.statusCode}',
+          httpStatusCode: response.statusCode,
         );
       }
       final body = utf8.decode(response.bodyBytes);

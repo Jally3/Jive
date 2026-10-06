@@ -198,20 +198,21 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       if (fresh.episodes.isEmpty) {
         throw VideoDataException('该视频暂时没有可用播放地址');
       }
-      final prior = detail != null && detail!.episodes.length > selected
-          ? detail!.episodes[selected].name
-          : '';
-      final idx = fresh.episodes.indexWhere((e) => e.name == prior);
-      final ep =
-          fresh.episodes[idx >= 0
-              ? idx
-              : selected.clamp(0, fresh.episodes.length - 1)];
+      final ep = playbackEpisodeFor(fresh, requestedEpisode);
+      if (ep == null) {
+        throw const VideoDataException('该剧集暂时没有可用播放地址');
+      }
+      final selection = selectionFor(fresh, ep);
       if (!mounted) return;
       setState(() => detail = fresh);
       final played = await Navigator.of(context).push<Episode>(
         MaterialPageRoute(
-          builder: (_) =>
-              PlayerPage(video: fresh, episode: ep, startupTrace: startupTrace),
+          builder: (_) => PlayerPage(
+            video: fresh,
+            episode: ep,
+            selection: selection,
+            startupTrace: startupTrace,
+          ),
         ),
       );
       if (mounted) _syncSelectedFromPlayer(played);
@@ -243,8 +244,9 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   Future<PlaybackSelection?> _cachedSelectionForCurrentEpisode() async {
     final active = sc?.activeVideo;
     if (active == null || active.episodes.isEmpty) return null;
-    final current =
+    final requested =
         active.episodes[selected.clamp(0, active.episodes.length - 1)];
+    final current = playbackEpisodeFor(active, requested) ?? requested;
     final lineIdentity = preferredPlaybackLine(active)?.identity;
     try {
       final manager = await ref.read(downloadManagerProvider.future);
@@ -315,14 +317,8 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
       for (final episodeIndex in indexes) {
         if (episodeIndex >= sc!.activeVideo.episodes.length) continue;
         final prior = sc!.activeVideo.episodes[episodeIndex];
-        final idx = fresh.episodes.indexWhere(
-          (item) =>
-              item.identity == prior.identity ||
-              item.name == prior.name ||
-              item.id == prior.id,
-        );
-        if (idx < 0) continue;
-        final episode = fresh.episodes[idx];
+        final episode = playbackEpisodeFor(fresh, prior);
+        if (episode == null) continue;
         final selection = selectionFor(fresh, episode);
         if (selection == null) continue;
         await manager.enqueue(selection);

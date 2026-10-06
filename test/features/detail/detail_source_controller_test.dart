@@ -302,8 +302,11 @@ class _DetailRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 class _RecordingDetailRepository implements VideoRepository {
@@ -337,8 +340,11 @@ class _RecordingDetailRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 class _FailingDetailRepository implements VideoRepository {
@@ -364,8 +370,11 @@ class _FailingDetailRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 /// fetchDetail 能返回详情，但 resolvePlayback 校验播放地址时失败，
@@ -393,8 +402,11 @@ class _UnplayableDetailRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) async =>
-      throw const VideoDataException('该视频暂时没有可用播放地址');
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) async => throw const VideoDataException('该视频暂时没有可用播放地址');
 }
 
 class _BlockingSearchRepository implements VideoRepository {
@@ -428,8 +440,11 @@ class _BlockingSearchRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 class _SlowDetailRepository implements VideoRepository {
@@ -459,8 +474,11 @@ class _SlowDetailRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 class _MetadataSearchRepository implements VideoRepository {
@@ -496,8 +514,11 @@ class _MetadataSearchRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 class _EpisodeCountSearchRepository implements VideoRepository {
@@ -541,6 +562,9 @@ class _EpisodeCountSearchRepository implements VideoRepository {
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }

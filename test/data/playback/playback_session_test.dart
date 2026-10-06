@@ -70,6 +70,21 @@ void main() {
     if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
   });
 
+  test(
+    'manifest rejection reaches the player as a structured HTTP status',
+    () async {
+      final client = MockClient((_) async => http.Response('', 410));
+      final preparation = await PlaybackSession.prepare(
+        selection: _selection(),
+        proxy: proxy,
+        parser: HlsParser(client: client),
+        client: client,
+      );
+      expect(preparation.session, isNull);
+      expect(preparation.addressHttpStatusCode, 410);
+    },
+  );
+
   test('full cache offline hit does not contact the network', () async {
     final selection = _selection();
     final contentKey = ContentKeyBuilder().build(

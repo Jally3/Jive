@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/playback/prefetch_policy.dart';
@@ -14,6 +16,7 @@ import 'package:jive/data/playback/trace/playback_trace_config.dart';
 import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
+import 'package:jive/data/vod_source/adapters/mac_cms_v10_adapter.dart';
 import 'package:jive/data/playback/ad_filter.dart';
 import 'package:jive/domain/playback_status.dart';
 import 'package:jive/domain/video.dart';
@@ -198,6 +201,8 @@ class _FakeVideoRepository implements VideoRepository {
 
   final Video resolvedVideo;
   int resolveCalls = 0;
+  final List<bool> refreshRequests = [];
+  Completer<Video>? resolutionGate;
 
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
@@ -218,8 +223,14 @@ class _FakeVideoRepository implements VideoRepository {
   }) async => const VideoPage(items: [], page: 1, pageCount: 1);
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) async {
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) async {
     resolveCalls++;
+    refreshRequests.add(forceRefresh);
+    if (resolutionGate != null) return resolutionGate!.future;
     return resolvedVideo;
   }
 }
@@ -293,13 +304,14 @@ Future<ProviderContainer> _pumpPlayerPage(
   ThemeData? theme,
   Map<String, Duration> episodeResumePositions = const {},
   PlaybackStartupTrace? startupTrace,
+  VodSourceRegistry? registry,
 }) async {
   final container = ProviderContainer(
     overrides: [
       videoRepositoryProvider.overrideWithValue(repository),
       historyRepositoryProvider.overrideWithValue(_FakeHistoryRepository()),
       vodSourceRegistryProvider.overrideWith(
-        (ref) async => VodSourceRegistry([_testSource], const {}),
+        (ref) async => registry ?? VodSourceRegistry([_testSource], const {}),
       ),
       downloadTasksProvider.overrideWith(
         (ref) => Stream.value(const <DownloadTask>[]),
@@ -419,6 +431,106 @@ void main() {
     VideoPlayerPlatform.instance = originalVideoPlatform;
     WakelockPlusPlatformInterface.instance = originalWakelockPlatform;
     wakelockPlusPlatformInstance = originalWakelockPlusPlatformInstance;
+  });
+
+  for (final status in [401, 403, 404, 410]) {
+    testWidgets(
+      'expired MacCMS address HTTP $status refreshes once before playback',
+      (tester) async {
+        await http.runWithClient(() async {
+          final oldVideo = _playableVideo(
+            'https://old.example.com/m3u8/?url=expired',
+          );
+          final repository = _FakeVideoRepository(
+            _playableVideo('https://fresh.example.com/1.mp4'),
+          );
+          final adapter = MacCmsV10Adapter(
+            MockClient((_) async => http.Response('', 200)),
+          );
+          await _pumpPlayerPage(
+            tester,
+            video: oldVideo,
+            repository: repository,
+            registry: VodSourceRegistry(
+              [_testSource],
+              {'mac_cms_v10': adapter},
+            ),
+          );
+          await _pumpUntil(
+            tester,
+            () => videoPlatform.dataSources.isNotEmpty,
+            reason: 'fresh address did not create a controller',
+          );
+          expect(repository.refreshRequests, [true]);
+          expect(
+            videoPlatform.dataSources.single.uri,
+            'https://fresh.example.com/1.mp4',
+          );
+          await _unmountPlayerPage(tester);
+        }, () => MockClient((_) async => http.Response('', status)));
+      },
+    );
+  }
+
+  testWidgets('persistent address rejection refreshes once and does not loop', (
+    tester,
+  ) async {
+    var requests = 0;
+    await http.runWithClient(
+      () async {
+        final oldVideo = _playableVideo(
+          'https://old.example.com/m3u8/?url=expired',
+        );
+        final repository = _FakeVideoRepository(oldVideo);
+        final adapter = MacCmsV10Adapter(
+          MockClient((_) async => http.Response('', 200)),
+        );
+        await _pumpPlayerPage(
+          tester,
+          video: oldVideo,
+          repository: repository,
+          registry: VodSourceRegistry([_testSource], {'mac_cms_v10': adapter}),
+        );
+        await _pumpUntil(
+          tester,
+          () => find.text('重新获取并重试').evaluate().isNotEmpty,
+        );
+        expect(repository.refreshRequests, [true]);
+        expect(requests, 2);
+        expect(videoPlatform.dataSources, isEmpty);
+        await _unmountPlayerPage(tester);
+      },
+      () => MockClient((_) async {
+        requests++;
+        return http.Response('', 403);
+      }),
+    );
+  });
+
+  testWidgets('server HTTP 502 does not refresh the detail address', (
+    tester,
+  ) async {
+    await http.runWithClient(() async {
+      final oldVideo = _playableVideo(
+        'https://old.example.com/m3u8/?url=expired',
+      );
+      final repository = _FakeVideoRepository(oldVideo);
+      final adapter = MacCmsV10Adapter(
+        MockClient((_) async => http.Response('', 200)),
+      );
+      await _pumpPlayerPage(
+        tester,
+        video: oldVideo,
+        repository: repository,
+        registry: VodSourceRegistry([_testSource], {'mac_cms_v10': adapter}),
+      );
+      await _pumpUntil(
+        tester,
+        () => find.text('重新获取并重试').evaluate().isNotEmpty,
+      );
+      expect(repository.refreshRequests, isEmpty);
+      await _unmountPlayerPage(tester);
+    }, () => MockClient((_) async => http.Response('', 502)));
   });
 
   for (final result in [
@@ -1292,6 +1404,7 @@ void main() {
     );
 
     expect(repository.resolveCalls, 1);
+    expect(repository.refreshRequests, [true]);
     expect(videoPlatform.dataSources.last.uri, freshUrl);
     expect(tester.takeException(), isNull);
     await _unmountPlayerPage(tester);

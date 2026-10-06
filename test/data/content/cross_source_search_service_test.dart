@@ -117,7 +117,11 @@ class _CrossSourceRepository implements VideoRepository {
   }
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) async {
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) async {
     resolvedRefs.add(ref);
     return Video(
       id: ref.sourceVideoId,

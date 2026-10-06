@@ -67,7 +67,7 @@ lib/data/
 │   ├── recommendation_repository.dart # 偏好指纹、done 后候选缓存、流式/JSON 兼容、可播结果缓存与分页/事件门面
 │   ├── ark_recommendation_config.dart # 仅保留的旧本地调试配置（非生产默认链路）
 │   └── ark_recommendation_client.dart # 仅保留的旧方舟直连调试客户端
-├── video_repository.dart              # 内容访问门面：按 adapterType 分发列表/详情/Feed，详情短缓存、敏感内容过滤
+├── video_repository.dart              # 内容访问门面：详情请求合并、MacCMS 播放复用/强制刷新、源配置隔离与敏感内容过滤
 ├── library_repository.dart            # 内容库 v2 与旧收藏兼容迁移；追更控制器负责分源限流检查、失败隔离及已读状态
 ├── history_repository.dart            # 观看历史持久化 HistoryRepository：串行写入、按更新时间排序读取、单条删除、watchHistoryProvider
 ├── offline_progress_repository.dart   # 显式下载剧集的轻量逐集观看进度：稳定身份索引、串行写入、最多 100 条
@@ -83,10 +83,11 @@ lib/data/
 lib/data/vod_source/
 ├── vod_source_config.dart             # 源列表加载：远端优先 → 最近成功缓存；无配置时返回空列表并由启动页提示重试
 ├── vod_source_registry.dart           # 源注册表 VodSourceRegistry 与内置 Adapter 表、vodSourceRegistryProvider
-├── vod_source_adapter.dart            # Adapter 接口，及可选 Feed 能力与剧集播放解析扩展
+├── vod_source_adapter.dart            # Adapter 接口，及可选详情播放复用、Feed 与剧集播放解析能力
+├── video_detail_cache.dart            # 单模型详情缓存：两分钟自动到期、32 条 LRU、估算 8 MiB 容量限制与共享对象计量
 ├── vod_source_preferences.dart        # 全局当前源 selectedVodSourceProvider：持久化选择、白名单与 HTTPS 校验
 └── adapters/
-    ├── mac_cms_v10_adapter.dart       # MacCMS v10 JSON API 通用适配器（默认 adapterType）
+    ├── mac_cms_v10_adapter.dart       # MacCMS v10：详情保留播放线路，列表不保留线路，播放投影复用解析结果
     ├── age_adapter.dart               # AGE 动漫站适配器（age_v2）：自研协议、线路优选与 m3u8 解析器
     ├── olevod_adapter.dart            # Olevod 高清站适配器（olevod_v1）：HTML 抓取、带签名的详情/搜索请求
     ├── syncnext_plugin_adapter.dart   # Syncnext 插件源适配器：按源缓存 JS 会话，实现 EpisodePlaybackResolver
@@ -277,7 +278,7 @@ test/
 ├── widget_test.dart                   # 应用启动冒烟测试
 ├── domain/                            # 领域模型单测（进度、选集、状态、源模型）
 ├── data/                              # 数据层单测，按子域分目录：
-│   ├── vod_source/                    #   源配置/注册表/各 Adapter（含 Syncnext 插件运行时）
+│   ├── vod_source/                    #   源配置/注册表/各 Adapter（含 Syncnext 插件运行时）；video_detail_cache_test.dart 覆盖到期/LRU/容量淘汰
 │   ├── content/                       #   分类导航、黑名单、过滤开关
 │   ├── playback/                      #   会话、代理、HLS 解析、广告过滤、嗅探、预取
 │   ├── cache/                         #   缓存管理器/索引/IO/TTL/ContentKey 等
