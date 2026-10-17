@@ -18,6 +18,8 @@ import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/navigation_frames.dart';
+
 final _testSource = VodSource(
   id: 'storm',
   name: '测试源',
@@ -162,7 +164,7 @@ void main() {
       isA<BoxDecoration>().having(
         (decoration) => decoration.color,
         'selected color',
-        AppPalette.light.accent.withValues(alpha: 0.12),
+        AppPalette.light.text.withValues(alpha: 0.06),
       ),
     );
     expect(
@@ -173,7 +175,7 @@ void main() {
     );
 
     await container.read(themeModeProvider.notifier).setMode(ThemeMode.dark);
-    await tester.pumpAndSettle();
+    await pumpNavigationFrames(tester);
     expect(
       tester.widget<Material>(surface).color,
       AppPalette.dark.surface.withValues(
@@ -189,11 +191,11 @@ void main() {
       isA<BoxDecoration>().having(
         (decoration) => decoration.color,
         'dark selected color',
-        AppPalette.dark.accent.withValues(alpha: 0.18),
+        AppPalette.dark.text.withValues(alpha: 0.08),
       ),
     );
     await container.read(themeModeProvider.notifier).setMode(ThemeMode.light);
-    await tester.pumpAndSettle();
+    await pumpNavigationFrames(tester);
 
     await tester.tap(find.descendant(of: nav, matching: find.text('我的')));
     await tester.pump();
@@ -505,7 +507,7 @@ void main() {
       await tester.tap(find.text('我的'));
       await tester.pump();
       await tester.tap(find.text('最近观看'));
-      await tester.pumpAndSettle();
+      await pumpNavigationFrames(tester);
       expect(find.text('历史影片'), findsOneWidget);
       expect(find.text('继续 第1集 · 1:05'), findsOneWidget);
       final metadataBottom = tester.getBottomLeft(find.text('电影片')).dy;
@@ -544,13 +546,13 @@ void main() {
     expect(find.byKey(const ValueKey('continue-watching-bar')), findsOneWidget);
     expect(find.text('继续 正片 · 1:05'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('continue-watching-dismiss')));
-    await tester.pumpAndSettle();
+    await pumpNavigationFrames(tester);
     expect(find.byKey(const ValueKey('continue-watching-bar')), findsNothing);
     expect(find.text('删除观看记录？'), findsNothing);
     await tester.tap(find.text('我的'));
     await tester.pump();
     await tester.tap(find.text('最近观看'));
-    await tester.pumpAndSettle();
+    await pumpNavigationFrames(tester);
     expect(find.text('历史影片'), findsOneWidget);
   });
 
@@ -580,7 +582,7 @@ void main() {
       find.byType(CustomScrollView).first,
       const Offset(0, -80),
     );
-    await tester.pumpAndSettle();
+    await pumpNavigationFrames(tester);
     expect(find.byKey(const ValueKey('continue-watching-bar')), findsOneWidget);
     await tester.tap(find.text('测试影片'));
     await tester.pump();
@@ -636,7 +638,7 @@ void main() {
     await tester.tap(find.text('我的'));
     await tester.pump();
     await tester.tap(find.text('最近观看'));
-    await tester.pumpAndSettle();
+    await pumpNavigationFrames(tester);
     expect(find.text('留下的影片'), findsOneWidget);
     expect(find.text('删掉的影片'), findsOneWidget);
     await tester.tap(

@@ -8,8 +8,11 @@
 lib/
 ├── main.dart                          # 应用入口：设置状态栏样式，启动 ProviderScope/JiveApp
 └── app/
-    ├── app.dart                       # 根组件 JiveApp 与 AppShell：主题、启动闸门、三页导航、下载生命周期及追更前台检查/提醒角标
-    └── theme.dart                     # 「夜幕影院 / 暖昼」双主题：AppPalette 与 ThemeData
+    ├── app.dart                       # 根组件 JiveApp 与 AppShell：主题、启动闸门、三页导航、首页有效滚动距离转发、下载生命周期及追更前台检查
+    ├── theme.dart                     # 「夜幕影院 / 暖昼」双主题：AppPalette 与 ThemeData
+    └── widgets/
+        ├── floating_nav_bar.dart      # 悬浮玻璃导航：三个 Tab、追更红点、选中反馈、随机反光与可见性/前后台感知的呼吸背光生命周期
+        └── nav_reflection.dart        # 导航反光：受控随机配色、400ms 切换过渡、每 240dp 滚动换色、上沿柔光、全环绕彩色边框与动态模糊弥散背光绘制
 ```
 
 ## 共享组件（`lib/shared/`）

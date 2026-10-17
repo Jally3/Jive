@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,6 +20,7 @@ import '../features/search/search_page.dart';
 import '../features/search/search_launch_request.dart';
 import '../features/splash/splash_page.dart';
 import 'theme.dart';
+import 'widgets/floating_nav_bar.dart';
 
 class JiveApp extends ConsumerWidget {
   const JiveApp({super.key});
@@ -147,6 +147,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   late final List<Widget?> pages;
   final _searchFocusNode = FocusNode();
   final _homeActive = ValueNotifier<bool>(true);
+  final _homeScrollDistance = ValueNotifier<double>(0);
   ProviderSubscription<SearchLaunchRequest?>? _searchLaunchSubscription;
 
   @override
@@ -198,6 +199,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     _searchLaunchSubscription?.close();
     _searchFocusNode.dispose();
     _homeActive.dispose();
+    _homeScrollDistance.dispose();
     super.dispose();
   }
 
@@ -227,18 +229,44 @@ class _AppShellState extends ConsumerState<AppShell> {
     });
   }
 
+  bool _onHomeScroll(ScrollUpdateNotification notification) {
+    if (index != 0 ||
+        notification.depth != 0 ||
+        notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+    final delta = notification.scrollDelta;
+    if (delta == null || !delta.isFinite) return false;
+    final metrics = notification.metrics;
+    // 只计算有效内容位移，过滤越界回弹，也覆盖惯性和程序化滚动。
+    final current = metrics.pixels.clamp(
+      metrics.minScrollExtent,
+      metrics.maxScrollExtent,
+    );
+    final previous = (metrics.pixels - delta).clamp(
+      metrics.minScrollExtent,
+      metrics.maxScrollExtent,
+    );
+    final distance = (current - previous).abs();
+    if (distance > 0) _homeScrollDistance.value += distance;
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isTablet = MediaQuery.sizeOf(context).shortestSide >= 600;
     final scaffold = Scaffold(
       extendBody: true,
-      body: IndexedStack(
-        index: index,
-        children: List.generate(
-          3,
-          (value) => TickerMode(
-            enabled: index == value,
-            child: pages[value] ?? const SizedBox.shrink(),
+      body: NotificationListener<ScrollUpdateNotification>(
+        onNotification: _onHomeScroll,
+        child: IndexedStack(
+          index: index,
+          children: List.generate(
+            3,
+            (value) => TickerMode(
+              enabled: index == value,
+              child: pages[value] ?? const SizedBox.shrink(),
+            ),
           ),
         ),
       ),
@@ -258,7 +286,13 @@ class _AppShellState extends ConsumerState<AppShell> {
                   padding: isTablet
                       ? EdgeInsets.fromLTRB(16, 0, 16, 12)
                       : EdgeInsets.fromLTRB(20, 0, 20, 10),
-                  child: _FloatingNavBar(index: index, onSelect: _onSelect),
+                  child: FloatingNavBar(
+                    selectedIndex: index,
+                    onSelect: _onSelect,
+                    showUpdateDot:
+                        ref.watch(unreadFollowUpdateCountProvider) > 0,
+                    scrollDistance: _homeScrollDistance,
+                  ),
                 ),
               ),
             ),
@@ -269,179 +303,5 @@ class _AppShellState extends ConsumerState<AppShell> {
     final isAndroid =
         !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
     return isAndroid ? DoubleBackExitScope(child: scaffold) : scaffold;
-  }
-}
-
-class _FloatingNavBar extends ConsumerWidget {
-  const _FloatingNavBar({required this.index, required this.onSelect});
-
-  final int index;
-  final ValueChanged<int> onSelect;
-
-  static const _items = [
-    (Icons.home_outlined, Icons.home, '首页'),
-    (Icons.search, Icons.search, '搜索'),
-    (Icons.person_outline, Icons.person, '我的'),
-  ];
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isTablet = MediaQuery.sizeOf(context).shortestSide >= 600;
-    final height = isTablet ? 72.0 : 60.0;
-    final radius = height / 2;
-    // 首页保留更通透的毛玻璃；其他页面提高底色不透明度，
-    // 避免图标和文字被页面内容干扰。
-    final surfaceAlpha = index == 0
-        ? context.appColors.navigationHomeAlpha
-        : context.appColors.navigationPageAlpha;
-    return Container(
-      key: ValueKey('floating-nav-bar'),
-      height: height,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.all(Radius.circular(radius)),
-        boxShadow: [
-          BoxShadow(
-            color: context.appColors.scrim,
-            blurRadius: isTablet ? 24 : 16,
-            offset: Offset(0, isTablet ? 6 : 4),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaX: isTablet ? 20 : 16,
-            sigmaY: isTablet ? 20 : 16,
-          ),
-          child: Material(
-            key: ValueKey('floating-nav-surface'),
-            color: context.appColors.surface.withValues(alpha: surfaceAlpha),
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(radius),
-              side: BorderSide(
-                color: isTablet
-                    ? context.appColors.secondary.withValues(alpha: 0.25)
-                    : context.appColors.divider,
-              ),
-            ),
-            child: Row(
-              children: [
-                for (var i = 0; i < _items.length; i++)
-                  Expanded(
-                    child: _NavItem(
-                      icon: _items[i].$1,
-                      selectedIcon: _items[i].$2,
-                      label: _items[i].$3,
-                      selected: index == i,
-                      isTablet: isTablet,
-                      showUpdateDot:
-                          i == 2 &&
-                          ref.watch(unreadFollowUpdateCountProvider) > 0,
-                      onTap: () => onSelect(i),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavItem extends StatelessWidget {
-  const _NavItem({
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
-    required this.selected,
-    required this.isTablet,
-    required this.showUpdateDot,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-  final bool selected;
-  final bool isTablet;
-  final bool showUpdateDot;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final color = selected
-        ? context.appColors.accentForeground
-        : context.appColors.secondary;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: showUpdateDot ? '$label，有追更更新' : label,
-      excludeSemantics: true,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(isTablet ? 30 : 32),
-        onTap: onTap,
-        child: AnimatedContainer(
-          key: ValueKey('bottom-nav-item-$label'),
-          duration: Duration(milliseconds: 180),
-          margin: isTablet
-              ? EdgeInsets.symmetric(horizontal: 8, vertical: 6)
-              : EdgeInsets.symmetric(horizontal: 5, vertical: 5),
-          decoration: BoxDecoration(
-            color: selected
-                ? context.appColors.accent.withValues(
-                    alpha: isDark ? 0.18 : 0.12,
-                  )
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(30),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Icon(
-                    selected ? selectedIcon : icon,
-                    color: color,
-                    size: isTablet ? 26 : 24,
-                  ),
-                  if (showUpdateDot)
-                    Positioned(
-                      right: -5,
-                      top: -3,
-                      child: Container(
-                        key: const ValueKey('bottom-nav-update-dot'),
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.redAccent,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              SizedBox(height: 2),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: isTablet ? 13 : 12,
-                  color: color,
-                  fontWeight: selected
-                      ? FontWeight.w600
-                      : isTablet
-                      ? FontWeight.w500
-                      : FontWeight.w400,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }

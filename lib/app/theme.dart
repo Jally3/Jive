@@ -55,8 +55,8 @@ class AppPalette extends ThemeExtension<AppPalette> {
     success: AppColors.success,
     error: AppColors.error,
     scrim: AppColors.scrim,
-    navigationHomeAlpha: 0.30,
-    navigationPageAlpha: 0.78,
+    navigationHomeAlpha: 0.68,
+    navigationPageAlpha: 0.86,
   );
 
   static const light = AppPalette(
@@ -74,8 +74,8 @@ class AppPalette extends ThemeExtension<AppPalette> {
     success: Color(0xFF237A3B),
     error: Color(0xFFB3261E),
     scrim: Color(0x52000000),
-    navigationHomeAlpha: 0.82,
-    navigationPageAlpha: 0.94,
+    navigationHomeAlpha: 0.88,
+    navigationPageAlpha: 0.96,
   );
 
   final Color background;

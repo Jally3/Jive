@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/app/app.dart';
+import 'package:jive/app/widgets/nav_reflection.dart';
 import 'package:jive/data/catalog/tmdb_catalog_repository.dart';
 import 'package:jive/data/recommendation/recommendation_client.dart';
 import 'package:jive/data/recommendation/recommendation_repository.dart';
@@ -23,6 +24,8 @@ import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/shared/video_card.dart';
 import 'package:jive/shared/video_grid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../support/navigation_frames.dart';
 
 final _testSource = VodSource(
   id: 'storm',
@@ -357,6 +360,76 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  testWidgets('home scrolling changes the reflection and stopping holds it', (
+    tester,
+  ) async {
+    await _pumpHome(tester);
+    final reflection = find.byKey(const ValueKey('nav-reflection'));
+    expect(reflection, findsOneWidget);
+    Object colors() {
+      final painter =
+          tester.widget<CustomPaint>(reflection).painter!
+              as NavReflectionPainter;
+      return painter.controller.colors;
+    }
+
+    final initial = colors();
+    _homeScrollState(tester).position.jumpTo(120);
+    await tester.pump();
+    final afterScroll = colors();
+    expect(afterScroll, isNot(initial));
+    await tester.pump(const Duration(seconds: 1));
+    expect(colors(), afterScroll);
+
+    _homeScrollState(tester).position.jumpTo(240);
+    await tester.pump();
+    expect(colors(), isNot(afterScroll));
+    final afterForward = colors();
+    _homeScrollState(tester).position.jumpTo(120);
+    await tester.pump();
+    expect(colors(), isNot(afterForward));
+  });
+
+  testWidgets('home reflection ignores horizontal movement and edge bounce', (
+    tester,
+  ) async {
+    await _pumpHome(tester, repository: _ManyCategoryRepository());
+    final painter =
+        tester
+                .widget<CustomPaint>(
+                  find.byKey(const ValueKey('nav-reflection')),
+                )
+                .painter!
+            as NavReflectionPainter;
+    final initial = painter.controller.colors;
+    _rootTabScrollState(tester).position.jumpTo(100);
+    await tester.pump();
+    expect(painter.controller.colors, initial);
+
+    final context = _homeScrollState(tester).context;
+    for (final (pixels, delta) in [
+      (-30.0, -30.0),
+      (-10.0, 20.0),
+      (1030.0, 30.0),
+    ]) {
+      ScrollUpdateNotification(
+        metrics: FixedScrollMetrics(
+          minScrollExtent: 0,
+          maxScrollExtent: 1000,
+          pixels: pixels,
+          viewportDimension: 600,
+          axisDirection: AxisDirection.down,
+          devicePixelRatio: 1,
+        ),
+        context: context,
+        scrollDelta: delta,
+      ).dispatch(context);
+    }
+    // 底部通知也会触发首页原有分页，等待测试仓库的请求完成。
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(painter.controller.colors, initial);
+  });
+
   testWidgets('home grid extends behind the floating nav bar', (tester) async {
     await _pumpHome(tester);
 
@@ -468,7 +541,7 @@ void main() {
         ),
       );
       await streamClient.close();
-      await tester.pumpAndSettle();
+      await pumpNavigationFrames(tester);
     },
   );
 
@@ -668,7 +741,7 @@ void main() {
       );
       final before = tester.state<ScrollableState>(scrollable).position.pixels;
       await tester.drag(tabs, const Offset(-180, 0));
-      await tester.pumpAndSettle();
+      await pumpNavigationFrames(tester);
       final after = tester.state<ScrollableState>(scrollable).position.pixels;
 
       expect(after, greaterThan(before));
@@ -841,7 +914,7 @@ void main() {
     expect(userOffset, greaterThan(0));
 
     await tester.pump(const Duration(seconds: 3));
-    await tester.pumpAndSettle();
+    await pumpNavigationFrames(tester);
 
     expect(_homeScrollState(tester).position.pixels, closeTo(userOffset, 0.01));
   });
