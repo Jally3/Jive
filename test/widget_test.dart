@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +7,9 @@ import 'package:jive/app/app.dart';
 import 'package:jive/app/theme.dart';
 import 'package:jive/features/splash/splash_page.dart';
 import 'package:jive/features/search/search_launch_request.dart';
+import 'package:jive/features/settings/source_management_page.dart';
+import 'package:jive/data/vod_source/vod_source_preferences.dart';
+import 'package:jive/data/vod_source/vod_source_customization_store.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/library_repository.dart';
@@ -331,18 +335,219 @@ void main() {
     await tester.tap(find.text('播放源'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('资源站 2 · 高清站 0，点击可设为默认'), findsOneWidget);
     expect(find.text('资源站'), findsOneWidget);
     expect(find.text('高清站'), findsOneWidget);
     expect(find.text('尚未检测'), findsNWidgets(2));
     await tester.tap(find.text('检测全部'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.textContaining('上次检测：成功'), findsNWidgets(2));
+    expect(find.byTooltip(RegExp('上次检测：成功')), findsNWidgets(2));
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('source_health_storm'), contains('"ok":true'));
     expect(prefs.getString('source_health_alt'), contains('"ok":true'));
   });
+
+  testWidgets(
+    'source menu checks only its source without switching selection',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final container = ProviderContainer(overrides: _testOverrides);
+      addTearDown(container.dispose);
+      await container.read(vodSourceRegistryProvider.future);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: buildLightTheme(),
+            home: const SourceManagementPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final originalId = container.read(selectedVodSourceProvider).value!.id;
+      final rowSemantics = tester
+          .getSemantics(find.byKey(const ValueKey('managed-source-alt')))
+          .getSemanticsData();
+      semantics.dispose();
+      expect('尚未检测'.allMatches(rowSemantics.label), hasLength(1));
+      expect(rowSemantics.tooltip, isEmpty);
+      expect(find.text('检测'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('source-menu-alt')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('检测'));
+      await tester.pumpAndSettle();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('source_health_alt'), contains('"ok":true'));
+      expect(prefs.getString('source_health_storm'), isNull);
+      expect(container.read(selectedVodSourceProvider).value!.id, originalId);
+      expect(find.text('尚未检测'), findsOneWidget);
+      expect(find.byTooltip(RegExp('上次检测：成功')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'settings opens in management and only selection mode can switch',
+    (tester) async {
+      final container = ProviderContainer(overrides: _testOverrides);
+      addTearDown(container.dispose);
+      await container.read(vodSourceRegistryProvider.future);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: buildLightTheme(),
+            home: const SourceManagementPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('完成'), findsOneWidget);
+      final original = container.read(selectedVodSourceProvider).value!.id;
+      await tester.tap(find.text('备用源'));
+      await tester.pumpAndSettle();
+      expect(container.read(selectedVodSourceProvider).value!.id, original);
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('source-menu-alt')), findsNothing);
+      expect(find.text('管理'), findsOneWidget);
+      await tester.tap(find.text('备用源'));
+      await tester.pumpAndSettle();
+      expect(container.read(selectedVodSourceProvider).value!.id, 'alt');
+      expect(find.byType(SourceManagementPage), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'settings source navigation remains available while directory loads',
+    (tester) async {
+      final pending = Completer<VodSourceRegistry>();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            vodSourceRegistryProvider.overrideWith((ref) => pending.future),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => TextButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => const SourceManagementPage(),
+                    ),
+                  ),
+                  child: const Text('打开来源设置'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开来源设置'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(BackButton).hitTestable(), findsOneWidget);
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      expect(find.text('打开来源设置'), findsOneWidget);
+      pending.complete(VodSourceRegistry([_testSource], {}));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('source management fits six unannotated sources on a phone', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final sources = List.generate(
+      6,
+      (i) => VodSource(
+        id: 'source$i',
+        name: '测试来源$i',
+        baseUri: Uri.parse('https://source$i.example.com/api'),
+        adapterType: 'mac_cms_v10',
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          vodSourceRegistryProvider.overrideWith(
+            (ref) async => VodSourceRegistry(sources, {}),
+          ),
+        ],
+        child: MaterialApp(
+          theme: buildLightTheme(),
+          home: const SourceManagementPage(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final last = find.byKey(const ValueKey('managed-source-source5'));
+    expect(last.hitTestable(), findsOneWidget);
+    expect(tester.getBottomRight(last).dy, lessThanOrEqualTo(844));
+    final more = find.byKey(const ValueKey('source-menu-source0'));
+    expect(tester.getSize(more).shortestSide, greaterThanOrEqualTo(44));
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final brightness in Brightness.values) {
+    testWidgets(
+      'source management actions fit narrow screens with large text (${brightness.name})',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(320, 640);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        SharedPreferences.setMockInitialValues({
+          VodSourceCustomizationStore.storageKey: jsonEncode({
+            'schemaVersion': 1,
+            'sources': {
+              'storm': {
+                'displayName': '名字很长的个人专属高清电影综艺资源站',
+                'tags': ['movie', 'series', 'animation', 'variety'],
+                'note': '这里是一段很长的个人备注，需要截断而不能挤出屏幕',
+              },
+            },
+            'pinnedSourceIds': ['storm'],
+          }),
+        });
+        final container = ProviderContainer(overrides: _testOverrides);
+        addTearDown(container.dispose);
+        await container.read(vodSourceRegistryProvider.future);
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              theme: brightness == Brightness.dark
+                  ? buildDarkTheme()
+                  : buildLightTheme(),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: const TextScaler.linear(2)),
+                child: child!,
+              ),
+              home: const SourceManagementPage(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.byKey(const ValueKey('source-menu-storm')));
+        await tester.pumpAndSettle();
+        expect(find.text('检测').hitTestable(), findsOneWidget);
+        expect(find.text('编辑').hitTestable(), findsOneWidget);
+        await tester.tap(find.text('检测'));
+        await tester.pumpAndSettle();
+        expect(find.byTooltip(RegExp('上次检测：成功')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets('home category chip filters the grid in place', (tester) async {
     final container = ProviderContainer(overrides: _testOverrides);

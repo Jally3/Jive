@@ -13,6 +13,8 @@ import '../../data/playback/trace/playback_trace_stage.dart';
 import '../../data/video_repository.dart';
 import '../../data/library_repository.dart';
 import '../../data/vod_source/vod_source_registry.dart';
+import '../../data/vod_source/vod_source_customization_provider.dart';
+import '../../data/vod_source/vod_source_presentation.dart';
 import '../../domain/video.dart';
 import '../../domain/playback_selection.dart';
 import '../../domain/vod_source.dart';
@@ -680,7 +682,10 @@ class _VideoDetailPageState extends ConsumerState<VideoDetailPage> {
   Future<void> _confirm(DetailSourceState s, Video c) async {
     final ok = await confirmSourceSwitch(
       context,
-      sourceName: s.source.name,
+      sourceName: vodSourceDisplayName(
+        s.source,
+        ref.read(vodSourceCustomizationsProvider).value,
+      ),
       videoTitle: c.title,
     );
     if (ok != true) return;

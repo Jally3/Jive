@@ -8,8 +8,12 @@ import '../../data/library_repository.dart';
 import '../../data/video_repository.dart';
 import '../../data/vod_source/vod_source_preferences.dart';
 import '../../data/vod_source/vod_source_registry.dart';
+import '../../data/vod_source/vod_source_customization_provider.dart';
+import '../../data/vod_source/vod_source_presentation.dart';
+import '../../shared/source_personalization.dart';
 import '../../domain/video.dart';
 import '../../domain/vod_source.dart';
+import '../../domain/vod_source_customization.dart';
 import '../../shared/video_grid.dart';
 import '../../shared/video_card.dart';
 import '../detail/detail_page.dart';
@@ -248,21 +252,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   Widget _sourceLabelBar() {
     final state = controller!.state;
+    final settings =
+        ref.watch(vodSourceCustomizationsProvider).value ??
+        VodSourceCustomizations();
     final registry = ref
         .read(vodSourceRegistryProvider)
         .maybeWhen(data: (r) => r, orElse: () => null);
     if (registry == null) return SizedBox.shrink();
+    String nameFor(String id) {
+      final source = registry.findById(id);
+      return source == null ? id : vodSourceDisplayName(source, settings);
+    }
+
     final activeId = state.activeSourceId;
-    final backupIds = state.sources.keys
-        .where((id) => id != activeId && state.sources[id]?.queried == true)
+    final backupIds = presentVodSources(registry.searchableSources, settings)
+        .where(
+          (item) =>
+              item.source.id != activeId &&
+              (item.pinned || state.sources[item.source.id]?.queried == true),
+        )
         .take(3)
+        .map((item) => item.source.id)
         .toList();
     final labels = <Widget>[];
 
     labels.add(
       _sourceChip(
         id: activeId,
-        name: registry.findById(activeId)?.name ?? activeId,
+        name: nameFor(activeId),
+        pinned: settings.isPinned(activeId),
         state: state.sources[activeId],
         isActive: true,
         onTap: () {},
@@ -273,7 +291,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       labels.add(
         _sourceChip(
           id: id,
-          name: registry.findById(id)?.name ?? id,
+          name: nameFor(id),
+          pinned: settings.isPinned(id),
           state: state.sources[id],
           isActive: false,
           onTap: () {
@@ -303,11 +322,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Widget _sourceChip({
     required String id,
     required String name,
+    required bool pinned,
     required SourceSearchState? state,
     required bool isActive,
     required VoidCallback onTap,
   }) {
-    final count = formatSourceCount(state);
+    final count = state?.queried == true ? formatSourceCount(state) : '未搜索';
     final isLoading = state?.loading == true;
     final hasError = state?.error != null;
     final label = '$name $count';
@@ -319,6 +339,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     return Padding(
       padding: EdgeInsets.only(right: 6),
       child: FilterChip(
+        avatar: pinned
+            ? Icon(
+                Icons.push_pin,
+                size: 14,
+                color: isActive
+                    ? context.appColors.onAccent
+                    : context.appColors.accentForeground,
+                semanticLabel: '已置顶',
+              )
+            : null,
         label: Text(
           isLoading && state?.items.isEmpty == true ? '$name …' : label,
           style: TextStyle(
@@ -488,7 +518,7 @@ class _SearchIdleView extends ConsumerWidget {
   }
 }
 
-class _MoreSourcesSheet extends StatelessWidget {
+class _MoreSourcesSheet extends ConsumerWidget {
   const _MoreSourcesSheet({
     required this.sources,
     required this.states,
@@ -504,7 +534,11 @@ class _MoreSourcesSheet extends StatelessWidget {
   final VoidCallback onSearchAll;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings =
+        ref.watch(vodSourceCustomizationsProvider).value ??
+        VodSourceCustomizations();
+    final ordered = presentVodSources(sources, settings);
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
@@ -532,9 +566,10 @@ class _MoreSourcesSheet extends StatelessWidget {
             Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
-                itemCount: sources.length,
+                itemCount: ordered.length,
                 itemBuilder: (_, index) {
-                  final source = sources[index];
+                  final item = ordered[index];
+                  final source = item.source;
                   final s = states[source.id];
                   final isActive = source.id == activeSourceId;
                   String status;
@@ -558,7 +593,24 @@ class _MoreSourcesSheet extends StatelessWidget {
                           ? context.appColors.accentForeground
                           : context.appColors.tertiary,
                     ),
-                    title: Text(source.name),
+                    title: Row(
+                      children: [
+                        Expanded(
+                          child: SourceNameText(
+                            source: source,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (item.pinned)
+                          Icon(
+                            Icons.push_pin,
+                            size: 16,
+                            color: context.appColors.accentForeground,
+                            semanticLabel: '已置顶',
+                          ),
+                      ],
+                    ),
                     subtitle: Text(
                       status,
                       style: TextStyle(

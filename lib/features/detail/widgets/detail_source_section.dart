@@ -1,12 +1,17 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../data/vod_source/vod_source_customization_provider.dart';
+import '../../../data/vod_source/vod_source_presentation.dart';
+import '../../../domain/vod_source_customization.dart';
 import '../../../app/theme.dart';
 import '../../../domain/video.dart';
+import '../../../shared/source_personalization.dart';
 import '../detail_source_controller.dart';
 
 /// 详情页「播放来源」区块：来源芯片横滑栏 + 备用源入口。
 /// 芯片点击后的分支处理（候选选择/切换/按需检测）由页面回调完成。
-class DetailSourceSection extends StatelessWidget {
+class DetailSourceSection extends ConsumerWidget {
   const DetailSourceSection({
     super.key,
     required this.controller,
@@ -19,7 +24,10 @@ class DetailSourceSection extends StatelessWidget {
   final VoidCallback onMoreSources;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings =
+        ref.watch(vodSourceCustomizationsProvider).value ??
+        VodSourceCustomizations();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -28,13 +36,30 @@ class DetailSourceSection extends StatelessWidget {
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
         ),
         SizedBox(height: 8),
-        _sourceBar(context),
+        _sourceBar(context, settings),
       ],
     );
   }
 
-  Widget _sourceBar(BuildContext context) {
-    final states = controller.sourceStates;
+  Widget _sourceBar(BuildContext context, VodSourceCustomizations settings) {
+    final byId = {
+      for (final state in controller.sourceStates) state.source.id: state,
+    };
+    // Pinned entries are manual shortcuts; displaying them performs no probe.
+    for (final source in controller.registry.enabledSources) {
+      if (settings.isPinned(source.id)) {
+        byId.putIfAbsent(source.id, () => DetailSourceState(source: source));
+      }
+    }
+    final ordered = presentVodSources(
+      byId.values.map((s) => s.source),
+      settings,
+    );
+    final states = [
+      if (byId[controller.activeSourceId] case final active?) active,
+      for (final item in ordered)
+        if (item.source.id != controller.activeSourceId) byId[item.source.id]!,
+    ];
     final hasBackup = states.any(
       (s) =>
           s.source.id != controller.activeSourceId &&
@@ -45,7 +70,8 @@ class DetailSourceSection extends StatelessWidget {
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
-          for (final s in states) _chip(context, s),
+          for (final s in states)
+            _chip(context, s, pinned: settings.isPinned(s.source.id)),
           if (!hasBackup)
             Padding(
               padding: EdgeInsets.only(right: 6),
@@ -66,32 +92,48 @@ class DetailSourceSection extends StatelessWidget {
     );
   }
 
-  Widget _chip(BuildContext context, DetailSourceState s) {
+  Widget _chip(
+    BuildContext context,
+    DetailSourceState s, {
+    required bool pinned,
+  }) {
     final active = s.source.id == controller.activeSourceId;
-    final name = s.source.name;
-    String label;
-    switch (s.status) {
-      case DetailSourceStatus.loaded:
-        final c = s.episodeCount;
-        label = c != null && c > 0
-            ? (c == 1 ? '$name 正片' : '$name $c集')
-            : '$name 有资源';
-      case DetailSourceStatus.hasResource:
-        label = '$name 有资源';
-      case DetailSourceStatus.noResult:
-        label = '$name 0';
-      case DetailSourceStatus.detecting:
-        label = '$name …';
-      case DetailSourceStatus.failed:
-        label = '$name !';
-      case DetailSourceStatus.notDetected:
-        label = '$name —';
+    String labelFor(String name) {
+      switch (s.status) {
+        case DetailSourceStatus.loaded:
+          final c = s.episodeCount;
+          return c != null && c > 0
+              ? (c == 1 ? '$name 正片' : '$name $c集')
+              : '$name 有资源';
+        case DetailSourceStatus.hasResource:
+          return '$name 有资源';
+        case DetailSourceStatus.noResult:
+          return '$name 0';
+        case DetailSourceStatus.detecting:
+          return '$name …';
+        case DetailSourceStatus.failed:
+          return '$name !';
+        case DetailSourceStatus.notDetected:
+          return '$name —';
+      }
     }
+
     return Padding(
       padding: EdgeInsets.only(right: 6),
       child: FilterChip(
-        label: Text(
-          label,
+        avatar: pinned
+            ? Icon(
+                Icons.push_pin,
+                size: 14,
+                color: active
+                    ? context.appColors.onAccent
+                    : context.appColors.accentForeground,
+                semanticLabel: '已置顶',
+              )
+            : null,
+        label: SourceNameText(
+          source: s.source,
+          format: labelFor,
           style: TextStyle(
             fontSize: 12,
             color: active
@@ -127,8 +169,9 @@ void showDetailCandidatesSheet(
           children: [
             Padding(
               padding: EdgeInsets.fromLTRB(20, 12, 20, 8),
-              child: Text(
-                '从 ${s.source.name} 选择',
+              child: SourceNameText(
+                source: s.source,
+                format: (name) => '从 $name 选择',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
               ),
             ),

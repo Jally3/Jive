@@ -59,6 +59,7 @@ TMDB 只提供排序、标题、海报和评分；客户端只显示当前 VOD �
 - Repository 屏蔽具体数据来源，方法必须接收 `VodSource` 或 `VideoRef`，不依赖一个可变的全局 `baseUrl`。
 - 同一协议源复用 Adapter，仅传入不同配置（`VodSource.baseUri` 等）。
 - 详情缓存键使用 `globalId = sourceId:sourceVideoId`，不同源缓存相互隔离。
+- 来源个性化设置通过独立本机存储和展示模型组合到 UI：别名、标签、备注及互斥置顶/置底不改写远端目录、来源身份或自动备用检索策略。设置页与首页弹窗复用 SourcePanel，分别默认管理态/选择态，切换模式不新增路由；健康检测由共享数据层维护。所有完整来源列表按置顶/普通/置底排序；搜索/详情顶部保留当前源优先，未检测置顶源作为手动入口。
 - 播放器作为独立 Feature 管理资源生命周期。
 - 第三方 VOD API 与自建后端通过 Repository/Data Source 解耦。
 
