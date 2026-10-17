@@ -26,7 +26,8 @@ lib/shared/
 ├── playback_loading_controller.dart   # Riverpod 起播进度：按页面会话隔离阶段/遮罩状态，自动释放；仅局部订阅
 ├── playback_loading_view.dart         # 起播等待视图：首次延迟文字、固定文案区域避免闪动；短屏大字体适配、无障碍播报及详情局部遮罩
 ├── screen_awake_controller.dart        # 屏幕常亮请求协调：播放器与下载页共享持有、前后台同步及平台开关串行化
-├── source_selector.dart               # 全局选源底部弹层 SourceSelectorSheet（资源站/高清站两个 tab）
+├── source_selector.dart               # 共享来源面板与选源弹层：选择/管理原地切换、分组筛选/定位、健康检测及不可用设置清理
+├── source_personalization.dart        # 来源个人展示：名称解析、选择/管理行、快捷置顶、置底/编辑/恢复菜单及检测状态
 ├── skip_settings.dart                 # 同行收起的片头/片尾状态按钮与锚点下拉菜单：详情页和非全屏播放器共用
 ├── video_card.dart                    # 视频海报卡片 VideoCard：封面、标题、meta、TMDB 排名/评分徽标、观看进度条、TV 焦点描边
 ├── video_grid.dart                    # 自适应视频网格 VideoGrid：两列/四列 sliver 布局、动态卡片比例
@@ -47,6 +48,7 @@ lib/domain/
 ├── tmdb_catalog.dart                  # TMDB Catalog 模型：条目、媒体类型、五种筛选范围与快照解析
 ├── video_search_target.dart           # 跨源搜索目标：脱离 VideoRef 统一承载标题/别名/年份/媒体类型/季数
 ├── vod_source.dart                    # VOD 源模型 VodSource：JSON 解析、HTTPS 与启用状态校验
+├── vod_source_customization.dart      # 来源个人设置：显示名/标签/备注、互斥的置顶与置底序列及版本化 JSON 容错
 ├── library.dart                       # 统一内容库记录 FavoriteRecord：收藏/追更状态、剧集版本、未读更新与兼容解析
 ├── watch_record.dart                  # 观看历史 WatchRecord：进度、完播标记、时间线/manifest 版本指纹
 ├── playback_progress.dart             # 播放进度值对象 PlaybackProgress：归一化、完播阈值、续播位置
@@ -89,6 +91,10 @@ lib/data/vod_source/
 ├── vod_source_adapter.dart            # Adapter 接口，及可选详情播放复用、Feed 与剧集播放解析能力
 ├── video_detail_cache.dart            # 单模型详情缓存：两分钟自动到期、32 条 LRU、估算 8 MiB 容量限制与共享对象计量
 ├── vod_source_preferences.dart        # 全局当前源 selectedVodSourceProvider：持久化选择、白名单与 HTTPS 校验
+├── vod_source_customization_store.dart # 本机来源个人设置存储：独立版本化 JSON、损坏记录/未来版本容错及保存失败反馈
+├── vod_source_customization_provider.dart # 来源个人设置异步状态：初始化、串行编辑/置顶/置底/恢复及失败保留原值
+├── vod_source_health_provider.dart    # 页面/弹层共享健康状态：历史记录加载、单源检测去重、超时/失败记录及持久化
+├── vod_source_presentation.dart       # 组合原源与个人显示信息：置顶/普通/置底统一排序及个人内容标签筛选
 └── adapters/
     ├── mac_cms_v10_adapter.dart       # MacCMS v10：详情保留播放线路，列表不保留线路，播放投影复用解析结果
     ├── age_adapter.dart               # AGE 动漫站适配器（age_v2）：自研协议、线路优选与 m3u8 解析器
@@ -224,10 +230,10 @@ lib/features/
 │   ├── detail_page.dart               # 详情页壳 VideoDetailPage：详情加载/播放、追更收藏装配、下载创建与响应式动作行
 │   ├── detail_layout.dart             # 详情页宽屏布局指标 DetailPageLayout：断点、封面宽度、剧集网格列数
 │   ├── detail_source_controller.dart  # 详情页跨源探测 DetailSourceController：备用源搜索匹配与状态机
-│   ├── detail_more_sources_sheet.dart # 「全部来源」底栏：备用源状态列表与一键探测
+│   ├── detail_more_sources_sheet.dart # 「全部来源」底栏：个人置顶同步排序、备用源状态与一键探测
 │   └── widgets/
 │       ├── detail_download_sheet.dart   # 选择下载剧集弹层：剧集勾选、既有任务状态展示与确认下载
-│       ├── detail_source_section.dart   # 播放来源区块：来源芯片横滑栏、候选列表弹层与切源确认
+│       ├── detail_source_section.dart   # 播放来源区块：当前源优先、置顶手动入口、来源标签排序与候选切源确认
 │       ├── detail_episodes_section.dart # 剧集区块：排序切换、百集分组折叠、Wrap 胶囊/平板等宽网格
 │       └── detail_relationship_button.dart # 追更/收藏按钮：锚点菜单（追更/收藏/取消）与 favoriteController 持久化
 ├── player/
@@ -263,7 +269,8 @@ lib/features/
 │       ├── download_task_card.dart      # 视频分组卡片与单任务卡片：进度、离线观看进度状态文案、主操作按钮
 │       └── download_summary_header.dart # 顶部汇总卡片：当前速度/已下载统计与全部暂停/继续快捷操作
 └── settings/
-    ├── source_management_page.dart    # 源管理页：源列表、健康检查（延迟/可用性）与结果持久化展示
+    ├── source_management_page.dart    # 设置入口外壳：复用 SourcePanel，默认管理态，退出管理后可选源而不关闭页面
+    ├── source_edit_sheet.dart         # 来源本机编辑弹层：显示名、内容标签、备注、取消与保存失败重试
     ├── more_settings_page.dart        # 更多设置：缓存 TTL 选择、预加载/下载常亮开关、缓存管理入口与版本号；诊断开关开启时显示耗时分析入口
     └── playback_trace/                # 临时播放耗时分析页：导入 JSON/JSONL、阶段排行柱状图与原始日志查看
 ```
@@ -290,7 +297,7 @@ test/
 ├── widget_test.dart                   # 应用启动冒烟测试
 ├── domain/                            # 领域模型单测（进度、选集、状态、源模型）
 ├── data/                              # 数据层单测，按子域分目录：
-│   ├── vod_source/                    #   源配置/注册表/各 Adapter（含 Syncnext 插件运行时）；video_detail_cache_test.dart 覆盖到期/LRU/容量淘汰
+│   ├── vod_source/                    #   源配置/注册表/Adapter、个人排序偏好及共享健康检测去重/失败持久化；详情缓存覆盖到期/LRU/容量淘汰
 │   ├── content/                       #   分类导航、黑名单、过滤开关
 │   ├── device/                        #   设备时钟、电量、前后台与平台快照生命周期
 │   ├── network/                       #   网络监听共享/释放、恢复前台和迟到快照隔离

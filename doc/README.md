@@ -53,7 +53,10 @@ doc/
 │   ├── TMDB_CATALOG_LANGUAGE_AND_LATEST_FILTER_PLAN.md # 语言/地区元数据与新片榜清洗计划
 │   └── TMDB_CATALOG_BACKEND_API_REQUIREMENTS.md # TMDB Catalog 后端需求与接口契约
 ├── vod-source/
-│   └── SYNCNEXT_SOURCE_INTEGRATION_PLAN.md   # Syncnext / AGE 接入方案
+│   ├── SYNCNEXT_SOURCE_INTEGRATION_PLAN.md   # Syncnext / AGE 接入方案
+│   ├── VOD_SOURCE_PERSONALIZATION_DISCOVERY.md # JTBD、机会方案树、方案比较与验证实验
+│   ├── VOD_SOURCE_PERSONALIZATION_DESIGN.md  # 原地管理态、置顶/置底、本机编辑与选源筛选方案
+│   └── VOD_SOURCE_PERSONALIZATION_IMPLEMENTATION.md # P0 实施与验证记录
 └── archive/
     ├── mvp/                                  # 第一版需求与排期
     ├── cache/                                # 缓存与下载
@@ -94,6 +97,9 @@ doc/
 | [`recommendation/LLM_RECOMMENDATION_BACKEND_REQUIREMENTS.md`](recommendation/LLM_RECOMMENDATION_BACKEND_REQUIREMENTS.md) | 后端已部署，客户端核心链路已迁移 | 跨端推荐总需求：匿名主体、Cursor 幂等分页、容量与成本保护、客户端 VOD 最终验证 |
 | [`backend/BACKEND_TECHNICAL_REQUIREMENTS.md`](backend/BACKEND_TECHNICAL_REQUIREMENTS.md) | 进行中 | V1.2 后端：VOD 源目录、远程配置，以及可选的邮箱密码注册/登录 |
 | [`vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md`](vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md) | 第二期进行中 | 接入 SyncnextPlugin 源；AGE Dart Adapter + 通用 JS 插件运行时 |
+| [`vod-source/VOD_SOURCE_PERSONALIZATION_DISCOVERY.md`](vod-source/VOD_SOURCE_PERSONALIZATION_DISCOVERY.md) | 产品假设，待验证 | JTBD、三类机会与九个备选方案、POC 选择和原型验证门槛 |
+| [`vod-source/VOD_SOURCE_PERSONALIZATION_DESIGN.md`](vod-source/VOD_SOURCE_PERSONALIZATION_DESIGN.md) | P0 已实现，待真机验收 | 选择/管理原地切换、置顶/置底、个人编辑与筛选；新增/删除/停用保留后续评审 |
+| [`vod-source/VOD_SOURCE_PERSONALIZATION_IMPLEMENTATION.md`](vod-source/VOD_SOURCE_PERSONALIZATION_IMPLEMENTATION.md) | P0 自动化验证完成 | 共享管理态、四处排序同步、742 项回归通过及 3 项基线问题记录 |
 | [`cast/CAST_PLAN.md`](cast/CAST_PLAN.md) | 待启动 | 投屏功能方案：Cast/DLNA/AirPlay 路线对比与分期计划；待确认电视型号与广告过滤取舍后进入 P0 验证 |
 | [`tv/TV_ADAPTATION_PLAN.md`](tv/TV_ADAPTATION_PLAN.md) | 开发中 | 最小 TV 适配需求方案：FR-1~FR-4 已实现（`feature/tv-adaptation` 分支），待真机实测 |
 | [`splash/SPLASH_PLAN.md`](splash/SPLASH_PLAN.md) | 开发中 | 闪屏页：原生消白闪 + Flutter 展示 Logo 与「Jive」词标，源就绪后进首页 |
