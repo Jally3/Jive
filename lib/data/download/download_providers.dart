@@ -20,6 +20,7 @@ final downloadManagerProvider = FutureProvider<DownloadTaskManager>((
     store: cache.store,
     cacheManager: cache,
     client: client,
+    taskClientFactory: http.Client.new,
     initialNetworkAccess: ref.read(downloadNetworkAccessProvider),
     resolveSelection: (task) async {
       final source = registry.findById(task.sourceId);
@@ -27,6 +28,7 @@ final downloadManagerProvider = FutureProvider<DownloadTaskManager>((
       final fresh = await repository.resolvePlayback(
         source,
         VideoRef(sourceId: task.sourceId, sourceVideoId: task.sourceVideoId),
+        forceRefresh: true,
       );
       final lines = fresh.playbackLines
           .where((line) => line.identity == task.playbackLineIdentity)

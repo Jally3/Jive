@@ -1,9 +1,13 @@
 PODS:
+  - battery_plus (1.0.0):
+    - Flutter
   - connectivity_plus (0.0.1):
     - Flutter
     - FlutterMacOS
   - Flutter (1.0.0)
   - flutter_js (0.1.0):
+    - Flutter
+  - integration_test (0.0.1):
     - Flutter
   - package_info_plus (0.4.5):
     - Flutter
@@ -27,9 +31,11 @@ PODS:
     - Flutter
 
 DEPENDENCIES:
+  - battery_plus (from `.symlinks/plugins/battery_plus/ios`)
   - connectivity_plus (from `.symlinks/plugins/connectivity_plus/darwin`)
   - Flutter (from `Flutter`)
   - flutter_js (from `.symlinks/plugins/flutter_js/ios`)
+  - integration_test (from `.symlinks/plugins/integration_test/ios`)
   - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
   - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
   - screen_brightness_ios (from `.symlinks/plugins/screen_brightness_ios/ios`)
@@ -40,12 +46,16 @@ DEPENDENCIES:
   - wakelock_plus (from `.symlinks/plugins/wakelock_plus/ios`)
 
 EXTERNAL SOURCES:
+  battery_plus:
+    :path: ".symlinks/plugins/battery_plus/ios"
   connectivity_plus:
     :path: ".symlinks/plugins/connectivity_plus/darwin"
   Flutter:
     :path: Flutter
   flutter_js:
     :path: ".symlinks/plugins/flutter_js/ios"
+  integration_test:
+    :path: ".symlinks/plugins/integration_test/ios"
   package_info_plus:
     :path: ".symlinks/plugins/package_info_plus/ios"
   path_provider_foundation:
@@ -64,9 +74,11 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/wakelock_plus/ios"
 
 SPEC CHECKSUMS:
+  battery_plus: b42253f6d2dde71712f8c36fef456d99121c5977
   connectivity_plus: b21496ab28d1324eb59885d888a4d83b98531f01
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_js: 867813c1830e1d9b2c5d547cdb6f61801e2f2145
+  integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
   package_info_plus: af8e2ca6888548050f16fa2f1938db7b5a5df499
   path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
   screen_brightness_ios: 212d950bb99c915eee971c884f4a6c87c92cd13d

@@ -399,8 +399,11 @@ class _RecordingRepository implements VideoRepository {
     bool forceRefresh = false,
   }) async => Video(id: ref.sourceVideoId, title: ref.sourceVideoId);
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) async =>
-      Video(id: ref.sourceVideoId, title: ref.sourceVideoId);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) async => Video(id: ref.sourceVideoId, title: ref.sourceVideoId);
 }
 
 class _DelayedMultiRepository implements VideoRepository {
@@ -430,8 +433,11 @@ class _DelayedMultiRepository implements VideoRepository {
     bool forceRefresh = false,
   }) async => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _FlakyRepository implements VideoRepository {
@@ -471,8 +477,11 @@ class _FlakyRepository implements VideoRepository {
     bool forceRefresh = false,
   }) async => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _FailingRepository implements VideoRepository {
@@ -496,6 +505,9 @@ class _FailingRepository implements VideoRepository {
     bool forceRefresh = false,
   }) async => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }

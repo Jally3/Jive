@@ -9,6 +9,65 @@ import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
 
 void main() {
+  test('missing displayed episode cannot match a renumbered playable id', () {
+    const missing = Episode(id: '1', name: '第1集', url: '', identity: 'raw:0');
+    const second = Episode(
+      id: '1',
+      name: '第2集',
+      url: 'https://cdn/2.m3u8',
+      identity: 'raw:1',
+    );
+    const video = Video(
+      id: '1',
+      title: 'Title',
+      episodes: [missing, second],
+      playbackLines: [
+        PlaybackLine(
+          id: '0',
+          name: 'm3u8',
+          identity: 'line:0',
+          episodes: [second],
+        ),
+      ],
+    );
+    expect(playbackEpisodeFor(video, missing), isNull);
+    expect(selectionFor(video, missing), isNull);
+    expect(playbackEpisodeFor(video, second), same(second));
+    expect(selectionFor(video, second)!.episode, same(second));
+  });
+
+  test('displayed metadata selects the same episode in the preferred line', () {
+    const metadata = Episode(id: '2', name: '第2集', url: '', identity: 'old:2');
+    const first = Episode(
+      id: '2',
+      name: '第1集',
+      url: 'https://cdn/1.m3u8',
+      identity: 'ep:1',
+    );
+    const second = Episode(
+      id: '1',
+      name: '第2集',
+      url: 'https://cdn/2.m3u8',
+      identity: 'ep:2',
+    );
+    const video = Video(
+      id: '1',
+      title: 'Title',
+      episodes: [metadata],
+      playbackLines: [
+        PlaybackLine(
+          id: '0',
+          name: 'm3u8',
+          identity: 'line:0',
+          episodes: [first, second],
+        ),
+      ],
+    );
+    final selection = selectionFor(video, metadata)!;
+    expect(selection.episode, same(second));
+    expect(selection.playbackSource.url.toString(), second.url);
+  });
+
   test('inferPlaybackFormat treats dotted media paths as final', () {
     expect(
       inferPlaybackFormat('https://cdn.example.com/a/1.m3u8'),

@@ -43,8 +43,11 @@ class _FakeRepository implements VideoRepository {
   }) async => const Video(id: '1', title: 't');
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }
 
 class _FakeUpdateGateway implements AppUpdateGateway {

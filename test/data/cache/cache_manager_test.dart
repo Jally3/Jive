@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/data/cache/cache_index.dart';
 import 'package:jive/data/cache/cache_manager.dart';
+import 'package:jive/data/download/download_task_store.dart';
 
 class _FakeDiskSpace implements DiskSpaceProvider {
   _FakeDiskSpace(this._available, {this.total});
@@ -126,6 +127,48 @@ void main() {
       await restored.initialize();
       expect(restored.stats().then((s) => s.entryCount), completion(1));
     });
+
+    test(
+      'upgrade repairs legacy download protection before TTL cleanup',
+      () async {
+        final old = DateTime.now()
+            .subtract(const Duration(days: 30))
+            .millisecondsSinceEpoch;
+        final legacy = entry('legacy').copyWith(lastAccessMs: old);
+        await store.saveState(RevisionState.fromEntry(legacy));
+        await File('${tempDir.path}/$downloadTaskFileName').writeAsString(
+          jsonEncode({
+            'schemaVersion': 1,
+            'tasks': [
+              {
+                'status': 'completed',
+                'contentKeyHash': legacy.contentKeyHash,
+                'revisionKeyHash': legacy.revisionKeyHash,
+              },
+            ],
+          }),
+          flush: true,
+        );
+
+        final protectedKeys = await loadProtectedDownloadEntryKeys(tempDir);
+        final manager = CacheManager(
+          store: store,
+          diskSpace: disk,
+          maxAge: const Duration(hours: 1),
+        );
+        await manager.initialize(protectedDownloadEntryKeys: protectedKeys);
+
+        final restored = await manager.getEntry(legacy.key);
+        expect(restored, isNotNull);
+        expect(restored!.downloadOrigin, isTrue);
+        expect(
+          await manager.deletePlaybackEntry(legacy.key),
+          DeleteResult.blocked,
+        );
+        expect(await manager.clearPlaybackCache(), isNotNull);
+        expect(await manager.getEntry(legacy.key), isNotNull);
+      },
+    );
 
     test('reserve then commit accumulates bytes and completeness', () async {
       final manager = CacheManager(store: store, diskSpace: disk);
@@ -326,11 +369,19 @@ void main() {
       final protected = await manager.upsertDownloadEntry(entry('download'));
       await protected.ref.dispose();
 
+      expect(
+        await manager.deleteEntry(protected.entry.key),
+        DeleteResult.blocked,
+      );
       final result = await manager.clearPlaybackCache();
 
       expect(result.deleted, 1);
       expect(result.skippedDownloads, 1);
       expect(await manager.getEntry(protected.entry.key), isNotNull);
+      expect(
+        await manager.deleteDownloadEntry(protected.entry.key),
+        DeleteResult.deleted,
+      );
     });
 
     test('upsertDownloadEntry marks and acquires atomically', () async {

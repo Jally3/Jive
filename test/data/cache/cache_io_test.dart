@@ -103,6 +103,127 @@ void main() {
     },
   );
 
+  test('startup trace reports cache and upstream milestones', () async {
+    final events = <Map<String, Object?>>[];
+    final client = MockClient(
+      (request) async => http.Response('Gsegment-data-1234', 200),
+    );
+    final created = await manager.upsertEntry(entry('trace'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'cktrace',
+      revisionKeyHash: 'rktrace',
+    );
+
+    final result = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/start.ts'),
+      resourceId: 'sha256:${'f' * 64}',
+      ext: 'ts',
+      trace: events.add,
+    );
+    await _collect(result.body);
+
+    final names = events.map((event) => event['event']).toSet();
+    expect(
+      names,
+      containsAll({
+        'cacheLookup',
+        'upstreamHeaders',
+        'cacheReserve',
+        'fileSetup',
+        'upstreamFirstByte',
+        'downloadComplete',
+        'cacheCommit',
+      }),
+    );
+    expect(
+      events.singleWhere((event) => event['event'] == 'cacheLookup')['hit'],
+      isFalse,
+    );
+    expect(
+      events.singleWhere(
+        (event) => event['event'] == 'downloadComplete',
+      )['bytes'],
+      greaterThan(0),
+    );
+    expect(
+      events.singleWhere((event) => event['event'] == 'cacheCommit')['result'],
+      'success',
+    );
+  });
+
+  test(
+    'cancelling a traced response releases its write lease and part file',
+    () async {
+      var upstreamCancelled = false;
+      final upstream = StreamController<List<int>>(
+        onCancel: () => upstreamCancelled = true,
+      );
+      final client = MockClient.streaming(
+        (request, body) async => http.StreamedResponse(upstream.stream, 200),
+      );
+      final created = await manager.upsertEntry(entry('canceltrace'));
+      final fetcher = ResourceFetcher(
+        client: client,
+        sessionHeaders: const {},
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: created.contentKeyHash,
+        revisionKeyHash: created.revisionKeyHash,
+      );
+      final events = <Map<String, Object?>>[];
+      final id = 'sha256:${'e' * 64}';
+      final result = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/cancel.ts'),
+        resourceId: id,
+        ext: 'ts',
+        trace: events.add,
+      );
+      final firstChunk = Completer<void>();
+      final subscription = result.body.listen((_) => firstChunk.complete());
+      upstream.add('Gpartial'.codeUnits);
+      await firstChunk.future;
+      expect((await manager.stats()).reservedBytes, greaterThan(0));
+      await subscription.cancel();
+      await upstream.close();
+
+      expect(upstreamCancelled, isTrue);
+      expect((await manager.stats()).reservedBytes, 0);
+      expect(await manager.resourceRecord(created.key, id), isNull);
+      expect(
+        store
+            .partialFile(created.contentKeyHash, created.revisionKeyHash, id)
+            .existsSync(),
+        isFalse,
+      );
+      expect(
+        store
+            .resourceFile(
+              created.contentKeyHash,
+              created.revisionKeyHash,
+              id,
+              'ts',
+            )
+            .existsSync(),
+        isFalse,
+      );
+      expect(
+        events.map((event) => event['event']),
+        contains('upstreamFirstByte'),
+      );
+      expect(
+        events.map((event) => event['event']),
+        isNot(contains('cacheCommit')),
+      );
+      client.close();
+    },
+  );
+
   test('cached resource serves a sub range with 206', () async {
     final client = MockClient(
       (request) async => http.Response('G123456789', 200),
@@ -210,6 +331,55 @@ void main() {
       expect(second.fromCache, isTrue);
       expect(await _collect(second.body), '0000');
       expect(originHits, 1);
+    },
+  );
+
+  test(
+    'native Range miss streams before completion and never caches partial bytes',
+    () async {
+      final upstream = StreamController<List<int>>();
+      addTearDown(upstream.close);
+      var requests = 0;
+      final client = MockClient.streaming((request, body) async {
+        requests++;
+        expect(request.headers['range'], 'bytes=4-7');
+        return http.StreamedResponse(
+          upstream.stream,
+          206,
+          headers: {
+            'content-range': 'bytes 4-7/1000000',
+            'content-length': '4',
+          },
+        );
+      });
+      final created = await manager.upsertEntry(entry('streamrange'));
+      final fetcher = ResourceFetcher(
+        client: client,
+        sessionHeaders: const {},
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: 'ckstreamrange',
+        revisionKeyHash: 'rkstreamrange',
+      );
+      final id = 'sha256:${'a' * 64}';
+      final result = await fetcher.fetch(
+        origin: Uri.parse('https://cdn.example.com/a.m4s'),
+        resourceId: id,
+        ext: 'm4s',
+        downstreamHeaders: {'range': 'bytes=4-7'},
+        streamRangeMiss: true,
+      );
+      expect(result.statusCode, 206);
+      expect(result.headers['content-range'], 'bytes 4-7/1000000');
+      final firstBytes = Completer<List<int>>();
+      final subscription = result.body.listen(firstBytes.complete);
+      upstream.add('ftyp'.codeUnits);
+      expect(await firstBytes.future, 'ftyp'.codeUnits);
+      expect(upstream.isClosed, isFalse);
+      await subscription.cancel();
+      expect(await manager.resourceRecord(created.key, id), isNull);
+      expect(requests, 1);
     },
   );
 
@@ -669,6 +839,52 @@ void main() {
     expect(result.statusCode, 200);
     expect(captured.single.method, 'HEAD');
     expect(captured.single.headers['Authorization'], 'Bearer head-token');
+  });
+
+  test('player fetch completes without waiting for a slow prefetch', () async {
+    final prefetchGate = Completer<void>();
+    var originHits = 0;
+    final client = MockClient((request) async {
+      originHits++;
+      if (originHits == 1) {
+        await prefetchGate.future;
+        return http.Response('Gbackground', 200);
+      }
+      return http.Response('Gplayer', 200);
+    });
+    final created = await manager.upsertEntry(entry('1'));
+    final fetcher = ResourceFetcher(
+      client: client,
+      sessionHeaders: const {},
+      manager: manager,
+      store: store,
+      entryKey: created.key,
+      contentKeyHash: 'ck1',
+      revisionKeyHash: 'rk1',
+    );
+    const id =
+        'sha256:${'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'}';
+
+    final background = fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/c.bin'),
+      resourceId: id,
+      ext: 'bin',
+      background: true,
+    );
+    await _until(() => originHits == 1);
+
+    final player = await fetcher.fetch(
+      origin: Uri.parse('https://cdn.example.com/c.bin'),
+      resourceId: id,
+      ext: 'bin',
+    );
+    expect(await _collect(player.body), 'Gplayer');
+    expect(originHits, 2);
+
+    prefetchGate.complete();
+    final backgroundResult = await background;
+    await backgroundResult.body.drain<void>();
+    fetcher.endBackground(id);
   });
 }
 

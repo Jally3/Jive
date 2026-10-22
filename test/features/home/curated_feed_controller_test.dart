@@ -9,7 +9,7 @@ import 'package:jive/domain/video.dart';
 import 'package:jive/domain/video_feed.dart';
 import 'package:jive/domain/video_search_target.dart';
 import 'package:jive/domain/vod_source.dart';
-import 'package:jive/features/home/curated_feed_controller.dart';
+import 'package:jive/features/home/controllers/curated_feed_controller.dart';
 
 void main() {
   test(
@@ -645,8 +645,11 @@ class _AllMatchVideoRepository implements VideoRepository {
     bool forceRefresh = false,
   }) => throw UnimplementedError();
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _CountingAllMatchVideoRepository extends _AllMatchVideoRepository {

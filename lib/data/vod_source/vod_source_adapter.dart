@@ -20,6 +20,12 @@ abstract interface class VodSourceAdapter {
   Future<Video> resolvePlayback(VodSource source, VideoRef ref);
 }
 
+/// Sources whose detail response already contains the full playback listing.
+/// Projection must reuse its lists/strings and perform no network requests.
+abstract interface class ReusablePlaybackDetailAdapter {
+  Video playbackFromDetail(Video detail);
+}
+
 /// Optional capability for aborting an in-flight list/search request without
 /// closing the adapter's shared HTTP client.
 abstract interface class CancellableVodSourceAdapter {

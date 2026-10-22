@@ -13,13 +13,28 @@ doc/
 │   ├── PHASE1_VALIDATION.md                  # 鸿蒙播放链路第一阶段验证记录
 │   ├── PHASE2_VALIDATION.md                  # 鸿蒙完整应用与播放稳定性验证记录
 │   └── SDK_SETUP.md                          # 双 SDK 布局与 OHOS CPF SDK 共享安装
+├── merge/
+│   ├── 2026-09-27_docs-app-flows-and-prototypes_into_refactor-code-structure.md # 分支合并、冲突处理与验证记录
+│   └── 2026-10-01_refactor-code-structure_into_playback-startup-trace.md # 播放追踪与结构重构的冲突解决日志
 ├── interview/
 │   └── PROJECT_TECHNICAL_HIGHLIGHTS.md       # 项目技术亮点、原理与面试问答
 ├── hot-update/
-│   ├── HOT_UPDATE_TECHNICAL_RESEARCH.md      # 生产热更新调研、合规边界与实施方案
 │   └── APK_UPDATE_REMINDER_REQUIREMENTS.md   # Android APK 新版本弹窗与外部下载需求
 ├── design/
 │   └── DESIGN_SYSTEM.md                      # 夜幕影院设计规范
+├── flows/
+│   ├── README.md                             # 应用流程剖析与原型图主题入口
+│   ├── NAVIGATION_MAP.md                     # 启动链路、AppShell 骨架与全局导航地图
+│   ├── USER_FLOWS.md                         # 浏览/搜索/详情换源/续播/追更/设置流程
+│   ├── PLAYBACK_PIPELINE.md                  # 播放全链路十步流水线与降级路径
+│   ├── PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md # 点击到首帧的全链路复核与待实施优化
+│   ├── CACHE_DOWNLOAD_FLOWS.md               # 缓存体系与下载任务生命周期
+│   └── PROTOTYPES.md                         # 全部页面 ASCII 原型图（线框+注解）
+├── native-android/
+│   └── ANDROID_NATIVE_PLAN.md                # 安卓原生版重写工作规划（技术选型/模块映射/分期排期）
+├── website/
+│   ├── WEBSITE_INTRO.md                      # 官网介绍文案与截图使用/重生成说明
+│   └── screenshots/                          # 官网截图（集成测试驱动真实流程产出）
 ├── follow/
 │   └── FOLLOW_UPDATES_REQUIREMENTS.md        # 追更、更新检查与提醒需求
 ├── recommendation/
@@ -42,7 +57,10 @@ doc/
 │   ├── TMDB_CATALOG_LANGUAGE_AND_LATEST_FILTER_PLAN.md # 语言/地区元数据与新片榜清洗计划
 │   └── TMDB_CATALOG_BACKEND_API_REQUIREMENTS.md # TMDB Catalog 后端需求与接口契约
 ├── vod-source/
-│   └── SYNCNEXT_SOURCE_INTEGRATION_PLAN.md   # Syncnext / AGE 接入方案
+│   ├── SYNCNEXT_SOURCE_INTEGRATION_PLAN.md   # Syncnext / AGE 接入方案
+│   ├── VOD_SOURCE_PERSONALIZATION_DISCOVERY.md # JTBD、机会方案树、方案比较与验证实验
+│   ├── VOD_SOURCE_PERSONALIZATION_DESIGN.md  # 原地管理态、置顶/置底、本机编辑与选源筛选方案
+│   └── VOD_SOURCE_PERSONALIZATION_IMPLEMENTATION.md # P0 实施与验证记录
 └── archive/
     ├── mvp/                                  # 第一版需求与排期
     ├── cache/                                # 缓存与下载
@@ -64,10 +82,20 @@ doc/
 | [`ohos/PHASE1_VALIDATION.md`](ohos/PHASE1_VALIDATION.md) | 验证中 | 鸿蒙适配 SDK、播放器、最小播放入口与环境阻塞记录 |
 | [`ohos/PHASE2_VALIDATION.md`](ohos/PHASE2_VALIDATION.md) | 进行中 | 完整 Jive 主路径、横竖屏、拖动、生命周期与剩余真机门槛 |
 | [`ohos/SDK_SETUP.md`](ohos/SDK_SETUP.md) | 持续生效 | 双 SDK 布局：官方 3.41.3（fvm）与 CPF OHOS SDK 共享安装、解析规则与补丁说明 |
+| [`merge/2026-09-27_docs-app-flows-and-prototypes_into_refactor-code-structure.md`](merge/2026-09-27_docs-app-flows-and-prototypes_into_refactor-code-structure.md) | 已完成 | `docs/app-flows-and-prototypes` 合并至 `refactor/code-structure` 的任务拆分、冲突决策与验证记录 |
+| [`merge/2026-10-01_refactor-code-structure_into_playback-startup-trace.md`](merge/2026-10-01_refactor-code-structure_into_playback-startup-trace.md) | 待审查，未提交 | `refactor/code-structure` 合入播放追踪分支的冲突取舍、回归测试及既有测试问题对照 |
 | [`interview/PROJECT_TECHNICAL_HIGHLIGHTS.md`](interview/PROJECT_TECHNICAL_HIGHLIGHTS.md) | 持续生效 | 基于当前实现的项目介绍、技术原理、权衡、面试追问与 STAR 案例 |
-| [`hot-update/HOT_UPDATE_TECHNICAL_RESEARCH.md`](hot-update/HOT_UPDATE_TECHNICAL_RESEARCH.md) | 待决策 | 生产 OTA 能力边界、Shorebird 方案、商店合规、远程 JS 加固与分阶段实施路线 |
 | [`hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md`](hot-update/APK_UPDATE_REMINDER_REQUIREMENTS.md) | 核心流程已实现 | Android 新版本后台检查、弹窗提示和外部浏览器打开 APK 下载链接；待部署清单并真机验收 |
 | [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) | 持续生效 | 「夜幕影院」深色主题设计规范（颜色/字号/组件 Token），UI 改动须遵守 |
+| [`flows/README.md`](flows/README.md) | 持续生效 | 应用流程剖析与原型图主题入口（基于 v1.1.0+5 盘点），改版/重构规划的现状底稿 |
+| [`flows/NAVIGATION_MAP.md`](flows/NAVIGATION_MAP.md) | 持续生效 | 启动链路、AppShell 骨架、全局导航地图与路由/弹层方式盘点 |
+| [`flows/USER_FLOWS.md`](flows/USER_FLOWS.md) | 持续生效 | 内容浏览、搜索、详情换源、续播、收藏追更、设置的用户流程与状态分支 |
+| [`flows/PLAYBACK_PIPELINE.md`](flows/PLAYBACK_PIPELINE.md) | 持续生效 | 播放全链路十步流水线、播放模式五态与降级回退路径 |
+| [`flows/PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md`](flows/PLAYBACK_STARTUP_OPTIMIZATION_PLAN.md) | 待实施 | 点击到首帧计时、请求复用、前台网络优先及原生/代理对照实验 |
+| [`flows/CACHE_DOWNLOAD_FLOWS.md`](flows/CACHE_DOWNLOAD_FLOWS.md) | 持续生效 | 缓存配额/磁盘布局/TTL 与下载任务生命周期、网络策略 |
+| [`flows/PROTOTYPES.md`](flows/PROTOTYPES.md) | 持续生效 | 全部页面 ASCII 原型图集（线框 + 区块注解 + 宽屏断点） |
+| [`native-android/ANDROID_NATIVE_PLAN.md`](native-android/ANDROID_NATIVE_PLAN.md) | 规划稿（待评审） | 安卓原生版重写规划：技术选型、Flutter→Kotlin 模块映射、P0–P8 分期排期与验收清单 |
+| [`website/WEBSITE_INTRO.md`](website/WEBSITE_INTRO.md) | 持续生效 | 官网介绍文案底稿：主/副标语、四张截图逐图文案、功能亮点短句与重生成方式 |
 | [`follow/FOLLOW_UPDATES_REQUIREMENTS.md`](follow/FOLLOW_UPDATES_REQUIREMENTS.md) | 待实施 | 收藏与追更关系、详情页动态按钮、前台更新检查、红点提醒和卡片更新状态 |
 | [`recommendation/README.md`](recommendation/README.md) | 客户端核心链路已实现，待真机联调 | 后端推荐客户端开发与联调入口 |
 | [`recommendation/CLIENT_RECOMMENDATION_API.md`](recommendation/CLIENT_RECOMMENDATION_API.md) | 可联调 | 推荐 HTTP 接口、数据模型、Cursor、事件与错误处理 |
@@ -76,6 +104,9 @@ doc/
 | [`recommendation/LLM_RECOMMENDATION_BACKEND_REQUIREMENTS.md`](recommendation/LLM_RECOMMENDATION_BACKEND_REQUIREMENTS.md) | 后端已部署，客户端核心链路已迁移 | 跨端推荐总需求：匿名主体、Cursor 幂等分页、容量与成本保护、客户端 VOD 最终验证 |
 | [`backend/BACKEND_TECHNICAL_REQUIREMENTS.md`](backend/BACKEND_TECHNICAL_REQUIREMENTS.md) | 进行中 | V1.2 后端：VOD 源目录、远程配置，以及可选的邮箱密码注册/登录 |
 | [`vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md`](vod-source/SYNCNEXT_SOURCE_INTEGRATION_PLAN.md) | 第二期进行中 | 接入 SyncnextPlugin 源；AGE Dart Adapter + 通用 JS 插件运行时 |
+| [`vod-source/VOD_SOURCE_PERSONALIZATION_DISCOVERY.md`](vod-source/VOD_SOURCE_PERSONALIZATION_DISCOVERY.md) | 产品假设，待验证 | JTBD、三类机会与九个备选方案、POC 选择和原型验证门槛 |
+| [`vod-source/VOD_SOURCE_PERSONALIZATION_DESIGN.md`](vod-source/VOD_SOURCE_PERSONALIZATION_DESIGN.md) | P0 已实现，待真机验收 | 选择/管理原地切换、置顶/置底、个人编辑与筛选；新增/删除/停用保留后续评审 |
+| [`vod-source/VOD_SOURCE_PERSONALIZATION_IMPLEMENTATION.md`](vod-source/VOD_SOURCE_PERSONALIZATION_IMPLEMENTATION.md) | P0 自动化验证完成 | 共享管理态、四处排序同步、742 项回归通过及 3 项基线问题记录 |
 | [`cast/CAST_PLAN.md`](cast/CAST_PLAN.md) | 待启动 | 投屏功能方案：Cast/DLNA/AirPlay 路线对比与分期计划；待确认电视型号与广告过滤取舍后进入 P0 验证 |
 | [`tv/TV_ADAPTATION_PLAN.md`](tv/TV_ADAPTATION_PLAN.md) | 开发中 | 最小 TV 适配需求方案：FR-1~FR-4 已实现（`feature/tv-adaptation` 分支），待真机实测 |
 | [`splash/SPLASH_PLAN.md`](splash/SPLASH_PLAN.md) | 开发中 | 闪屏页：原生消白闪 + Flutter 展示 Logo 与「Jive」词标，源就绪后进首页 |

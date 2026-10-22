@@ -81,6 +81,142 @@ void main() {
     expect(response.body, contains('#EXTM3U'));
   });
 
+  test('traces manifest and only the first three startup resources', () async {
+    final events = <Map<String, Object?>>[];
+    final ids = List.generate(4, (index) => 'sha256:${'$index' * 64}');
+    final client = MockClient(
+      (request) async => http.Response(
+        'resource-bytes',
+        200,
+        headers: {'content-type': 'video/mp4'},
+      ),
+    );
+    final fetcher = ResourceFetcher(client: client, sessionHeaders: const {});
+    proxy.register(
+      ProxySessionRoute(
+        token: _token,
+        proxyManifest: '#EXTM3U\n',
+        resources: {
+          for (final id in ids) id: Uri.parse('https://origin.example.com/$id'),
+        },
+        extByResourceId: {
+          ids[0]: 'mp4',
+          ids[1]: 'key',
+          ids[2]: 'ts',
+          ids[3]: 'ts',
+        },
+        sessionHeaders: const {},
+        client: client,
+        fetcher: fetcher,
+        mapResourceId: ids[0],
+        onStartupTraceEvent: events.add,
+      ),
+    );
+    final localClient = http.Client();
+    addTearDown(localClient.close);
+
+    await localClient.get(
+      Uri.parse('http://127.0.0.1:${proxy.port}/play/$_token/index.m3u8'),
+    );
+    for (var index = 0; index < ids.length; index++) {
+      await localClient.get(
+        Uri.parse(
+          'http://127.0.0.1:${proxy.port}/play/$_token/res/${ids[index]}',
+        ),
+        headers: index == 0 ? {'range': 'bytes=0-99'} : null,
+      );
+    }
+
+    expect(
+      events.where((event) => event['event'] == 'proxyManifestReceived'),
+      hasLength(1),
+    );
+    expect(
+      events.where((event) => event['event'] == 'proxyManifestResponse'),
+      hasLength(1),
+    );
+    final starts = events
+        .where((event) => event['event'] == 'resourceStart')
+        .toList();
+    expect(starts, hasLength(3));
+    expect(starts.map((event) => event['type']), ['map', 'key', 'segment']);
+    expect(starts.first['range'], 'bytes=0-99');
+    expect(
+      events.where((event) => event['event'] == 'downstreamFirstByte'),
+      hasLength(3),
+    );
+    expect(
+      events.where((event) => event['event'] == 'downstreamComplete'),
+      hasLength(3),
+    );
+    expect(events.where((event) => event['resourceIndex'] == 4), isEmpty);
+  });
+
+  test('reports startup bytes without enabling trace logging', () async {
+    final client = MockClient((request) async => http.Response('segment', 200));
+    final route = _route(client);
+    var receivedBytes = 0;
+    route.onStartupBytes = (bytes) => receivedBytes += bytes;
+    proxy.register(route);
+    final localClient = http.Client();
+    addTearDown(localClient.close);
+    await localClient.get(Uri.parse(proxy.baseUrl(_token)));
+    expect(
+      receivedBytes,
+      0,
+      reason: 'Manifest requests are not media progress',
+    );
+    await localClient.get(
+      Uri.parse('http://127.0.0.1:${proxy.port}/play/$_token/res/$_segmentId'),
+    );
+    expect(receivedBytes, 7);
+  });
+
+  test('error responses do not extend the startup progress deadline', () async {
+    final client = MockClient((request) async => http.Response('error', 503));
+    final route = _route(client);
+    var receivedBytes = 0;
+    route.onStartupBytes = (bytes) => receivedBytes += bytes;
+    proxy.register(route);
+    final localClient = http.Client();
+    addTearDown(localClient.close);
+    await localClient.get(
+      Uri.parse('http://127.0.0.1:${proxy.port}/play/$_token/res/$_segmentId'),
+    );
+    expect(receivedBytes, 0);
+  });
+
+  test(
+    'fetcher reports startup bytes independently of trace sampling',
+    () async {
+      final client = MockClient(
+        (request) async => http.Response('segment', 200),
+      );
+      final base = _route(client);
+      final route = ProxySessionRoute(
+        token: base.token,
+        proxyManifest: base.proxyManifest,
+        resources: base.resources,
+        extByResourceId: base.extByResourceId,
+        sessionHeaders: base.sessionHeaders,
+        client: client,
+        fetcher: ResourceFetcher(client: client, sessionHeaders: const {}),
+        startupTraceResourceLimit: 0,
+      );
+      var receivedBytes = 0;
+      route.onStartupBytes = (bytes) => receivedBytes += bytes;
+      proxy.register(route);
+      final localClient = http.Client();
+      addTearDown(localClient.close);
+      await localClient.get(
+        Uri.parse(
+          'http://127.0.0.1:${proxy.port}/play/$_token/res/$_segmentId',
+        ),
+      );
+      expect(receivedBytes, 7);
+    },
+  );
+
   test('proxies a segment from origin', () async {
     final client = MockClient((request) async {
       expect(request.url.host, 'origin.example.com');

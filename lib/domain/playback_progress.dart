@@ -22,7 +22,6 @@ class PlaybackProgress {
     );
   }
 
-
   Duration resumePosition() =>
       completed ? Duration.zero : Duration(milliseconds: positionMs);
 }

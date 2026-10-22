@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:jive/data/vod_source/adapters/mac_cms_v10_adapter.dart';
 import 'package:jive/data/video_repository.dart';
+import 'package:jive/data/vod_source/video_detail_cache.dart';
+import 'package:jive/data/vod_source/vod_source_adapter.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
 
@@ -96,6 +99,7 @@ void main() {
       final metadata = await adapter.fetchDetail(_testSource, _ref('9'));
       expect(metadata.episodes, hasLength(3));
       expect(metadata.episodes.first.url, isEmpty);
+      expect(metadata.playbackLines.single.episodes, hasLength(1));
       final detail = await adapter.resolvePlayback(_testSource, _ref('9'));
       expect(detail.episodes, hasLength(1));
       expect(detail.episodes.single.name, '第1集');
@@ -225,6 +229,7 @@ void main() {
         }),
       );
       final repository = VideoRepositoryImpl(adapterResolver: (_) => adapter);
+      addTearDown(repository.dispose);
       final first = await repository.fetchDetail(_testSource, _ref('5'));
       final cached = await repository.fetchDetail(_testSource, _ref('5'));
       expect(identical(first, cached), isTrue);
@@ -233,6 +238,209 @@ void main() {
       expect(requests, 2);
     },
   );
+
+  group('MacCMS detail playback reuse', () {
+    http.Response response(String version, {String id = '9'}) =>
+        http.Response.bytes(
+          utf8.encode(
+            jsonEncode({
+              'code': 1,
+              'list': [
+                {
+                  'vod_id': id,
+                  'vod_name': version,
+                  'vod_play_from': 'm3u8',
+                  'vod_play_url':
+                      '第1集\$https://cdn.example.com/$version/1.m3u8#'
+                      '第2集\$https://cdn.example.com/$version/2.m3u8',
+                },
+              ],
+            }),
+          ),
+          200,
+        );
+
+    for (final playbackFirst in [false, true]) {
+      test(
+        'detail and playback share one request, playbackFirst=$playbackFirst',
+        () async {
+          var requests = 0;
+          final adapter = MacCmsV10Adapter(
+            MockClient((_) async {
+              requests++;
+              return response('v1');
+            }),
+          );
+          final repository = VideoRepositoryImpl(
+            adapterResolver: (_) => adapter,
+          );
+          addTearDown(repository.dispose);
+          if (playbackFirst) {
+            await repository.resolvePlayback(_testSource, _ref('9'));
+          }
+          final detail = await repository.fetchDetail(_testSource, _ref('9'));
+          final playable = await repository.resolvePlayback(
+            _testSource,
+            _ref('9'),
+          );
+          expect(requests, 1);
+          expect(detail.episodes.first.url, isEmpty);
+          expect(detail.playbackLines, same(playable.playbackLines));
+          expect(playable.episodes, same(detail.playbackLines.first.episodes));
+          expect(playable.episodes.last.url, contains('/v1/2.m3u8'));
+          expect(
+            await repository.fetchDetail(_testSource, _ref('9')),
+            same(detail),
+          );
+        },
+      );
+    }
+
+    test('concurrent detail and playback share an in-flight request', () async {
+      final result = Completer<http.Response>();
+      var requests = 0;
+      final adapter = MacCmsV10Adapter(
+        MockClient((_) {
+          requests++;
+          return result.future;
+        }),
+      );
+      final repository = VideoRepositoryImpl(adapterResolver: (_) => adapter);
+      addTearDown(repository.dispose);
+      final detail = repository.fetchDetail(_testSource, _ref('9'));
+      final playback = repository.resolvePlayback(_testSource, _ref('9'));
+      result.complete(response('v1'));
+      await Future.wait([detail, playback]);
+      expect(requests, 1);
+    });
+
+    test(
+      'forced refresh coalesces and late old results cannot replace fresh data',
+      () async {
+        final results = [
+          Completer<http.Response>(),
+          Completer<http.Response>(),
+        ];
+        var requests = 0;
+        final adapter = MacCmsV10Adapter(
+          MockClient((_) => results[requests++].future),
+        );
+        final repository = VideoRepositoryImpl(adapterResolver: (_) => adapter);
+        addTearDown(repository.dispose);
+        final old = repository.fetchDetail(_testSource, _ref('9'));
+        final fresh = repository.resolvePlayback(
+          _testSource,
+          _ref('9'),
+          forceRefresh: true,
+        );
+        final duplicate = repository.resolvePlayback(
+          _testSource,
+          _ref('9'),
+          forceRefresh: true,
+        );
+        results[1].complete(response('fresh'));
+        await Future.wait([fresh, duplicate]);
+        results[0].complete(response('old'));
+        await old;
+        expect(requests, 2);
+        expect(
+          (await repository.fetchDetail(_testSource, _ref('9'))).title,
+          'fresh',
+        );
+      },
+    );
+
+    test(
+      'failed forced refresh discards stale data and allows a new request',
+      () async {
+        var requests = 0;
+        final adapter = MacCmsV10Adapter(
+          MockClient((_) async {
+            requests++;
+            return requests == 2
+                ? http.Response('denied', 403)
+                : response('v$requests');
+          }),
+        );
+        final repository = VideoRepositoryImpl(adapterResolver: (_) => adapter);
+        addTearDown(repository.dispose);
+        await repository.fetchDetail(_testSource, _ref('9'));
+        await expectLater(
+          repository.resolvePlayback(
+            _testSource,
+            _ref('9'),
+            forceRefresh: true,
+          ),
+          throwsA(isA<VideoDataException>()),
+        );
+        final fresh = await repository.resolvePlayback(_testSource, _ref('9'));
+        expect(fresh.title, 'v3');
+        expect(requests, 3);
+      },
+    );
+
+    test(
+      'expiry and same-id source config changes require another request',
+      () async {
+        var now = DateTime(2026);
+        var requests = 0;
+        final adapter = MacCmsV10Adapter(
+          MockClient((_) async => response('v${++requests}')),
+        );
+        final repository = VideoRepositoryImpl(
+          adapterResolver: (_) => adapter,
+          detailCache: VideoDetailCache(now: () => now),
+        );
+        addTearDown(repository.dispose);
+        await repository.fetchDetail(_testSource, _ref('9'));
+        now = now.add(const Duration(minutes: 2));
+        expect(
+          (await repository.resolvePlayback(_testSource, _ref('9'))).title,
+          'v2',
+        );
+        final moved = VodSource(
+          id: _testSource.id,
+          name: 'Moved',
+          baseUri: Uri.parse('https://new.example.com/api'),
+          adapterType: 'mac_cms_v10',
+        );
+        expect(
+          (await repository.resolvePlayback(moved, _ref('9'))).title,
+          'v3',
+        );
+        final configured = VodSource(
+          id: moved.id,
+          name: moved.name,
+          baseUri: moved.baseUri,
+          adapterType: moved.adapterType,
+          pluginConfigUri: Uri.parse('https://example.com/plugin'),
+        );
+        expect(
+          (await repository.resolvePlayback(configured, _ref('9'))).title,
+          'v4',
+        );
+        expect(requests, 4);
+      },
+    );
+
+    test(
+      'other adapters still resolve playback independently of detail cache',
+      () async {
+        final adapter = _SeparatePlaybackAdapter();
+        final repository = VideoRepositoryImpl(adapterResolver: (_) => adapter);
+        addTearDown(repository.dispose);
+        await repository.fetchDetail(_testSource, _ref('9'));
+        await repository.resolvePlayback(_testSource, _ref('9'));
+        await repository.resolvePlayback(
+          _testSource,
+          _ref('9'),
+          forceRefresh: true,
+        );
+        expect(adapter.detailCalls, 1);
+        expect(adapter.playbackCalls, 2);
+      },
+    );
+  });
 
   test('repository throws ArgumentError for unknown adapter type', () {
     final repository = VideoRepositoryImpl(adapterResolver: (_) => null);
@@ -249,4 +457,32 @@ void main() {
       throwsArgumentError,
     );
   });
+}
+
+class _SeparatePlaybackAdapter implements VodSourceAdapter {
+  int detailCalls = 0;
+  int playbackCalls = 0;
+  @override
+  String get adapterType => 'separate';
+  @override
+  Future<Video> fetchDetail(VodSource source, VideoRef ref) async {
+    detailCalls++;
+    return const Video(id: '9', title: 'Metadata');
+  }
+
+  @override
+  Future<Video> resolvePlayback(VodSource source, VideoRef ref) async {
+    playbackCalls++;
+    return const Video(id: '9', title: 'Playback');
+  }
+
+  @override
+  Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
+  @override
+  Future<VideoPage> fetchPage(
+    VodSource source, {
+    int page = 1,
+    int? categoryId,
+    String? keyword,
+  }) async => const VideoPage(items: [], page: 1, pageCount: 1);
 }

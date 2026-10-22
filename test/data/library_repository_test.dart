@@ -218,6 +218,9 @@ class _ChangingVideoRepository implements VideoRepository {
   }) async => const VideoPage(items: [], page: 1, pageCount: 1);
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      fetchDetail(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => fetchDetail(source, ref);
 }

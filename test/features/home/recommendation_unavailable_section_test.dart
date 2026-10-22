@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/domain/recommendation.dart';
 import 'package:jive/domain/tmdb_catalog.dart';
-import 'package:jive/features/home/recommendation_unavailable_section.dart';
-import 'package:jive/features/home/recommended_feed_controller.dart';
+import 'package:jive/features/home/widgets/recommendation_unavailable_section.dart';
+import 'package:jive/features/home/controllers/recommended_feed_controller.dart';
 
 void main() {
   testWidgets('many unavailable candidates stay collapsed with a summary', (

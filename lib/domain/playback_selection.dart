@@ -60,30 +60,10 @@ int? indexOfEpisode(List<Episode> episodes, Episode target) {
 PlaybackSelection? selectionFor(Video video, Episode episode) {
   if (video.playbackLines.isEmpty) return null;
   final line = preferredPlaybackLine(video)!;
-  Episode matched = episode;
-  if (episode.identity.isNotEmpty) {
-    final byIdentity = line.episodes
-        .where((e) => e.identity == episode.identity)
-        .toList();
-    if (byIdentity.isNotEmpty) {
-      matched = byIdentity.first;
-    } else {
-      final byName = line.episodes
-          .where(
-            (e) =>
-                e.name == episode.name ||
-                (episode.name.isNotEmpty && e.id == episode.id),
-          )
-          .toList();
-      if (byName.isNotEmpty) matched = byName.first;
-    }
-  } else if (episode.name.isNotEmpty || episode.id.isNotEmpty) {
-    final byName = line.episodes
-        .where((e) => e.name == episode.name || e.id == episode.id)
-        .toList();
-    if (byName.isNotEmpty) matched = byName.first;
+  final matched = playbackEpisodeFor(video, episode);
+  if (line.identity.isEmpty || matched == null || matched.identity.isEmpty) {
+    return null;
   }
-  if (line.identity.isEmpty || matched.identity.isEmpty) return null;
   return PlaybackSelection(
     sourceId: video.sourceId,
     sourceVideoId: video.sourceVideoId,
@@ -96,6 +76,13 @@ PlaybackSelection? selectionFor(Video video, Episode episode) {
       format: inferPlaybackFormat(matched.url),
     ),
   );
+}
+
+/// Matches a displayed episode in the preferred playable line. Positional ids
+/// are only a fallback for unnamed legacy episodes; filtering can renumber ids.
+Episode? playbackEpisodeFor(Video video, Episode requested) {
+  final episodes = preferredPlaybackLine(video)?.episodes ?? video.episodes;
+  return _matchingEpisode(episodes, requested.identity, requested);
 }
 
 /// Rebuilds a playback selection from freshly resolved video data.
@@ -159,15 +146,25 @@ Episode? _episodeInLine(
   required String identity,
   required Episode fallback,
 }) {
+  return _matchingEpisode(line.episodes, identity, fallback);
+}
+
+Episode? _matchingEpisode(
+  List<Episode> episodes,
+  String identity,
+  Episode fallback,
+) {
   if (identity.isNotEmpty) {
-    for (final episode in line.episodes) {
+    for (final episode in episodes) {
       if (episode.identity == identity) return episode;
     }
   }
-  for (final episode in line.episodes) {
-    final sameName = fallback.name.isNotEmpty && episode.name == fallback.name;
-    final sameId = fallback.id.isNotEmpty && episode.id == fallback.id;
-    if (sameName || sameId) return episode;
+  for (final episode in episodes) {
+    if (fallback.name.isNotEmpty) {
+      if (episode.name == fallback.name) return episode;
+    } else if (fallback.id.isNotEmpty && episode.id == fallback.id) {
+      return episode;
+    }
   }
   return null;
 }

@@ -6,9 +6,10 @@ import '../../domain/video.dart';
 
 /// 播放页解析失败时抛出的面向用户异常，避免泄露底层网络异常细节。
 class PlaybackUrlResolutionException implements Exception {
-  const PlaybackUrlResolutionException(this.message);
+  const PlaybackUrlResolutionException(this.message, {this.httpStatusCode});
 
   final String message;
+  final int? httpStatusCode;
 
   @override
   String toString() => message;
@@ -98,7 +99,10 @@ class PlaybackUrlResolver {
         .get(initial, headers: htmlHeaders)
         .timeout(const Duration(seconds: 20));
     if (response.statusCode < 200 || response.statusCode >= 400) {
-      throw PlaybackUrlResolutionException('解析页请求失败（${response.statusCode}）');
+      throw PlaybackUrlResolutionException(
+        '解析页请求失败（${response.statusCode}）',
+        httpStatusCode: response.statusCode,
+      );
     }
     final finalUri = response.request?.url ?? initial;
     final directFormat = _formatFrom(

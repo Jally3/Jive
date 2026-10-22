@@ -11,8 +11,8 @@ import 'package:jive/domain/tmdb_catalog.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
-import 'package:jive/features/home/curated_vod_search_pool.dart';
-import 'package:jive/features/home/recommended_feed_controller.dart';
+import 'package:jive/features/home/support/curated_vod_search_pool.dart';
+import 'package:jive/features/home/controllers/recommended_feed_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final _source = VodSource(
@@ -536,8 +536,11 @@ class _SearchVideoRepository implements VideoRepository {
   }) => throw UnimplementedError();
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      throw UnimplementedError();
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) => throw UnimplementedError();
 }
 
 class _ControlledSearchVideoRepository extends _SearchVideoRepository {

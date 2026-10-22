@@ -1,19 +1,35 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:jive/data/device/device_status_provider.dart';
+import 'package:jive/data/network/connectivity_provider.dart';
+import 'package:jive/domain/device_status.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:jive/data/cache/cache_index.dart';
+import 'package:jive/data/cache/cache_manager.dart';
+import 'package:jive/data/cache/cache_providers.dart';
+import 'package:jive/data/cache/content_key.dart';
 import 'package:jive/data/download/download_providers.dart';
 import 'package:jive/data/download/download_task_manager.dart';
 import 'package:jive/data/playback/prefetch_policy.dart';
 import 'package:jive/data/playback/skip_policy.dart';
+import 'package:jive/data/playback/trace/playback_startup_trace.dart';
+import 'package:jive/data/playback/trace/playback_trace_config.dart';
 import 'package:jive/data/history_repository.dart';
 import 'package:jive/data/video_repository.dart';
 import 'package:jive/data/vod_source/vod_source_registry.dart';
+import 'package:jive/data/vod_source/adapters/mac_cms_v10_adapter.dart';
 import 'package:jive/data/playback/ad_filter.dart';
 import 'package:jive/domain/playback_status.dart';
+import 'package:jive/domain/playback_selection.dart';
+import 'package:jive/features/settings/playback_trace/playback_trace_report.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
 import 'package:jive/domain/watch_record.dart';
@@ -23,16 +39,27 @@ import 'package:jive/features/player/widgets/player_controls_bar.dart';
 import 'package:jive/features/player/widgets/player_indicators.dart';
 import 'package:jive/features/player/widgets/player_gesture_layer.dart';
 import 'package:jive/shared/is_tv.dart';
+import 'package:jive/shared/playback_loading_view.dart';
 import 'package:jive/shared/playback_scrubber.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 // These interfaces are transitive test fixtures of the production plugins.
 // ignore: depend_on_referenced_packages
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 // ignore: depend_on_referenced_packages
 import 'package:wakelock_plus_platform_interface/wakelock_plus_platform_interface.dart';
 
 enum _InitializationResult { success, failure, pending }
+
+class _FakeCacheDiskSpace implements DiskSpaceProvider {
+  @override
+  Future<int> availableBytes() async => 20 << 30;
+  @override
+  Future<int?> totalCapacityBytes() async => 64 << 30;
+  @override
+  Future<int?> platformCacheLimitBytes() async => null;
+}
 
 class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   final List<DataSource> dataSources = [];
@@ -47,6 +74,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   Size videoSize = const Size(160, 90);
   Duration videoDuration = const Duration(minutes: 10);
   Duration Function(Duration requested)? seekLanding;
+  Completer<void>? seekGate;
   int _nextPlayerId = 0;
 
   int get lastPlayerId => _nextPlayerId - 1;
@@ -95,6 +123,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   }
 
   void emitBuffering(int playerId, {required bool buffering}) {
+    playing[playerId] = !buffering;
     _streams[playerId]!.add(
       VideoEvent(
         eventType: buffering
@@ -143,6 +172,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
     positions[playerId] = landed;
     seekPositions.add(position);
     calls.add('seekTo:$playerId');
+    await seekGate?.future;
   }
 
   @override
@@ -194,6 +224,8 @@ class _FakeVideoRepository implements VideoRepository {
 
   final Video resolvedVideo;
   int resolveCalls = 0;
+  final List<bool> refreshRequests = [];
+  Completer<Video>? resolutionGate;
 
   @override
   Future<List<VideoCategory>> fetchCategories(VodSource source) async => [];
@@ -214,8 +246,14 @@ class _FakeVideoRepository implements VideoRepository {
   }) async => const VideoPage(items: [], page: 1, pageCount: 1);
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) async {
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) async {
     resolveCalls++;
+    refreshRequests.add(forceRefresh);
+    if (resolutionGate != null) return resolutionGate!.future;
     return resolvedVideo;
   }
 }
@@ -288,22 +326,37 @@ Future<ProviderContainer> _pumpPlayerPage(
   bool isTv = false,
   ThemeData? theme,
   Map<String, Duration> episodeResumePositions = const {},
+  PlaybackStartupTrace? startupTrace,
+  CacheManager? cacheManager,
+  VodSourceRegistry? registry,
+  Stream<DateTime>? deviceClock,
+  Stream<DeviceBatteryStatus?>? deviceBattery,
+  Stream<List<ConnectivityResult>>? deviceNetwork,
 }) async {
   final container = ProviderContainer(
     overrides: [
       videoRepositoryProvider.overrideWithValue(repository),
       historyRepositoryProvider.overrideWithValue(_FakeHistoryRepository()),
       vodSourceRegistryProvider.overrideWith(
-        (ref) async => VodSourceRegistry([_testSource], const {}),
+        (ref) async => registry ?? VodSourceRegistry([_testSource], const {}),
       ),
       downloadTasksProvider.overrideWith(
         (ref) => Stream.value(const <DownloadTask>[]),
       ),
       prefetchAheadProvider.overrideWithValue(Duration.zero),
       isTvProvider.overrideWith((ref) async => isTv),
+      if (deviceClock != null)
+        deviceClockProvider(true).overrideWith((ref) => deviceClock),
+      if (deviceBattery != null)
+        deviceBatteryProvider(true).overrideWith((ref) => deviceBattery),
+      if (deviceNetwork != null)
+        connectivityResultsProvider.overrideWith((ref) => deviceNetwork),
+      if (cacheManager != null)
+        cacheManagerProvider.overrideWith((ref) async => cacheManager),
     ],
   );
   await container.read(vodSourceRegistryProvider.future);
+  if (cacheManager != null) await container.read(cacheManagerProvider.future);
   addTearDown(container.dispose);
   await tester.pumpWidget(
     UncontrolledProviderScope(
@@ -321,6 +374,7 @@ Future<ProviderContainer> _pumpPlayerPage(
           episode: episode ?? video.episodes.first,
           resumePosition: resumePosition,
           episodeResumePositions: episodeResumePositions,
+          startupTrace: startupTrace,
         ),
       ),
     ),
@@ -393,21 +447,489 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late VideoPlayerPlatform originalVideoPlatform;
   late WakelockPlusPlatformInterface originalWakelockPlatform;
+  late WakelockPlusPlatformInterface originalWakelockPlusPlatformInstance;
   late _FakeVideoPlayerPlatform videoPlatform;
+  late _FakeWakelockPlatform wakelockPlatform;
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     originalVideoPlatform = VideoPlayerPlatform.instance;
     originalWakelockPlatform = WakelockPlusPlatformInterface.instance;
+    originalWakelockPlusPlatformInstance = wakelockPlusPlatformInstance;
     videoPlatform = _FakeVideoPlayerPlatform();
+    wakelockPlatform = _FakeWakelockPlatform();
     VideoPlayerPlatform.instance = videoPlatform;
-    WakelockPlusPlatformInterface.instance = _FakeWakelockPlatform();
+    WakelockPlusPlatformInterface.instance = wakelockPlatform;
+    wakelockPlusPlatformInstance = wakelockPlatform;
   });
 
   tearDown(() {
     VideoPlayerPlatform.instance = originalVideoPlatform;
     WakelockPlusPlatformInterface.instance = originalWakelockPlatform;
+    wakelockPlusPlatformInstance = originalWakelockPlusPlatformInstance;
   });
+
+  for (final (size, textScale) in [
+    (const Size(390, 844), 1.0),
+    (const Size(844, 390), 2.0),
+  ]) {
+    testWidgets(
+      'loading progress shows the actual initialization phase at $size',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = size;
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        videoPlatform.initializationPlan = [_InitializationResult.pending];
+        final video = _playableVideo('https://cdn.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+          textScale: textScale,
+        );
+        await _pumpUntil(tester, () => videoPlatform.dataSources.isNotEmpty);
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(find.text('正在加载画面…'), findsOneWidget);
+        expect(find.text('正在获取播放信息…'), findsNothing);
+        expect(tester.takeException(), isNull);
+        videoPlatform.emitInitialized(videoPlatform.lastPlayerId);
+        await _pumpUntil(
+          tester,
+          () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+        );
+        expect(find.byType(PlaybackLoadingView), findsNothing);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  for (final intro in [false, true]) {
+    testWidgets(
+      'loading progress describes ${intro ? 'intro skipping' : 'resume positioning'} while seek is pending',
+      (tester) async {
+        if (intro) {
+          SharedPreferences.setMockInitialValues({
+            skipPolicyStoreKey:
+                '{"test-source:1":{"introSeconds":30,"outroSeconds":0}}',
+          });
+        }
+        videoPlatform.seekGate = Completer<void>();
+        final video = _playableVideo('https://cdn.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+          resumePosition: intro ? Duration.zero : const Duration(seconds: 90),
+        );
+        await _pumpUntil(tester, () => videoPlatform.seekPositions.isNotEmpty);
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(find.text(intro ? '正在跳过片头…' : '正在恢复播放进度…'), findsOneWidget);
+        videoPlatform.seekGate!.complete();
+        await _pumpUntil(
+          tester,
+          () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+        );
+        expect(find.byType(PlaybackLoadingView), findsNothing);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  testWidgets('loading progress describes a pending explicit address refresh', (
+    tester,
+  ) async {
+    final video = _playableVideo('https://cdn.example.com/1.mp4');
+    final repository = _FakeVideoRepository(video);
+    await _pumpPlayerPage(tester, video: video, repository: repository);
+    await _pumpUntil(
+      tester,
+      () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+    );
+    videoPlatform.emitError(videoPlatform.lastPlayerId);
+    await _pumpUntil(tester, () => find.text('重新获取并重试').evaluate().isNotEmpty);
+    repository.resolutionGate = Completer<Video>();
+    await tester.tap(find.text('重新获取并重试'));
+    await _pumpUntil(tester, () => repository.resolveCalls == 1);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('正在重新获取播放地址…'), findsOneWidget);
+    repository.resolutionGate!.complete(video);
+    await _pumpUntil(
+      tester,
+      () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+    );
+    expect(find.byType(PlaybackLoadingView), findsNothing);
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets(
+    'loading progress follows preparation and an expired address refresh',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final response = Completer<http.Response>();
+      var requests = 0;
+      await http.runWithClient(
+        () async {
+          final video = _playableVideo(
+            'https://old.example.com/m3u8/?url=pending',
+          );
+          final fresh = _playableVideo('https://fresh.example.com/1.mp4');
+          final repository = _FakeVideoRepository(fresh);
+          repository.resolutionGate = Completer<Video>();
+          final adapter = MacCmsV10Adapter(
+            MockClient((_) async => http.Response('', 200)),
+          );
+          await _pumpPlayerPage(
+            tester,
+            video: video,
+            repository: repository,
+            registry: VodSourceRegistry(
+              [_testSource],
+              {'mac_cms_v10': adapter},
+            ),
+          );
+          await _pumpUntil(tester, () => requests > 0);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 200));
+          expect(find.text('正在准备视频…'), findsOneWidget);
+          final spinner = find.byType(CircularProgressIndicator);
+          final spinnerElement = tester.element(spinner);
+          final spinnerCenter = tester.getCenter(spinner);
+          final infoPanel = tester.widget<PlayerInfoPanel>(
+            find.byType(PlayerInfoPanel),
+          );
+          response.complete(http.Response('', 403));
+          await _pumpUntil(tester, () => repository.resolveCalls == 1);
+          await tester.pump();
+          expect(find.text('播放地址已失效，正在重新获取…'), findsOneWidget);
+          expect(tester.element(spinner), same(spinnerElement));
+          expect(tester.getCenter(spinner), spinnerCenter);
+          expect(
+            tester.widget<PlayerInfoPanel>(find.byType(PlayerInfoPanel)),
+            same(infoPanel),
+          );
+          expect(find.text('正在准备视频…'), findsNothing);
+          repository.resolutionGate!.complete(fresh);
+          await _pumpUntil(
+            tester,
+            () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+          );
+          expect(find.byType(PlaybackLoadingView), findsNothing);
+          await _unmountPlayerPage(tester);
+        },
+        () => MockClient((_) {
+          requests++;
+          return response.future;
+        }),
+      );
+    },
+  );
+
+  for (final status in [401, 403, 404, 410]) {
+    testWidgets(
+      'expired MacCMS address HTTP $status refreshes once before playback',
+      (tester) async {
+        await http.runWithClient(() async {
+          final oldVideo = _playableVideo(
+            'https://old.example.com/m3u8/?url=expired',
+          );
+          final repository = _FakeVideoRepository(
+            _playableVideo('https://fresh.example.com/1.mp4'),
+          );
+          final adapter = MacCmsV10Adapter(
+            MockClient((_) async => http.Response('', 200)),
+          );
+          await _pumpPlayerPage(
+            tester,
+            video: oldVideo,
+            repository: repository,
+            registry: VodSourceRegistry(
+              [_testSource],
+              {'mac_cms_v10': adapter},
+            ),
+          );
+          await _pumpUntil(
+            tester,
+            () => videoPlatform.dataSources.isNotEmpty,
+            reason: 'fresh address did not create a controller',
+          );
+          expect(repository.refreshRequests, [true]);
+          expect(
+            videoPlatform.dataSources.single.uri,
+            'https://fresh.example.com/1.mp4',
+          );
+          await _unmountPlayerPage(tester);
+        }, () => MockClient((_) async => http.Response('', status)));
+      },
+    );
+  }
+
+  testWidgets('persistent address rejection refreshes once and does not loop', (
+    tester,
+  ) async {
+    var requests = 0;
+    await http.runWithClient(
+      () async {
+        final oldVideo = _playableVideo(
+          'https://old.example.com/m3u8/?url=expired',
+        );
+        final repository = _FakeVideoRepository(oldVideo);
+        final adapter = MacCmsV10Adapter(
+          MockClient((_) async => http.Response('', 200)),
+        );
+        await _pumpPlayerPage(
+          tester,
+          video: oldVideo,
+          repository: repository,
+          registry: VodSourceRegistry([_testSource], {'mac_cms_v10': adapter}),
+        );
+        await _pumpUntil(
+          tester,
+          () => find.text('重新获取并重试').evaluate().isNotEmpty,
+        );
+        expect(repository.refreshRequests, [true]);
+        expect(requests, 2);
+        expect(videoPlatform.dataSources, isEmpty);
+        await _unmountPlayerPage(tester);
+      },
+      () => MockClient((_) async {
+        requests++;
+        return http.Response('', 403);
+      }),
+    );
+  });
+
+  testWidgets('server HTTP 502 does not refresh the detail address', (
+    tester,
+  ) async {
+    await http.runWithClient(() async {
+      final oldVideo = _playableVideo(
+        'https://old.example.com/m3u8/?url=expired',
+      );
+      final repository = _FakeVideoRepository(oldVideo);
+      final adapter = MacCmsV10Adapter(
+        MockClient((_) async => http.Response('', 200)),
+      );
+      await _pumpPlayerPage(
+        tester,
+        video: oldVideo,
+        repository: repository,
+        registry: VodSourceRegistry([_testSource], {'mac_cms_v10': adapter}),
+      );
+      await _pumpUntil(
+        tester,
+        () => find.text('重新获取并重试').evaluate().isNotEmpty,
+      );
+      expect(repository.refreshRequests, isEmpty);
+      await _unmountPlayerPage(tester);
+    }, () => MockClient((_) async => http.Response('', 502)));
+  });
+
+  testWidgets(
+    'stalled proxy falls back at eight seconds and logs the final direct mode',
+    (tester) async {
+      final video = _playableVideo('https://example.com/watchdog.m3u8');
+      final selection = selectionFor(video, video.episodes.first)!;
+      final content = ContentKeyBuilder().build(
+        ContentKeyParts(
+          sourceId: selection.sourceId,
+          sourceVideoId: selection.sourceVideoId,
+          playbackLineIdentity: selection.playbackLineIdentity,
+          episodeIdentity: selection.episodeIdentity,
+        ),
+      );
+      final manager = (await tester.runAsync(() async {
+        final directory = await Directory.systemTemp.createTemp(
+          'jive_watchdog_player',
+        );
+        final store = CacheIndexStore(directory);
+        final manager = CacheManager(
+          store: store,
+          diskSpace: _FakeCacheDiskSpace(),
+        );
+        await manager.initialize();
+        final entry = await manager.upsertEntry(
+          CacheEntry(
+            contentKeyVersion: content.version,
+            contentKeyHash: content.hash,
+            revisionKeyHash: 'watchdog',
+            manifestFingerprint: 'watchdog',
+            manifestBaseUrl: video.episodes.first.url,
+            sourceId: selection.sourceId,
+            sourceVideoId: selection.sourceVideoId,
+            title: selection.title,
+            playbackLineIdentity: selection.playbackLineIdentity,
+            playbackLineName: '',
+            episodeIdentity: selection.episodeIdentity,
+            episodeId: selection.episode.id,
+            episodeName: selection.episode.name,
+          ),
+        );
+        final id = 'sha256:${'a' * 64}';
+        final file = store.resourceFile(content.hash, 'watchdog', id, 'ts');
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(List.filled(188, 0x47));
+        await manager.setExpectations(entry.key, 1);
+        final lease = await manager.reserve(entry.key, 188);
+        await lease!.commitResource(resourceId: id, size: 188, ext: 'ts');
+        await store.saveProxyManifest(
+          content.hash,
+          'watchdog',
+          '#EXTM3U\n#EXTINF:4.0,\n/play/old/res/$id\n#EXT-X-ENDLIST\n',
+        );
+        addTearDown(() async {
+          await manager.flush();
+          await directory.delete(recursive: true);
+        });
+        return manager;
+      }))!;
+      final trace = PlaybackStartupTrace.maybeStart(
+        videoTitle: video.title,
+        sourceId: video.sourceId,
+        sourceVideoId: video.sourceVideoId,
+        episode: video.episodes.first,
+        offlineOnly: false,
+      );
+      final messages = <String>[];
+      final originalDebugPrint = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) messages.add(message);
+      };
+      try {
+        videoPlatform.initializationPlan = [
+          _InitializationResult.pending,
+          _InitializationResult.pending,
+        ];
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+          cacheManager: manager,
+          startupTrace: trace,
+        );
+        Future<void> waitForSources(int count) async {
+          for (
+            var attempts = 0;
+            attempts < 200 && videoPlatform.dataSources.length < count;
+            attempts++
+          ) {
+            await tester.runAsync(() async {
+              await Future<void>.delayed(const Duration(milliseconds: 5));
+            });
+            await tester.pump();
+          }
+          expect(videoPlatform.dataSources, hasLength(count));
+          await tester.pump();
+        }
+
+        await waitForSources(1);
+        expect(
+          videoPlatform.dataSources.first.uri,
+          startsWith('http://127.0.0.1:'),
+        );
+        await tester.pump(const Duration(seconds: 7));
+        expect(videoPlatform.dataSources, hasLength(1));
+        await tester.pump(const Duration(seconds: 1));
+        await waitForSources(2);
+        expect(videoPlatform.dataSources.last.uri, video.episodes.first.url);
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(find.text('视频加载较慢，正在尝试重新连接…'), findsOneWidget);
+        videoPlatform.emitInitialized(videoPlatform.lastPlayerId);
+        await _pumpUntil(
+          tester,
+          () => find.byType(VideoPlayer).evaluate().isNotEmpty,
+        );
+        if (trace != null) {
+          final report = parsePlaybackTraceLogs(messages.join('\n')).single;
+          expect(report.result, 'success');
+          expect(report.mode, 'direct');
+          expect((report.raw['playback'] as Map)['usedProxy'], isFalse);
+          final stages = report.raw['stages'] as List;
+          final proxy =
+              stages.singleWhere(
+                    (stage) => stage['name'] == 'controllerInitializeProxy',
+                  )
+                  as Map;
+          expect((proxy['metadata'] as Map)['timeoutReason'], 'noProgress');
+        }
+        await _unmountPlayerPage(tester);
+        await tester.runAsync(
+          () async => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        debugPrint = originalDebugPrint;
+      }
+    },
+  );
+
+  for (final result in [
+    _InitializationResult.success,
+    _InitializationResult.pending,
+  ]) {
+    testWidgets(
+      'startup trace survives refactoring for ${result.name} initialization',
+      (tester) async {
+        final video = _playableVideo('https://example.com/trace.mp4');
+        final trace = PlaybackStartupTrace.maybeStart(
+          videoTitle: video.title,
+          sourceId: video.sourceId,
+          sourceVideoId: video.sourceVideoId,
+          episode: video.episodes.first,
+          offlineOnly: false,
+        )!;
+        final messages = <String>[];
+        final originalDebugPrint = debugPrint;
+        debugPrint = (message, {wrapWidth}) {
+          if (message != null) messages.add(message);
+        };
+        try {
+          videoPlatform.initializationPlan = [result];
+          await _pumpPlayerPage(
+            tester,
+            video: video,
+            repository: _FakeVideoRepository(video),
+            startupTrace: trace,
+            resumePosition: const Duration(seconds: 15),
+          );
+          if (result == _InitializationResult.pending) {
+            await _pumpUntil(
+              tester,
+              () => videoPlatform.dataSources.isNotEmpty,
+            );
+            expect(trace.isFinished, isFalse);
+          } else {
+            await _pumpUntil(tester, () => trace.isFinished);
+          }
+          await _unmountPlayerPage(tester);
+          if (result == _InitializationResult.pending) {
+            videoPlatform.emitInitialized(videoPlatform.lastPlayerId);
+            await tester.pump();
+          }
+          expect(trace.isFinished, isTrue);
+          final expectedResult = switch (result) {
+            _InitializationResult.success => 'success',
+            _InitializationResult.failure => 'failed',
+            _InitializationResult.pending => 'cancelled',
+          };
+          expect(
+            messages.where(
+              (message) => message.startsWith('JIVE_PLAYBACK_TRACE_SUMMARY '),
+            ),
+            [contains('result=$expectedResult ')],
+          );
+          expect(tester.takeException(), isNull);
+        } finally {
+          debugPrint = originalDebugPrint;
+        }
+      },
+      skip: !PlaybackTraceConfig.enabled,
+    );
+  }
 
   testWidgets(
     'PlaybackStatusIndicator shows a colored dot and handles long press',
@@ -958,8 +1480,10 @@ void main() {
     (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(844, 390);
+      tester.view.padding = const FakeViewPadding(left: 59);
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetPadding);
       final video = _playableVideo('https://example.com/1.mp4');
 
       await _pumpPlayerPage(
@@ -976,6 +1500,12 @@ void main() {
                 .isNotEmpty &&
             videoPlatform.playing[videoPlatform.lastPlayerId] == true,
         reason: 'landscape player did not finish initialization',
+      );
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('player-screen-lock-button')))
+            .left,
+        83,
       );
 
       await tester.tap(find.byKey(const ValueKey('playback-speed-menu')));
@@ -1208,6 +1738,7 @@ void main() {
     );
 
     expect(repository.resolveCalls, 1);
+    expect(repository.refreshRequests, [true]);
     expect(videoPlatform.dataSources.last.uri, freshUrl);
     expect(tester.takeException(), isNull);
     await _unmountPlayerPage(tester);
@@ -1289,6 +1820,44 @@ void main() {
       'play:$playerId',
     );
 
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets('buffering keeps the screen awake until playback is paused', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      reason: 'player did not finish initialization',
+    );
+    expect(videoPlatform.playing[videoPlatform.lastPlayerId], isTrue);
+    await tester.pump(const Duration(seconds: 11));
+    expect(wakelockPlatform.isEnabled, isTrue);
+
+    final playerId = videoPlatform.lastPlayerId;
+    videoPlatform.emitBuffering(playerId, buffering: true);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 11));
+    expect(videoPlatform.playing[playerId], isFalse);
+    expect(wakelockPlatform.isEnabled, isTrue);
+
+    videoPlatform.emitBuffering(playerId, buffering: false);
+    await tester.pump();
+    expect(wakelockPlatform.isEnabled, isTrue);
+
+    await tester.tapAt(tester.getCenter(find.byType(PlayerGestureLayer)));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byTooltip('暂停').hitTestable());
+    await _pumpUntil(tester, () => !wakelockPlatform.isEnabled);
     await _unmountPlayerPage(tester);
   });
 
@@ -1544,6 +2113,41 @@ void main() {
     await _unmountPlayerPage(tester);
   });
 
+  testWidgets(
+    'pause has no center feedback and only the controls bar resumes playback',
+    (tester) async {
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+      );
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+
+      await tester.tap(find.byTooltip('暂停'));
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == false);
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('player-pause-feedback')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('player-center-play-button')),
+        findsNothing,
+      );
+
+      await tester.pump(const Duration(milliseconds: 3100));
+      expect(_controlsBarOpacity(tester), 0);
+
+      await tester.tapAt(tester.getCenter(find.byType(PlayerGestureLayer)));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(videoPlatform.playing[0], isFalse);
+      expect(_controlsBarOpacity(tester), 1);
+
+      await tester.tap(find.byTooltip('播放'));
+      await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+      await _unmountPlayerPage(tester);
+    },
+  );
+
   testWidgets('last episode still exposes replay when playback completes', (
     tester,
   ) async {
@@ -1572,6 +2176,252 @@ void main() {
           (button) => button.tooltip == '重新播放' && button.style != null,
         );
     expect(replayButton.tooltip, '重新播放');
+    await _unmountPlayerPage(tester);
+  });
+
+  for (final isLastEpisode in [false, true]) {
+    testWidgets(
+      '${isLastEpisode ? 'last episode' : 'single episode'} completion hides controls and replay after inactivity',
+      (tester) async {
+        final video = isLastEpisode
+            ? _playableSeries('https://old.example.com')
+            : _playableVideo('https://old.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          episode: video.episodes.last,
+          repository: _FakeVideoRepository(video),
+        );
+        await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+        await tester.pump(const Duration(seconds: 4));
+        expect(_controlsBarOpacity(tester), 0);
+
+        videoPlatform.emitCompleted(0);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        final replay = find.byKey(
+          const ValueKey('player-center-replay-button'),
+        );
+        expect(_controlsBarOpacity(tester), 1);
+        expect(replay.hitTestable(), findsOneWidget);
+
+        await tester.pump(const Duration(milliseconds: 3100));
+        expect(_controlsBarOpacity(tester), 0);
+        expect(replay.hitTestable(), findsNothing);
+
+        final bounds = tester.getRect(find.byType(PlayerGestureLayer));
+        await tester.tapAt(
+          Offset(bounds.left + bounds.width * 0.75, bounds.center.dy),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(_controlsBarOpacity(tester), 1);
+        expect(replay.hitTestable(), findsOneWidget);
+
+        await tester.pump(const Duration(seconds: 2));
+        await tester.tap(find.byKey(const ValueKey('player-position-label')));
+        await tester.pump(const Duration(seconds: 2));
+        expect(_controlsBarOpacity(tester), 1);
+        await tester.pump(const Duration(milliseconds: 1100));
+        expect(_controlsBarOpacity(tester), 0);
+        expect(replay.hitTestable(), findsNothing);
+        expect(videoPlatform.playing[0], isFalse);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  for (final completed in [false, true]) {
+    testWidgets(
+      'top bar interaction renews controls timeout ${completed ? 'after completion' : 'during playback'}',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(844, 390);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final video = _playableVideo('https://old.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+        );
+        await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+        if (completed) {
+          videoPlatform.emitCompleted(0);
+          await tester.pump();
+          await tester.pump();
+        }
+        await tester.pump(const Duration(seconds: 2));
+        final scrim = tester.getRect(
+          find.byKey(const ValueKey('player-top-scrim')),
+        );
+        await tester.tapAt(Offset(scrim.right - 8, scrim.top + 8));
+        await tester.pump(const Duration(seconds: 2));
+        expect(_controlsBarOpacity(tester), 1);
+        await tester.pump(const Duration(milliseconds: 1100));
+        expect(_controlsBarOpacity(tester), 0);
+        expect(videoPlatform.playing[0], !completed);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  for (final fullscreen in [false, true]) {
+    testWidgets(
+      'left edge toggles controls in ${fullscreen ? 'fullscreen' : 'windowed playback'}',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(390, 844);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final video = _playableVideo('https://old.example.com/1.mp4');
+        await _pumpPlayerPage(
+          tester,
+          video: video,
+          repository: _FakeVideoRepository(video),
+        );
+        await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+        if (fullscreen) {
+          await tester.tap(find.byTooltip('进入全屏'));
+          await tester.pump();
+          tester.view.physicalSize = const Size(844, 390);
+          await tester.pump();
+        }
+        final bounds = tester.getRect(find.byType(PlayerGestureLayer));
+        final videoBounds = tester.getRect(find.byType(VideoPlayer));
+        final edge = Offset(
+          videoBounds.left + 8,
+          fullscreen ? bounds.center.dy : bounds.top + 24,
+        );
+        expect(_controlsBarOpacity(tester), 1);
+        await tester.tapAt(edge);
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(_controlsBarOpacity(tester), 0);
+        await tester.tapAt(edge);
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(_controlsBarOpacity(tester), 1);
+        expect(videoPlatform.playing[0], isTrue);
+        await _unmountPlayerPage(tester);
+      },
+    );
+  }
+
+  testWidgets('TV keeps completed controls visible for remote interaction', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1920, 1080);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+      isTv: true,
+    );
+    await _pumpUntil(tester, () => videoPlatform.playing[0] == true);
+    videoPlatform.emitCompleted(0);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    expect(_controlsBarOpacity(tester), 1);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(_controlsBarOpacity(tester), 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump(const Duration(seconds: 4));
+    expect(_controlsBarOpacity(tester), 1);
+    await _unmountPlayerPage(tester);
+  });
+
+  testWidgets(
+    'device status updates preserve the player and controls deadline',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(844, 390);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final clock = StreamController<DateTime>.broadcast();
+      final battery = StreamController<DeviceBatteryStatus?>.broadcast();
+      final network = StreamController<List<ConnectivityResult>>.broadcast();
+      final video = _playableVideo('https://old.example.com/1.mp4');
+      await _pumpPlayerPage(
+        tester,
+        video: video,
+        repository: _FakeVideoRepository(video),
+        deviceClock: clock.stream,
+        deviceBattery: battery.stream,
+        deviceNetwork: network.stream,
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+      );
+      await tester.pump(const Duration(seconds: 2));
+      final title = tester.widget(
+        find.byKey(const ValueKey('player-top-title-row')),
+      );
+      clock.add(DateTime(2026, 10, 6, 21, 37));
+      battery.add(const DeviceBatteryStatus(level: 19, charging: false));
+      network.add([ConnectivityResult.mobile]);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('21:37'), findsOneWidget);
+      expect(find.text('19'), findsOneWidget);
+      expect(find.text('蜂窝'), findsOneWidget);
+      expect(
+        tester.widget(find.byKey(const ValueKey('player-top-title-row'))),
+        same(title),
+      );
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(_controlsBarOpacity(tester), 0);
+      expect(videoPlatform.dataSources, hasLength(1));
+      expect(videoPlatform.playing[0], isTrue);
+      await _unmountPlayerPage(tester);
+      unawaited(clock.close());
+      unawaited(battery.close());
+      unawaited(network.close());
+      await tester.pump();
+    },
+  );
+
+  testWidgets('top bar uses screen safe area once around letterboxed video', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.padding = const FakeViewPadding(left: 59, right: 34);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetPadding);
+    final video = _playableVideo('https://old.example.com/1.mp4');
+    await _pumpPlayerPage(
+      tester,
+      video: video,
+      repository: _FakeVideoRepository(video),
+      deviceNetwork: Stream.value([ConnectivityResult.wifi]),
+    );
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('fake-video-0')).evaluate().isNotEmpty,
+    );
+    final bar = tester.getRect(find.byKey(const ValueKey('player-top-scrim')));
+    final back = tester.getRect(find.byKey(const ValueKey('fullscreen-back')));
+    final status = tester.getRect(
+      find.byKey(const ValueKey('player-device-status')),
+    );
+    final picture = tester.getRect(find.byType(VideoPlayer));
+    expect(picture.left, greaterThan(59));
+    expect(bar.left, 0);
+    expect(bar.right, 844);
+    expect(back.left, 59 + 8);
+    expect(status.right, 844 - 34 - 8);
+    expect(find.text('Wi-Fi'), findsNothing);
+    await tester.tapAt(const Offset(20, 195));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(_controlsBarOpacity(tester), 0);
+    await tester.tapAt(const Offset(20, 195));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(_controlsBarOpacity(tester), 1);
     await _unmountPlayerPage(tester);
   });
 

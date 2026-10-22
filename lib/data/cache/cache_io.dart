@@ -7,6 +7,11 @@ import 'cache_index.dart';
 import 'cache_manager.dart';
 import 'single_flight.dart';
 
+/// Optional, best-effort diagnostics for the first startup resource requests.
+/// Callers must keep callbacks side-effect free; failures are swallowed here so
+/// tracing can never participate in playback control flow.
+typedef ResourceTraceEventCallback = void Function(Map<String, Object?> event);
+
 const Set<String> responseHeaderWhitelist = {
   'content-type',
   'content-length',
@@ -72,6 +77,10 @@ class CacheUpstreamStreamException implements Exception {
   const CacheUpstreamStreamException();
 }
 
+class CacheFetchCancelledException implements Exception {
+  const CacheFetchCancelledException();
+}
+
 class ResourceFetcher {
   ResourceFetcher({
     required this.client,
@@ -85,6 +94,7 @@ class ResourceFetcher {
     this.onResourceLength,
     this.onBytesReceived,
     this.failOnCacheUnavailable = false,
+    this.isCancelled,
     this.encryptedSegments = false,
     SingleFlight<CacheFetchResult>? singleFlight,
   }) : singleFlight = singleFlight ?? SingleFlight();
@@ -100,6 +110,7 @@ class ResourceFetcher {
   final void Function(String resourceId, int length)? onResourceLength;
   final void Function(int bytes)? onBytesReceived;
   final bool failOnCacheUnavailable;
+  final bool Function()? isCancelled;
 
   /// 分片为加密内容（AES-128 密文）：跳过格式魔数校验（密文没有
   /// TS 同步字节/fMP4 box 头），字节数比对仍然有效。
@@ -127,17 +138,39 @@ class ResourceFetcher {
     required String ext,
     Map<String, String>? downstreamHeaders,
     bool background = false,
+    bool streamRangeMiss = false,
+    ResourceTraceEventCallback? trace,
   }) async {
+    final cacheLookup = trace == null ? null : (Stopwatch()..start());
     final cached = await _serveCached(resourceId, ext, downstreamHeaders);
+    if (trace != null) {
+      _trace(trace, 'cacheLookup', {
+        'durationMs': _elapsedMs(cacheLookup),
+        'hit': cached != null,
+      });
+    }
     if (cached != null) return cached;
     if (method == 'HEAD') {
-      return _passthrough(origin, downstreamHeaders, head: true);
+      return _passthrough(origin, downstreamHeaders, head: true, trace: trace);
     }
     if (!_cacheEnabled) {
-      return _passthrough(origin, downstreamHeaders);
+      return _passthrough(origin, downstreamHeaders, trace: trace);
     }
     if (_rangeHeader(downstreamHeaders) != null) {
-      return _fetchRangeWithCache(origin, resourceId, ext, downstreamHeaders);
+      // Native startup probes need their requested bytes immediately. Do not
+      // download a whole segment before answering a small Range. The ordinary
+      // prefetch/download path can still fill the complete resource later.
+      if (streamRangeMiss) {
+        _trace(trace, 'rangeResponse', {'mode': 'streamingPassThrough'});
+        return _passthrough(origin, downstreamHeaders, trace: trace);
+      }
+      return _fetchRangeWithCache(
+        origin,
+        resourceId,
+        ext,
+        downstreamHeaders,
+        trace: trace,
+      );
     }
     if (background) {
       // 播放路径正在拉同一片：预取让行，等下一轮调度补抓。
@@ -147,7 +180,7 @@ class ResourceFetcher {
       }
       backgroundFetches.add(resourceId);
       try {
-        return await _fetchAndCache(origin, resourceId, ext);
+        return await _fetchAndCache(origin, resourceId, ext, trace: trace);
       } catch (_) {
         backgroundFetches.remove(resourceId);
         rethrow;
@@ -161,11 +194,12 @@ class ResourceFetcher {
         resourceId,
         ext,
         partialTag: 'play${_bypassSeq++}',
+        trace: trace,
       );
     }
     return singleFlight.run(
       resourceId,
-      () => _fetchAndCache(origin, resourceId, ext),
+      () => _fetchAndCache(origin, resourceId, ext, trace: trace),
     );
   }
 
@@ -181,8 +215,9 @@ class ResourceFetcher {
     Uri origin,
     String resourceId,
     String ext,
-    Map<String, String>? downstreamHeaders,
-  ) async {
+    Map<String, String>? downstreamHeaders, {
+    ResourceTraceEventCallback? trace,
+  }) async {
     // 不走 singleFlight：其共享结果的 body 是单订阅流，重复订阅会直接抛错；
     // 并发重复回源的概率低、代价可接受。独立临时文件避免与预取在途写冲突。
     final full = await _fetchAndCache(
@@ -190,6 +225,7 @@ class ResourceFetcher {
       resourceId,
       ext,
       partialTag: 'range${_bypassSeq++}',
+      trace: trace,
     );
     if (full.statusCode != HttpStatus.ok) return full;
     // body 完全消费完毕时，_fetchAndCache 的提交（commitResource）已完成。
@@ -197,7 +233,7 @@ class ResourceFetcher {
     final cached = await _serveCached(resourceId, ext, downstreamHeaders);
     if (cached != null) return cached;
     // 缓存写入失败（如配额已满）：退回 Range 透传，不影响本次播放。
-    return _passthrough(origin, downstreamHeaders);
+    return _passthrough(origin, downstreamHeaders, trace: trace);
   }
 
   Future<CacheFetchResult?> _serveCached(
@@ -259,17 +295,26 @@ class ResourceFetcher {
     Uri origin,
     Map<String, String>? downstream, {
     bool head = false,
+    ResourceTraceEventCallback? trace,
   }) async {
     final request = http.Request(head ? 'HEAD' : 'GET', origin);
     request.headers.addAll({
       ...filterSessionHeaders(sessionHeaders),
       ...filterDownstreamHeaders(downstream ?? const {}),
     });
+    final upstreamClock = trace == null ? null : (Stopwatch()..start());
     final upstream = await client.send(request);
+    if (trace != null) {
+      _trace(trace, 'upstreamHeaders', {
+        'durationMs': _elapsedMs(upstreamClock),
+        'statusCode': upstream.statusCode,
+        'mode': 'passthrough',
+      });
+    }
     return CacheFetchResult(
       statusCode: upstream.statusCode,
       headers: _upstreamHeaders(upstream),
-      body: upstream.stream,
+      body: _traceUpstreamBody(upstream.stream, upstreamClock, trace),
     );
   }
 
@@ -278,20 +323,33 @@ class ResourceFetcher {
     String resourceId,
     String ext, {
     String? partialTag,
+    ResourceTraceEventCallback? trace,
   }) async {
     final request = http.Request('GET', origin);
     request.headers.addAll(filterSessionHeaders(sessionHeaders));
     http.StreamedResponse upstream;
+    final upstreamClock = trace == null ? null : (Stopwatch()..start());
     try {
       upstream = await client.send(request);
     } catch (_) {
       throw const HttpException('回源请求失败');
     }
+    if (trace != null) {
+      _trace(trace, 'upstreamHeaders', {
+        'durationMs': _elapsedMs(upstreamClock),
+        'statusCode': upstream.statusCode,
+        'mode': 'cacheWriteThrough',
+      });
+    }
+    if (isCancelled?.call() == true) {
+      await upstream.stream.listen((_) {}).cancel();
+      throw const CacheFetchCancelledException();
+    }
     if (upstream.statusCode != HttpStatus.ok) {
       return CacheFetchResult(
         statusCode: upstream.statusCode,
         headers: _upstreamHeaders(upstream),
-        body: upstream.stream,
+        body: _traceUpstreamBody(upstream.stream, upstreamClock, trace),
       );
     }
     final declaredLength =
@@ -303,7 +361,15 @@ class ResourceFetcher {
     if (declaredLength > 0) {
       onResourceLength?.call(resourceId, declaredLength);
     }
+    final reserveClock = trace == null ? null : (Stopwatch()..start());
     final lease = await manager!.reserve(entryKey!, reserveBytes);
+    if (trace != null) {
+      _trace(trace, 'cacheReserve', {
+        'durationMs': _elapsedMs(reserveClock),
+        'granted': lease != null,
+        'bytes': reserveBytes,
+      });
+    }
     if (lease == null) {
       _reportCacheBypass(PlaybackFallbackReason.cacheQuotaExceeded);
       if (failOnCacheUnavailable) {
@@ -313,7 +379,7 @@ class ResourceFetcher {
       return CacheFetchResult(
         statusCode: upstream.statusCode,
         headers: _upstreamHeaders(upstream),
-        body: upstream.stream,
+        body: _traceUpstreamBody(upstream.stream, upstreamClock, trace),
       );
     }
     final defaultPart = store!.partialFile(
@@ -337,23 +403,66 @@ class ResourceFetcher {
       return CacheFetchResult(
         statusCode: upstream.statusCode,
         headers: _upstreamHeaders(upstream),
-        body: upstream.stream,
+        body: _traceUpstreamBody(upstream.stream, upstreamClock, trace),
       );
     }
+    final fileSetupClock = trace == null ? null : (Stopwatch()..start());
     await part.parent.create(recursive: true);
     final sink = part.openWrite();
-    final controller = StreamController<List<int>>();
+    if (trace != null) {
+      _trace(trace, 'fileSetup', {'durationMs': _elapsedMs(fileSetupClock)});
+    }
+    late StreamSubscription<List<int>> upstreamSubscription;
+    var finishing = false;
+    final controller = StreamController<List<int>>(
+      onCancel: () async {
+        if (finishing) return;
+        try {
+          await upstreamSubscription.cancel();
+        } finally {
+          try {
+            await sink.close();
+          } finally {
+            await lease.cancel();
+            try {
+              if (await part.exists()) await part.delete();
+            } catch (_) {}
+          }
+        }
+      },
+    );
     var written = 0;
-    upstream.stream.listen(
+    var sawFirstByte = false;
+    upstreamSubscription = upstream.stream.listen(
       (chunk) {
+        if (!sawFirstByte) {
+          sawFirstByte = true;
+          if (trace != null) {
+            _trace(trace, 'upstreamFirstByte', {
+              'elapsedMs': _elapsedMs(upstreamClock),
+            });
+          }
+        }
         written += chunk.length;
         onBytesReceived?.call(chunk.length);
         sink.add(chunk);
         controller.add(chunk);
       },
       onDone: () async {
+        if (trace != null) {
+          _trace(trace, 'downloadComplete', {
+            'durationMs': _elapsedMs(upstreamClock),
+            'bytes': written,
+            'completed': true,
+          });
+        }
+        final commitClock = trace == null ? null : (Stopwatch()..start());
+        finishing = true;
         try {
           await sink.close();
+          if (isCancelled?.call() == true) {
+            throw const CacheFetchCancelledException();
+          }
           if (ext == 'key' && written != 16) {
             throw const CacheResourceValidationException();
           }
@@ -374,6 +483,9 @@ class ResourceFetcher {
           }
           if (!await lease.ensureCapacity(written)) {
             throw const CacheQuotaException();
+          }
+          if (isCancelled?.call() == true) {
+            throw const CacheFetchCancelledException();
           }
           if (declaredLength <= 0) {
             onResourceLength?.call(resourceId, written);
@@ -401,7 +513,20 @@ class ResourceFetcher {
             size: written,
             ext: ext,
           );
+          if (trace != null) {
+            _trace(trace, 'cacheCommit', {
+              'durationMs': _elapsedMs(commitClock),
+              'result': 'success',
+            });
+          }
         } catch (error) {
+          if (trace != null) {
+            _trace(trace, 'cacheCommit', {
+              'durationMs': _elapsedMs(commitClock),
+              'result': 'failed',
+              'errorType': error.runtimeType.toString(),
+            });
+          }
           _reportCacheBypass(
             error is CacheQuotaException
                 ? PlaybackFallbackReason.cacheQuotaExceeded
@@ -417,6 +542,14 @@ class ResourceFetcher {
         }
       },
       onError: (Object _, StackTrace stackTrace) async {
+        if (trace != null) {
+          _trace(trace, 'downloadComplete', {
+            'durationMs': _elapsedMs(upstreamClock),
+            'bytes': written,
+            'completed': false,
+          });
+        }
+        finishing = true;
         _reportCacheBypass(PlaybackFallbackReason.cacheWriteFailed);
         Object? closeError;
         try {
@@ -443,6 +576,51 @@ class ResourceFetcher {
       headers: _upstreamHeaders(upstream)..remove('content-length'),
       body: controller.stream,
     );
+  }
+
+  static Stream<List<int>> _traceUpstreamBody(
+    Stream<List<int>> body,
+    Stopwatch? clock,
+    ResourceTraceEventCallback? trace,
+  ) async* {
+    if (trace == null) {
+      yield* body;
+      return;
+    }
+    var bytes = 0;
+    var sawFirstByte = false;
+    var completed = false;
+    try {
+      await for (final chunk in body) {
+        if (!sawFirstByte) {
+          sawFirstByte = true;
+          _trace(trace, 'upstreamFirstByte', {'elapsedMs': _elapsedMs(clock)});
+        }
+        bytes += chunk.length;
+        yield chunk;
+      }
+      completed = true;
+    } finally {
+      _trace(trace, 'downloadComplete', {
+        'durationMs': _elapsedMs(clock),
+        'bytes': bytes,
+        'completed': completed,
+      });
+    }
+  }
+
+  static double _elapsedMs(Stopwatch? stopwatch) =>
+      (stopwatch?.elapsedMicroseconds ?? 0) / 1000;
+
+  static void _trace(
+    ResourceTraceEventCallback? callback,
+    String name,
+    Map<String, Object?> values,
+  ) {
+    if (callback == null) return;
+    try {
+      callback({'event': name, ...values});
+    } catch (_) {}
   }
 
   void _reportCacheBypass(PlaybackFallbackReason reason) {

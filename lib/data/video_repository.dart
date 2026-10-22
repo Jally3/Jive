@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../domain/video.dart';
@@ -11,6 +13,7 @@ import './content/category_blocklist.dart';
 import './content/content_filter_policy.dart';
 import './vod_source/vod_source_adapter.dart';
 import './vod_source/vod_source_registry.dart';
+import './vod_source/video_detail_cache.dart';
 
 class VideoDataException implements Exception {
   const VideoDataException(this.message);
@@ -35,7 +38,11 @@ abstract interface class VideoRepository {
     bool forceRefresh = false,
   });
 
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  });
 }
 
 abstract interface class CancellableVideoRepository {
@@ -97,14 +104,17 @@ class VideoRepositoryImpl
   VideoRepositoryImpl({
     VodSourceAdapter? Function(VodSource source)? adapterResolver,
     this.contentFilterEnabled = true,
-  }) : _adapterResolver = adapterResolver ?? _defaultAdapterResolver;
+    VideoDetailCache? detailCache,
+  }) : _adapterResolver = adapterResolver ?? _defaultAdapterResolver,
+       _detailCache = detailCache ?? VideoDetailCache();
 
   final VodSourceAdapter? Function(VodSource source) _adapterResolver;
 
   /// 敏感分类过滤开关：开启时分类列表与视频页都会过滤黑名单内容。
   final bool contentFilterEnabled;
-  final Map<String, ({Video video, DateTime fetchedAt})> _detailCache = {};
-  static const _cacheDuration = Duration(minutes: 2);
+  final VideoDetailCache _detailCache;
+  final Map<VideoDetailCacheKey, _DetailRequest> _detailRequests = {};
+  bool _disposed = false;
 
   static final Map<String, VodSourceAdapter> _defaultAdapters = {
     'mac_cms_v10': MacCmsV10Adapter(http.Client()),
@@ -230,22 +240,72 @@ class VideoRepositoryImpl
     VodSource source,
     VideoRef ref, {
     bool forceRefresh = false,
-  }) async {
-    final cacheKey = ref.globalId;
-    final cached = _detailCache[cacheKey];
-    if (!forceRefresh &&
-        cached != null &&
-        DateTime.now().difference(cached.fetchedAt) < _cacheDuration) {
-      return cached.video;
+  }) {
+    final adapter = _adapterFor(source);
+    final cacheKey = videoDetailCacheKey(source, ref);
+    final pending = _detailRequests[cacheKey];
+    if (pending != null && (!forceRefresh || pending.forced)) {
+      return pending.completer.future;
     }
-    final video = await _adapterFor(source).fetchDetail(source, ref);
-    _detailCache[cacheKey] = (video: video, fetchedAt: DateTime.now());
-    return video;
+    if (!forceRefresh) {
+      final cached = _detailCache.get(cacheKey);
+      if (cached != null) return Future.value(cached);
+    } else {
+      // Never serve a known stale address after an unsuccessful refresh.
+      _detailCache.remove(cacheKey);
+    }
+    final request = _DetailRequest(forceRefresh);
+    _detailRequests[cacheKey] = request;
+    Future<void> load() async {
+      try {
+        final video = await adapter.fetchDetail(source, ref);
+        if (!_disposed && identical(_detailRequests[cacheKey], request)) {
+          _detailCache.put(cacheKey, video);
+        }
+        request.completer.complete(video);
+      } catch (error, stack) {
+        request.completer.completeError(error, stack);
+      } finally {
+        if (identical(_detailRequests[cacheKey], request)) {
+          _detailRequests.remove(cacheKey);
+        }
+      }
+    }
+
+    unawaited(load());
+    return request.completer.future;
   }
 
   @override
-  Future<Video> resolvePlayback(VodSource source, VideoRef ref) =>
-      _adapterFor(source).resolvePlayback(source, ref);
+  Future<Video> resolvePlayback(
+    VodSource source,
+    VideoRef ref, {
+    bool forceRefresh = false,
+  }) {
+    final adapter = _adapterFor(source);
+    if (adapter is ReusablePlaybackDetailAdapter) {
+      return fetchDetail(
+        source,
+        ref,
+        forceRefresh: forceRefresh,
+      ).then((adapter as ReusablePlaybackDetailAdapter).playbackFromDetail);
+    }
+    // Other sources still perform their normal playback/address resolution.
+    return adapter.resolvePlayback(source, ref);
+  }
+
+  void dispose() {
+    _disposed = true;
+    _detailCache.dispose();
+    _detailRequests.clear();
+  }
+}
+
+class _DetailRequest {
+  _DetailRequest(this.forced);
+
+  final bool forced;
+  final completer = Completer<Video>();
 }
 
 final videoRepositoryProvider = Provider<VideoRepository>((ref) {
@@ -253,11 +313,10 @@ final videoRepositoryProvider = Provider<VideoRepository>((ref) {
   final registry = ref
       .watch(vodSourceRegistryProvider)
       .maybeWhen(data: (r) => r, orElse: () => null);
-  if (registry == null) {
-    return VideoRepositoryImpl(contentFilterEnabled: filterEnabled);
-  }
-  return VideoRepositoryImpl(
-    adapterResolver: registry.adapterFor,
+  final repository = VideoRepositoryImpl(
+    adapterResolver: registry?.adapterFor,
     contentFilterEnabled: filterEnabled,
   );
+  ref.onDispose(repository.dispose);
+  return repository;
 });

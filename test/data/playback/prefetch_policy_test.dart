@@ -11,14 +11,14 @@ void main() {
     test('wifi yields the full ahead target', () {
       expect(
         prefetchAheadFor(PrefetchMode.auto, [ConnectivityResult.wifi]),
-        prefetchAheadWifi,
+        const Duration(minutes: 10),
       );
     });
 
     test('ethernet yields the full ahead target', () {
       expect(
         prefetchAheadFor(PrefetchMode.auto, [ConnectivityResult.ethernet]),
-        prefetchAheadWifi,
+        const Duration(minutes: 10),
       );
     });
 

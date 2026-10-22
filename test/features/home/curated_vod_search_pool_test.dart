@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jive/domain/video.dart';
 import 'package:jive/domain/vod_source.dart';
-import 'package:jive/features/home/curated_vod_search_pool.dart';
+import 'package:jive/features/home/support/curated_vod_search_pool.dart';
 
 void main() {
   const source = 'source|adapter|https://example.com|';

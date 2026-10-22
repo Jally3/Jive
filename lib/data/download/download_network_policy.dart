@@ -45,9 +45,10 @@ DownloadNetworkAccess downloadNetworkAccessFor(
   return DownloadNetworkAccess.unavailable;
 }
 
-final downloadNetworkAccessProvider = Provider<DownloadNetworkAccess>((ref) {
-  final allowCellular =
-      ref.watch(allowCellularDownloadsProvider).value ?? false;
-  final connectivity = ref.watch(connectivityResultsProvider).value;
-  return downloadNetworkAccessFor(allowCellular, connectivity);
-});
+final downloadNetworkAccessProvider =
+    Provider.autoDispose<DownloadNetworkAccess>((ref) {
+      final allowCellular =
+          ref.watch(allowCellularDownloadsProvider).value ?? false;
+      final connectivity = ref.watch(connectivityResultsProvider).value;
+      return downloadNetworkAccessFor(allowCellular, connectivity);
+    });

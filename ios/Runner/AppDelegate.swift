@@ -13,6 +13,24 @@ import UIKit
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
+    let deviceChannel = FlutterMethodChannel(
+      name: "jive/device_status",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger())
+    deviceChannel.setMethodCallHandler { call, result in
+      guard call.method == "batterySnapshot" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let device = UIDevice.current
+      let wasMonitoring = device.isBatteryMonitoringEnabled
+      device.isBatteryMonitoringEnabled = true
+      defer { device.isBatteryMonitoringEnabled = wasMonitoring }
+      result([
+        "level": device.batteryState == .unknown ? -1 : Int(device.batteryLevel * 100),
+        "charging": device.batteryState == .charging,
+      ])
+    }
+
     let channel = FlutterMethodChannel(
       name: "jive/cache",
       binaryMessenger: engineBridge.applicationRegistrar.messenger())
