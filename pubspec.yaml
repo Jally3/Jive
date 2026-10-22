@@ -4,7 +4,7 @@ description: "Jive - a focused mobile video player MVP."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.1.4+5
+version: 1.1.5+5
 
 environment:
   sdk: ^3.9.2
@@ -22,7 +22,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  characters: ^1.4.1
+  characters: ^1.4.0
   flutter_riverpod: ^3.3.2
   http: ^1.6.0
   video_player: ^2.10.1
