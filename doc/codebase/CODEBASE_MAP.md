@@ -150,7 +150,7 @@ lib/data/playback/
 
 ```text
 lib/data/cache/
-├── cache_manager.dart                 # 缓存核心 CacheManager：磁盘配额、下载保护的 LRU/TTL 淘汰、引用计数 CacheRef 与写租约 WriteLease
+├── cache_manager.dart                 # 缓存核心 CacheManager：磁盘配额与查询错误降级、下载保护的 LRU/TTL 淘汰、引用计数 CacheRef 与写租约 WriteLease
 ├── cache_models.dart                  # 缓存记录模型：CacheEntry/RevisionState/CacheResourceRecord、统计视图与 JSON 序列化
 ├── cache_index.dart                   # 磁盘布局与 CacheIndexStore：index/state/manifest 文件 IO、state.json 探测、目录常量（re-export cache_models）
 ├── cache_io.dart                      # 资源抓取器 ResourceFetcher：读穿/写穿缓存、SingleFlight 合并、响应头白名单、取消清理、完整性校验及可选启动期 I/O 细分诊断
@@ -192,7 +192,7 @@ lib/data/download/
 ├── download_task_store.dart           # 下载任务索引轻量读取：在缓存清理前恢复旧版离线条目保护集
 ├── download_task_manager.dart         # 显式下载引擎 DownloadTaskManager：任务持久化、网络闸门、单次蜂窝授权、暂停/恢复/断点续与进度发布
 ├── download_providers.dart            # 下载装配 downloadManagerProvider：注入缓存、剧集回解析与网络准入联动
-└── platform_disk_space.dart           # 磁盘空间通道 PlatformDiskSpaceProvider：MethodChannel(jive/cache) 读容量/可用空间
+└── platform_disk_space.dart           # 磁盘空间通道 PlatformDiskSpaceProvider：MethodChannel(jive/cache) 读容量/可用空间；查询失败与真实零空间分开处理
 ```
 
 ## 功能页（`lib/features/`）
@@ -306,7 +306,7 @@ test/
 │   ├── network/                       #   网络监听共享/释放、恢复前台和迟到快照隔离
 │   ├── playback/                      #   会话、代理、HLS 解析、广告过滤、嗅探、预取
 │   ├── cache/                         #   缓存管理器/索引/IO/TTL/ContentKey 等
-│   ├── download/                      #   预取器、任务管理器、磁盘空间
+│   ├── download/                      #   预取器、任务管理器；platform_disk_space_test.dart 覆盖通道缺失、查询异常、无效读数、零空间和大容量
 │   └── *.dart                         #   三个仓储的测试在 data/ 根部
 ├── features/                          # 页面与控制器测试，目录与 features/ 同名对应
 └── shared/                            # 共享组件测试（toast、进度滑杆、选源弹层）；playback_loading_controller_test.dart 覆盖会话隔离/自动释放；playback_loading_view_test.dart 覆盖局部刷新/布局稳定/大字体/退出清理

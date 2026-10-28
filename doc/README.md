@@ -12,6 +12,7 @@ doc/
 ├── ohos/
 │   ├── PHASE1_VALIDATION.md                  # 鸿蒙播放链路第一阶段验证记录
 │   ├── PHASE2_VALIDATION.md                  # 鸿蒙完整应用与播放稳定性验证记录
+│   ├── 2026-10-28_DISK_SPACE_FIX.md           # 下载空间误报修复、回归测试和模拟器验证
 │   └── SDK_SETUP.md                          # 双 SDK 布局与 OHOS CPF SDK 共享安装
 ├── merge/
 │   ├── 2026-09-27_docs-app-flows-and-prototypes_into_refactor-code-structure.md # 分支合并、冲突处理与验证记录

@@ -253,7 +253,11 @@ class DownloadTaskManager {
     if (allowCellularOnce) _cellularOverrides.add(taskId);
     final stopping = _pauseRequested.contains(taskId);
     final running = _running[taskId];
-    if (running != null && !stopping) return DownloadResumeResult.started;
+    if (running != null &&
+        !stopping &&
+        _tasks[taskId]?.status != DownloadTaskStatus.failed) {
+      return DownloadResumeResult.started;
+    }
     if (running != null) await running;
     _pauseRequested.remove(taskId);
     _cancelRequested.remove(taskId);
@@ -495,6 +499,8 @@ class DownloadTaskManager {
     try {
       if (_cancelRequested.contains(taskId)) return;
       task = await _set(task.copyWith(status: DownloadTaskStatus.downloading));
+      await cacheManager.refreshQuota();
+      if (cacheManager.quotaError != null) throw cacheManager.quotaError!;
       _resourceLengths[taskId] = {};
       PlaybackSelection? fresh;
       if (initial == null) {
@@ -729,6 +735,8 @@ class DownloadTaskManager {
           speedBytesPerSecond: 0,
         ),
       );
+    } on DiskSpaceQueryException {
+      await _fail(taskId, DownloadFailureReason.storageUnavailable);
     } on CacheQuotaException {
       final current = _tasks[taskId];
       if (current != null && !_cancelRequested.contains(taskId)) {

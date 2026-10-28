@@ -16,9 +16,14 @@ class _FakeDiskSpace implements DiskSpaceProvider {
   final int _available;
   int? total;
   int? platformLimit;
+  bool queryFails = false;
 
   @override
-  Future<int> availableBytes() async => _available;
+  Future<int> availableBytes() async {
+    if (queryFails) throw const DiskSpaceQueryException();
+    return _available;
+  }
+
   @override
   Future<int?> platformCacheLimitBytes() async => platformLimit;
   @override
@@ -60,6 +65,44 @@ void main() {
     await manager.flush();
     if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
   });
+
+  test(
+    'space query failure permits playback bypass but identifies download error',
+    () async {
+      final disk = _FakeDiskSpace(20 * _gb)..queryFails = true;
+      manager = CacheManager(store: store, diskSpace: disk);
+      await manager.initialize();
+      final created = await manager.upsertEntry(entry('1'));
+      final client = MockClient((_) async => http.Response('Gpayload', 200));
+      addTearDown(client.close);
+      ResourceFetcher fetcher({bool download = false}) => ResourceFetcher(
+        client: client,
+        sessionHeaders: const {},
+        manager: manager,
+        store: store,
+        entryKey: created.key,
+        contentKeyHash: 'ck1',
+        revisionKeyHash: 'rk1',
+        failOnCacheUnavailable: download,
+      );
+      final id = 'sha256:${'a' * 64}';
+      final result = await fetcher().fetch(
+        origin: Uri.parse('https://cdn.example.com/a.ts'),
+        resourceId: id,
+        ext: 'ts',
+      );
+      expect(await _collect(result.body), 'Gpayload');
+      expect(await manager.resourceRecord(created.key, id), isNull);
+      await expectLater(
+        fetcher(download: true).fetch(
+          origin: Uri.parse('https://cdn.example.com/a.ts'),
+          resourceId: id,
+          ext: 'ts',
+        ),
+        throwsA(isA<DiskSpaceQueryException>()),
+      );
+    },
+  );
 
   test(
     'full 200 fetch is cached and a second fetch serves from disk',

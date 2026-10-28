@@ -48,8 +48,15 @@ segment.ts
 ''';
 
 class _FakeDiskSpace implements DiskSpaceProvider {
+  bool queryFails = false;
+  int available = 20 * (1 << 30);
+
   @override
-  Future<int> availableBytes() async => 20 * (1 << 30);
+  Future<int> availableBytes() async {
+    if (queryFails) throw const DiskSpaceQueryException();
+    return available;
+  }
+
   @override
   Future<int?> platformCacheLimitBytes() async => null;
   @override
@@ -96,6 +103,69 @@ PlaybackSelection _selectionFor(int index) {
 }
 
 void main() {
+  test(
+    'space query failure is distinct from full disk and retry recovers',
+    () async {
+      final directory = Directory.systemTemp.createTempSync('jive_disk_retry');
+      final store = CacheIndexStore(directory);
+      final disk = _FakeDiskSpace();
+      final cache = CacheManager(store: store, diskSpace: disk);
+      await cache.initialize();
+      final client = MockClient(
+        (request) async => http.Response(
+          request.url.path.endsWith('.m3u8') ? _manifest : 'Gsegment-data',
+          200,
+        ),
+      );
+      final manager = DownloadTaskManager(
+        store: store,
+        cacheManager: cache,
+        client: client,
+        resolveSelection: (_) async => _selection(),
+      );
+      addTearDown(() async {
+        await manager.dispose();
+        await cache.flush();
+        client.close();
+        directory.deleteSync(recursive: true);
+      });
+      await manager.initialize();
+      disk.queryFails = true;
+      final task = await manager.enqueue(_selection());
+      Future<void> waitForTerminal() async {
+        for (var i = 0; i < 200; i++) {
+          final status = manager.tasks.single.status;
+          if (status == DownloadTaskStatus.failed ||
+              status == DownloadTaskStatus.completed) {
+            return;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        fail('download did not finish');
+      }
+
+      await waitForTerminal();
+      expect(manager.tasks.single.error?.name, 'storageUnavailable');
+      expect(downloadFailureText(manager.tasks.single.error), '无法读取存储空间，请重试');
+
+      disk.queryFails = false;
+      disk.available = 0;
+      await manager.resume(task.taskId);
+      await waitForTerminal();
+      expect(manager.tasks.single.error, DownloadFailureReason.quotaExceeded);
+
+      disk.available = 20 * (1 << 30);
+      await manager.resume(task.taskId);
+      await waitForTerminal();
+      expect(
+        manager.tasks.single.status,
+        DownloadTaskStatus.completed,
+        reason: manager.tasks.single.error?.name,
+      );
+      expect(manager.tasks.single.downloadedBytes, greaterThan(0));
+    },
+  );
+
   test(
     'download reports the source response and invalid segment precisely',
     () async {

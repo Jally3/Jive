@@ -11,6 +11,13 @@ abstract interface class DiskSpaceProvider {
   Future<int?> platformCacheLimitBytes();
 }
 
+class DiskSpaceQueryException implements Exception {
+  const DiskSpaceQueryException();
+
+  @override
+  String toString() => '无法读取存储空间，请重试';
+}
+
 int _clampInt(int value, int low, int high) =>
     value < low ? low : (value > high ? high : value);
 
@@ -113,6 +120,7 @@ class CacheManager {
   final Map<int, int> _pending = {};
   int _nextLeaseId = 1;
   int _quotaBytes = 0;
+  DiskSpaceQueryException? _quotaError;
   int _usedByDisk = 0;
   int _expiredCleanupCount = 0;
   int _expiredCleanupFreedBytes = 0;
@@ -120,6 +128,8 @@ class CacheManager {
   bool _saving = false;
 
   int get quotaBytes => _quotaBytes;
+
+  DiskSpaceQueryException? get quotaError => _quotaError;
 
   int get expiredCleanupCount => _expiredCleanupCount;
 
@@ -400,16 +410,27 @@ class CacheManager {
   }
 
   Future<int> refreshQuota() async {
-    final total = await diskSpace.totalCapacityBytes();
-    final available = await diskSpace.availableBytes();
-    final platform = await diskSpace.platformCacheLimitBytes();
-    final jive = await _lock.synchronize(() async => _usedByDisk);
-    _quotaBytes = computeEffectiveQuota(
-      availableBytes: available,
-      jiveCacheBytes: jive,
-      totalCapacity: total,
-      platformCacheLimit: platform,
-    );
+    try {
+      final total = await diskSpace.totalCapacityBytes();
+      final available = await diskSpace.availableBytes();
+      final platform = await diskSpace.platformCacheLimitBytes();
+      await _lock.synchronize(() async {
+        _quotaBytes = computeEffectiveQuota(
+          availableBytes: available,
+          jiveCacheBytes: _usedByDisk,
+          totalCapacity: total,
+          platformCacheLimit: platform,
+        );
+        _quotaError = null;
+      });
+    } on DiskSpaceQueryException catch (error) {
+      // Keep existing files readable and online playback available. New writes
+      // stay disabled until a later space query succeeds.
+      await _lock.synchronize(() async {
+        _quotaBytes = 0;
+        _quotaError = error;
+      });
+    }
     return _quotaBytes;
   }
 
@@ -660,6 +681,7 @@ class CacheManager {
       _lock.synchronize(() async {
         if (!_pending.containsKey(lease.id)) return false;
         if (totalBytes <= lease.bytes) return true;
+        if (_quotaError != null) return false;
         final additional = totalBytes - lease.bytes;
         var used = _usedByDisk + _pendingBytes();
         if (used + additional > _quotaBytes) {

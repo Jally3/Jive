@@ -11,9 +11,13 @@ class _FakeDiskSpace implements DiskSpaceProvider {
   final int _available;
   int? total;
   int? platformLimit;
+  bool queryFails = false;
 
   @override
-  Future<int> availableBytes() async => _available;
+  Future<int> availableBytes() async {
+    if (queryFails) throw const DiskSpaceQueryException();
+    return _available;
+  }
 
   @override
   Future<int?> platformCacheLimitBytes() async => platformLimit;
@@ -119,6 +123,49 @@ void main() {
   });
 
   group('CacheManager', () {
+    test(
+      'failed space refresh does not evict caches for an existing lease',
+      () async {
+        final manager = CacheManager(store: store, diskSpace: disk);
+        await manager.initialize();
+        final cached = await manager.upsertEntry(entry('cached'));
+        final oldLease = await manager.reserve(cached.key, 100);
+        await oldLease!.commitResource(resourceId: '0', size: 100, ext: 'ts');
+        final writing = await manager.upsertEntry(entry('writing'));
+        final activeLease = await manager.reserve(writing.key, 256 * 1024);
+
+        disk.queryFails = true;
+        await manager.refreshQuota();
+        expect(await activeLease!.ensureCapacity(512 * 1024), isFalse);
+        expect(await manager.getEntry(cached.key), isNotNull);
+
+        disk.queryFails = false;
+        await manager.refreshQuota();
+        expect(await activeLease.ensureCapacity(512 * 1024), isTrue);
+        await activeLease.cancel();
+        await manager.flush();
+      },
+    );
+
+    test(
+      'space query failure disables writes and refresh can recover',
+      () async {
+        disk.queryFails = true;
+        final manager = CacheManager(store: store, diskSpace: disk);
+        await manager.initialize();
+        final created = await manager.upsertEntry(entry('disk-error'));
+        expect(await manager.reserve(created.key, 1024), isNull);
+        expect(manager.quotaBytes, 0);
+
+        disk.queryFails = false;
+        expect(await manager.refreshQuota(), greaterThan(0));
+        final lease = await manager.reserve(created.key, 1024);
+        expect(lease, isNotNull);
+        await lease!.cancel();
+        await manager.flush();
+      },
+    );
+
     test('initialize restores entries from state files', () async {
       final manager = CacheManager(store: store, diskSpace: disk);
       await manager.initialize();

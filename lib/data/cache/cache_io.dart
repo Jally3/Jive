@@ -371,10 +371,14 @@ class ResourceFetcher {
       });
     }
     if (lease == null) {
-      _reportCacheBypass(PlaybackFallbackReason.cacheQuotaExceeded);
+      _reportCacheBypass(
+        manager!.quotaError == null
+            ? PlaybackFallbackReason.cacheQuotaExceeded
+            : PlaybackFallbackReason.cacheWriteFailed,
+      );
       if (failOnCacheUnavailable) {
         await upstream.stream.listen((_) {}).cancel();
-        throw const CacheQuotaException();
+        throw manager!.quotaError ?? const CacheQuotaException();
       }
       return CacheFetchResult(
         statusCode: upstream.statusCode,
@@ -482,7 +486,7 @@ class ResourceFetcher {
             );
           }
           if (!await lease.ensureCapacity(written)) {
-            throw const CacheQuotaException();
+            throw manager!.quotaError ?? const CacheQuotaException();
           }
           if (isCancelled?.call() == true) {
             throw const CacheFetchCancelledException();

@@ -17,9 +17,11 @@ class PlatformDiskSpaceProvider implements DiskSpaceProvider {
   Future<int> availableBytes() async {
     try {
       final value = await _channel.invokeMethod<int>('availableBytes');
-      if (value != null) return value;
-    } catch (_) {}
-    return 0;
+      if (value != null && value >= 0) return value;
+    } catch (_) {
+      throw const DiskSpaceQueryException();
+    }
+    throw const DiskSpaceQueryException();
   }
 
   @override
